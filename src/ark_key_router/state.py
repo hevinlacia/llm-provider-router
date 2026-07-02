@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
 from .config import KeyRef, ModelAlias, Settings
+from .usage_store import UsageStore
 
 
 @dataclass
@@ -27,6 +28,7 @@ class RouterState:
         self.settings = settings
         self.frozen: dict[str, FrozenKey] = {}
         self.bindings: dict[tuple[str, str], SessionBinding] = {}
+        self.usage_store = UsageStore(settings.usage_db_path)
 
     def cleanup(self) -> None:
         now = time.time()
@@ -87,6 +89,33 @@ class RouterState:
             },
             "bindings": len(self.bindings),
         }
+
+    def record_usage(
+        self,
+        *,
+        model: str,
+        key_name: str,
+        status_code: int,
+        usage: dict | None,
+    ) -> None:
+        self.usage_store.record(
+            model=model,
+            key_name=key_name,
+            status_code=status_code,
+            usage=usage,
+        )
+
+    def reset_usage(self) -> None:
+        self.usage_store.reset()
+
+    def usage_snapshot(
+        self,
+        *,
+        period: str = "all",
+        start: str | None = None,
+        end: str | None = None,
+    ) -> dict:
+        return self.usage_store.snapshot(period=period, start=start, end=end)
 
 
 class NoAvailableKeyError(Exception):

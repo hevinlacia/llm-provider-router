@@ -10,6 +10,7 @@ This project is a small replacement path for LiteLLM's key-pool routing. It keep
 - Fallback freeze: if the provider gives no reset timestamp, monthly quota freezes for 24 hours and 5-hour quota freezes for 1.5 hours.
 - Failover: if a bound key is frozen, the same session is rebound to another healthy key.
 - Streaming: SSE streams are proxied without buffering the whole response.
+- Usage metrics: request/error counts and OpenAI `usage` tokens are tracked in memory by model, key, and status code.
 
 ## Intended Deployment
 
@@ -33,6 +34,22 @@ Health check:
 
 ```bash
 curl http://127.0.0.1:8789/health
+```
+
+Dashboard:
+
+```bash
+xdg-open http://127.0.0.1:8789/dashboard
+```
+
+Usage metrics API:
+
+```bash
+curl http://127.0.0.1:8789/api/usage
+curl 'http://127.0.0.1:8789/api/usage?period=today'
+curl 'http://127.0.0.1:8789/api/usage?period=month'
+curl 'http://127.0.0.1:8789/api/usage?start=2026-07-01&end=2026-07-31'
+curl -X POST http://127.0.0.1:8789/api/usage/reset
 ```
 
 Example request:
@@ -70,9 +87,18 @@ ARK_KEY_ROUTER_MONTHLY_QUOTA_FALLBACK_SECONDS=86400
 ARK_KEY_ROUTER_5H_QUOTA_FALLBACK_SECONDS=5400
 ARK_KEY_ROUTER_REQUEST_TIMEOUT_SECONDS=600
 ARK_KEY_ROUTER_BEARER_TOKEN=<optional; falls back to OPENCODE_AI_LITELLM_API_KEY>
+ARK_KEY_ROUTER_USAGE_DB_PATH=~/.local/state/ark-key-router/usage.sqlite3
 ```
 
 No real key values should be committed or printed.
+
+Usage metrics are persisted to SQLite by default and can be filtered by `period`, `start`,
+and `end`. The API returns total request counts, token counts, daily/monthly rollups, and
+cache hit rate from `prompt_tokens_details.cached_tokens` when the upstream returns it.
+PostgreSQL is not required for the local single-instance deployment; SQLite keeps the service
+self-contained while still surviving restarts. Move to PostgreSQL only if multiple router
+instances need to share the same metrics store or if long-term cross-host reporting becomes
+necessary.
 
 ## Current Model Aliases
 

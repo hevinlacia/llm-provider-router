@@ -37,6 +37,7 @@ class Settings:
     five_hour_quota_fallback_seconds: int
     request_timeout_seconds: float
     local_bearer_token: str | None
+    usage_db_path: str
 
 
 ARK_KEYS: tuple[KeyRef, ...] = (
@@ -91,4 +92,8 @@ def load_settings() -> Settings:
         request_timeout_seconds=float(os.getenv("ARK_KEY_ROUTER_REQUEST_TIMEOUT_SECONDS", "600")),
         local_bearer_token=os.getenv("ARK_KEY_ROUTER_BEARER_TOKEN")
         or os.getenv("OPENCODE_AI_LITELLM_API_KEY"),
+        usage_db_path=os.getenv(
+            "ARK_KEY_ROUTER_USAGE_DB_PATH",
+            "~/.local/state/ark-key-router/usage.sqlite3",
+        ),
     )
