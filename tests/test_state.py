@@ -21,7 +21,7 @@ def settings() -> Settings:
 def alias() -> ModelAlias:
     return ModelAlias(
         alias="glm-latest-auto",
-        upstream_model="openai/glm-5.2",
+        litellm_model="openai/glm-5.2",
         base_url="https://example.invalid/v1",
         keys=ARK_KEYS[:2],
     )
@@ -63,3 +63,8 @@ def test_parse_quota_reset_timestamp() -> None:
     until, reason = result
     assert until > time.time()
     assert reason == "five_hour_quota"
+
+
+def test_litellm_openai_prefix_is_removed_for_upstream() -> None:
+    assert alias().litellm_model == "openai/glm-5.2"
+    assert alias().upstream_model == "glm-5.2"

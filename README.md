@@ -47,7 +47,7 @@ curl -N http://127.0.0.1:8789/v1/chat/completions \
 
 ## Configuration
 
-Configuration is environment-variable based. The default aliases are in `src/ark_key_router/config.py`.
+Configuration is environment-variable based. The default aliases mirror the LiteLLM router config in `src/ark_key_router/config.py`. LiteLLM-style model names keep the `openai/` provider prefix in config, but the proxy sends the stripped model name to the Ark OpenAI-compatible endpoint.
 
 Required Ark key variables:
 

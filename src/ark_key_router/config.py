@@ -17,9 +17,15 @@ class KeyRef:
 @dataclass(frozen=True)
 class ModelAlias:
     alias: str
-    upstream_model: str
+    litellm_model: str
     base_url: str
     keys: tuple[KeyRef, ...]
+
+    @property
+    def upstream_model(self) -> str:
+        if self.litellm_model.startswith("openai/"):
+            return self.litellm_model.removeprefix("openai/")
+        return self.litellm_model
 
 
 @dataclass(frozen=True)
@@ -46,25 +52,25 @@ ARK_KEYS: tuple[KeyRef, ...] = (
 ALIASES: dict[str, ModelAlias] = {
     "glm-latest-auto": ModelAlias(
         alias="glm-latest-auto",
-        upstream_model="openai/glm-5.2",
+        litellm_model="openai/glm-5.2",
         base_url=DEFAULT_ARK_BASE_URL,
         keys=ARK_KEYS,
     ),
     "deepseek-v4-pro-auto": ModelAlias(
         alias="deepseek-v4-pro-auto",
-        upstream_model="openai/deepseek-v4-pro",
+        litellm_model="openai/deepseek-v4-pro",
         base_url=DEFAULT_ARK_BASE_URL,
         keys=ARK_KEYS,
     ),
     "deepseek-v4-flash-auto": ModelAlias(
         alias="deepseek-v4-flash-auto",
-        upstream_model="openai/deepseek-v4-flash",
+        litellm_model="openai/deepseek-v4-flash",
         base_url=DEFAULT_ARK_BASE_URL,
         keys=ARK_KEYS,
     ),
     "minimax-latest-auto": ModelAlias(
         alias="minimax-latest-auto",
-        upstream_model="openai/minimax-m3",
+        litellm_model="openai/minimax-m3",
         base_url=DEFAULT_ARK_BASE_URL,
         keys=ARK_KEYS,
     ),
