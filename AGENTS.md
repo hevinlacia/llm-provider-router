@@ -1,6 +1,6 @@
 # AGENTS.md — Ark Key Router
 
-Personal experimental project under `~/Developer/playground/`.
+Personal tool project under `~/Developer/tools/`.
 
 - Keep the implementation lightweight and easy to replace.
 - Prefer `uv run ...` for Python commands.

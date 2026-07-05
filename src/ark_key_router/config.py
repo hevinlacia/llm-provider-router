@@ -15,11 +15,19 @@ class KeyRef:
 
 
 @dataclass(frozen=True)
+class RetryPolicy:
+    max_retry_seconds: int
+    retry_delay_seconds: float
+    retry_on_status: tuple[int, ...]
+
+
+@dataclass(frozen=True)
 class ModelAlias:
     alias: str
     litellm_model: str
     base_url: str
     keys: tuple[KeyRef, ...]
+    retry_policy: RetryPolicy | None = None
 
     @property
     def upstream_model(self) -> str:
@@ -49,6 +57,18 @@ ARK_KEYS: tuple[KeyRef, ...] = (
     KeyRef("moss", "OPENCODE_AI_ARK_MOSS_API_KEY", 4),
 )
 
+OAI_HEVIN_KEYS: tuple[KeyRef, ...] = (KeyRef("oai-hevin", "OPENCODE_AI_OPENAI_HEVIN_API_KEY", 1),)
+
+OAI_RELAY_RETRY_POLICY = RetryPolicy(
+    max_retry_seconds=1800,
+    retry_delay_seconds=15,
+    retry_on_status=(429, 500, 502, 503, 504),
+)
+
+DEEPSEEK_OFFICIAL_KEYS: tuple[KeyRef, ...] = (
+    KeyRef("deepseek-official", "OPENCODE_AI_DEEPSEEK_API_KEY", 1),
+)
+
 
 ALIASES: dict[str, ModelAlias] = {
     "glm-latest-auto": ModelAlias(
@@ -74,6 +94,32 @@ ALIASES: dict[str, ModelAlias] = {
         litellm_model="openai/minimax-m3",
         base_url=DEFAULT_ARK_BASE_URL,
         keys=ARK_KEYS,
+    ),
+    "openai-gpt-5.5-hevin": ModelAlias(
+        alias="openai-gpt-5.5-hevin",
+        litellm_model="openai/gpt-5.5",
+        base_url="https://api.aixhan.com/v1",
+        keys=OAI_HEVIN_KEYS,
+        retry_policy=OAI_RELAY_RETRY_POLICY,
+    ),
+    "openai-gpt-5.4-hevin": ModelAlias(
+        alias="openai-gpt-5.4-hevin",
+        litellm_model="openai/gpt-5.4",
+        base_url="https://api.aixhan.com/v1",
+        keys=OAI_HEVIN_KEYS,
+        retry_policy=OAI_RELAY_RETRY_POLICY,
+    ),
+    "deepseek-v4-flash-official": ModelAlias(
+        alias="deepseek-v4-flash-official",
+        litellm_model="openai/deepseek-v4-flash",
+        base_url="https://api.deepseek.com",
+        keys=DEEPSEEK_OFFICIAL_KEYS,
+    ),
+    "deepseek-v4-pro-official": ModelAlias(
+        alias="deepseek-v4-pro-official",
+        litellm_model="openai/deepseek-v4-pro",
+        base_url="https://api.deepseek.com",
+        keys=DEEPSEEK_OFFICIAL_KEYS,
     ),
 }
 

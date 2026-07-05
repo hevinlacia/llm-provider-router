@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import time
+from unittest.mock import AsyncMock, patch
 
-from ark_key_router.config import ARK_KEYS, ModelAlias, Settings
+import httpx
+
+from ark_key_router.config import ARK_KEYS, ModelAlias, RetryPolicy, Settings
+from ark_key_router.proxy import call_upstream
 from ark_key_router.state import NoAvailableKeyError, RouterState, parse_quota_reset
 
 
@@ -55,6 +59,23 @@ def test_all_keys_frozen_raises_retry_after() -> None:
         raise AssertionError("expected NoAvailableKeyError")
 
 
+def test_select_key_excluding_rebinds_session() -> None:
+    state = RouterState(settings())
+    first = state.select_key(alias(), "session-a")
+    second = state.select_key_excluding(alias(), "session-a", {first.name})
+    assert second.name != first.name
+
+
+def test_select_key_excluding_all_candidates_raises_retry_after() -> None:
+    state = RouterState(settings())
+    try:
+        state.select_key_excluding(alias(), "session-a", {key.name for key in alias().keys})
+    except NoAvailableKeyError as exc:
+        assert exc.retry_after == 60
+    else:
+        raise AssertionError("expected NoAvailableKeyError")
+
+
 def test_parse_quota_reset_timestamp() -> None:
     result = parse_quota_reset(
         "You have exceeded the 5-hour usage quota. It will reset at 2099-07-02 19:01:27 +0800 CST.",
@@ -69,6 +90,45 @@ def test_parse_quota_reset_timestamp() -> None:
 def test_litellm_openai_prefix_is_removed_for_upstream() -> None:
     assert alias().litellm_model == "openai/glm-5.2"
     assert alias().upstream_model == "glm-5.2"
+
+
+def test_call_upstream_retries_next_key_after_connect_error() -> None:
+    state = RouterState(settings())
+    request = httpx.Request("POST", "https://example.invalid/v1/chat/completions")
+    response = httpx.Response(200, json={"usage": {"total_tokens": 1}}, request=request)
+    post = AsyncMock(side_effect=[httpx.ConnectError("boom", request=request), response])
+
+    class Client:
+        def __init__(self, timeout: float):
+            self.timeout = timeout
+            self.post = post
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    async def run_test() -> None:
+        with patch.dict("os.environ", {key.env_var: "test-key" for key in alias().keys}):
+            with patch("ark_key_router.proxy.httpx.AsyncClient", Client):
+                result = await call_upstream(
+                    alias(),
+                    "session-a",
+                    {"model": "glm-5.2", "messages": []},
+                    settings(),
+                    state,
+                )
+        assert result.status_code == 200
+
+    import asyncio
+
+    asyncio.run(run_test())
+    assert post.await_count == 2
+    usage = state.usage_snapshot()
+    assert usage["total"]["requests"] == 2
+    assert usage["by_status"]["599"]["errors"] == 1
+    assert len(usage["by_key"]) == 2
 
 
 def test_usage_stats_are_grouped_by_model_key_and_status() -> None:
@@ -171,3 +231,108 @@ def test_usage_stats_custom_range_can_exclude_events(tmp_path) -> None:
 
     assert usage["total"]["requests"] == 0
     assert usage["by_day"] == {}
+
+
+def _oai_alias() -> ModelAlias:
+    from ark_key_router.config import KeyRef
+
+    return ModelAlias(
+        alias="openai-gpt-5.5-hevin",
+        litellm_model="openai/gpt-5.5",
+        base_url="https://example.invalid/v1",
+        keys=(KeyRef("oai-hevin", "OPENCODE_AI_OPENAI_HEVIN_API_KEY", 1),),
+        retry_policy=RetryPolicy(
+            max_retry_seconds=1800,
+            retry_delay_seconds=15,
+            retry_on_status=(429, 500, 502, 503, 504),
+        ),
+    )
+
+
+def test_call_upstream_retries_on_429_with_retry_policy() -> None:
+    state = RouterState(settings())
+    request = httpx.Request("POST", "https://example.invalid/v1/chat/completions")
+    error_resp = httpx.Response(429, json={"error": {"message": "rate limited"}}, request=request)
+    ok_resp = httpx.Response(200, json={"usage": {"total_tokens": 1}}, request=request)
+    post = AsyncMock(side_effect=[error_resp, ok_resp])
+
+    class Client:
+        def __init__(self, timeout: float):
+            self.timeout = timeout
+            self.post = post
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    async def run_test() -> None:
+        with patch.dict("os.environ", {"OPENCODE_AI_OPENAI_HEVIN_API_KEY": "test-key"}):
+            with patch("ark_key_router.proxy.httpx.AsyncClient", Client):
+                with patch("ark_key_router.proxy.asyncio.sleep", new_callable=AsyncMock):
+                    result = await call_upstream(
+                        _oai_alias(),
+                        "session-a",
+                        {"model": "gpt-5.5", "messages": []},
+                        settings(),
+                        state,
+                    )
+        assert result.status_code == 200
+
+    import asyncio
+
+    asyncio.run(run_test())
+    assert post.await_count == 2
+    usage = state.usage_snapshot()
+    assert usage["total"]["requests"] == 2
+    assert usage["by_status"]["429"]["errors"] == 1
+    assert usage["by_status"]["200"]["requests"] == 1
+
+
+def test_call_upstream_returns_last_retriable_status_when_deadline_exceeded() -> None:
+    state = RouterState(settings())
+    request = httpx.Request("POST", "https://example.invalid/v1/chat/completions")
+    error_resp = httpx.Response(503, json={"error": {"message": "unavailable"}}, request=request)
+
+    alias_with_short_deadline = ModelAlias(
+        alias="openai-gpt-5.5-hevin",
+        litellm_model="openai/gpt-5.5",
+        base_url="https://example.invalid/v1",
+        keys=_oai_alias().keys,
+        retry_policy=RetryPolicy(
+            max_retry_seconds=0,
+            retry_delay_seconds=1,
+            retry_on_status=(429, 500, 502, 503, 504),
+        ),
+    )
+
+    post = AsyncMock(side_effect=[error_resp])
+
+    class Client:
+        def __init__(self, timeout: float):
+            self.timeout = timeout
+            self.post = post
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    async def run_test() -> None:
+        with patch.dict("os.environ", {"OPENCODE_AI_OPENAI_HEVIN_API_KEY": "test-key"}):
+            with patch("ark_key_router.proxy.httpx.AsyncClient", Client):
+                result = await call_upstream(
+                    alias_with_short_deadline,
+                    "session-a",
+                    {"model": "gpt-5.5", "messages": []},
+                    settings(),
+                    state,
+                )
+        assert result.status_code == 503
+
+    import asyncio
+
+    asyncio.run(run_test())
+    assert post.await_count == 1

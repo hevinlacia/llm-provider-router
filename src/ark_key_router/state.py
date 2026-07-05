@@ -56,16 +56,30 @@ class RouterState:
         )
 
     def select_key(self, alias: ModelAlias, session_id: str | None) -> KeyRef:
+        return self.select_key_excluding(alias, session_id=session_id, excluded=set())
+
+    def select_key_excluding(
+        self,
+        alias: ModelAlias,
+        session_id: str | None,
+        excluded: set[str],
+    ) -> KeyRef:
         self.cleanup()
         if session_id:
             binding = self.bindings.get((alias.alias, session_id))
-            if binding and not self.is_frozen(binding.key_name):
+            if (
+                binding
+                and binding.key_name not in excluded
+                and not self.is_frozen(binding.key_name)
+            ):
                 key = next((item for item in alias.keys if item.name == binding.key_name), None)
                 if key is not None:
                     self.bind(alias.alias, session_id, key.name)
                     return key
 
-        candidates = [key for key in alias.keys if not self.is_frozen(key.name)]
+        candidates = [
+            key for key in alias.keys if key.name not in excluded and not self.is_frozen(key.name)
+        ]
         if not candidates:
             soonest = min(self.frozen.values(), key=lambda item: item.until, default=None)
             retry_after = int(max(1, (soonest.until - time.time()) if soonest else 60))

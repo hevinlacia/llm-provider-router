@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -73,24 +74,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session_id = extract_session_id(payload, x_litellm_session_id, x_opencode_session_id)
         stream = bool(payload.get("stream"))
 
-        try:
-            key = state.select_key(alias, session_id=session_id)
-        except NoAvailableKeyError as exc:
-            return JSONResponse(
-                status_code=429,
-                content={"error": {"message": str(exc), "type": "all_keys_frozen"}},
-                headers={"Retry-After": str(exc.retry_after)},
-            )
-
         upstream_payload = dict(payload)
         upstream_payload["model"] = alias.upstream_model
 
         if stream:
             return StreamingResponse(
-                stream_upstream(alias, key, upstream_payload, settings, state),
+                stream_upstream(alias, session_id, upstream_payload, settings, state),
                 media_type="text/event-stream",
             )
-        return await call_upstream(alias, key, upstream_payload, settings, state)
+        try:
+            return await call_upstream(alias, session_id, upstream_payload, settings, state)
+        except NoAvailableKeyError as exc:
+            return all_keys_frozen_response(exc)
 
     return app
 
@@ -124,63 +119,165 @@ def extract_session_id(
 
 async def call_upstream(
     alias: ModelAlias,
-    key: KeyRef,
+    session_id: str | None,
     payload: dict[str, Any],
     settings: Settings,
     state: RouterState,
 ) -> JSONResponse:
-    async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
-        response = await client.post(
-            f"{alias.base_url.rstrip('/')}/chat/completions",
-            headers=upstream_headers(key),
-            json=payload,
+    retry_policy = alias.retry_policy
+    deadline = time.time() + retry_policy.max_retry_seconds if retry_policy else 0.0
+
+    tried: set[str] = set()
+    last_error: httpx.RequestError | HTTPException | OSError | None = None
+    last_retriable_status: int | None = None
+    last_retriable_content: Any = None
+    last_retry_after: float | None = None
+
+    while True:
+        try:
+            key = state.select_key_excluding(alias, session_id=session_id, excluded=tried)
+        except NoAvailableKeyError:
+            if retry_policy and time.time() < deadline:
+                if isinstance(last_error, (httpx.RequestError, OSError)):
+                    delay = 2.0
+                else:
+                    delay = _compute_retry_delay(retry_policy, deadline, last_retry_after)
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                tried.clear()
+                continue
+            if last_retriable_status is not None:
+                return JSONResponse(
+                    status_code=last_retriable_status, content=last_retriable_content
+                )
+            if last_error is not None and tried:
+                return upstream_unavailable_response(alias, tried, last_error)
+            raise
+        tried.add(key.name)
+        try:
+            async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
+                response = await client.post(
+                    f"{alias.base_url.rstrip('/')}/chat/completions",
+                    headers=upstream_headers(key),
+                    json=payload,
+                )
+        except (httpx.RequestError, HTTPException, OSError) as exc:
+            last_error = exc
+            state.record_usage(model=alias.alias, key_name=key.name, status_code=599, usage=None)
+            continue
+        body_text = response.text
+
+        if retry_policy and response.status_code in retry_policy.retry_on_status:
+            try:
+                content = response.json()
+            except json.JSONDecodeError:
+                content = {"error": {"message": body_text, "type": "upstream_error"}}
+            state.record_usage(
+                model=alias.alias,
+                key_name=key.name,
+                status_code=response.status_code,
+                usage=extract_usage(content),
+            )
+            last_retriable_status = response.status_code
+            last_retriable_content = content
+            last_retry_after = parse_retry_after(response.headers.get("retry-after"))
+            continue
+
+        maybe_freeze_key(key, response.status_code, response.headers, body_text, settings, state)
+        try:
+            content = response.json()
+        except json.JSONDecodeError:
+            content = {"error": {"message": body_text, "type": "upstream_error"}}
+        state.record_usage(
+            model=alias.alias,
+            key_name=key.name,
+            status_code=response.status_code,
+            usage=extract_usage(content),
         )
-    body_text = response.text
-    maybe_freeze_key(key, response.status_code, response.headers, body_text, settings, state)
-    try:
-        content = response.json()
-    except json.JSONDecodeError:
-        content = {"error": {"message": body_text, "type": "upstream_error"}}
-    state.record_usage(
-        model=alias.alias,
-        key_name=key.name,
-        status_code=response.status_code,
-        usage=extract_usage(content),
-    )
-    return JSONResponse(status_code=response.status_code, content=content)
+        return JSONResponse(status_code=response.status_code, content=content)
 
 
 async def stream_upstream(
     alias: ModelAlias,
-    key: KeyRef,
+    session_id: str | None,
     payload: dict[str, Any],
     settings: Settings,
     state: RouterState,
 ):
-    chunks: list[bytes] = []
-    body_text = ""
-    status_code = 599
-    async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
-        async with client.stream(
-            "POST",
-            f"{alias.base_url.rstrip('/')}/chat/completions",
-            headers=upstream_headers(key),
-            json=payload,
-        ) as response:
-            status_code = response.status_code
-            async for chunk in response.aiter_bytes():
-                chunks.append(chunk)
-                yield chunk
-            body_text = b"".join(chunks).decode("utf-8", "replace")
-            maybe_freeze_key(
-                key, response.status_code, response.headers, body_text, settings, state
-            )
-    state.record_usage(
-        model=alias.alias,
-        key_name=key.name,
-        status_code=status_code,
-        usage=extract_usage_from_stream(body_text),
-    )
+    retry_policy = alias.retry_policy
+    deadline = time.time() + retry_policy.max_retry_seconds if retry_policy else 0.0
+
+    tried: set[str] = set()
+    last_error: httpx.RequestError | HTTPException | OSError | None = None
+    last_retry_after: float | None = None
+
+    while True:
+        try:
+            key = state.select_key_excluding(alias, session_id=session_id, excluded=tried)
+        except NoAvailableKeyError:
+            if retry_policy and time.time() < deadline:
+                if isinstance(last_error, (httpx.RequestError, OSError)):
+                    delay = 2.0
+                else:
+                    delay = _compute_retry_delay(retry_policy, deadline, last_retry_after)
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                tried.clear()
+                continue
+            yield stream_error_event(alias, tried, last_error)
+            return
+        tried.add(key.name)
+        chunks: list[bytes] = []
+        body_text = ""
+        status_code = 599
+        data_sent = False
+        try:
+            async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
+                async with client.stream(
+                    "POST",
+                    f"{alias.base_url.rstrip('/')}/chat/completions",
+                    headers=upstream_headers(key),
+                    json=payload,
+                ) as response:
+                    status_code = response.status_code
+                    if (
+                        retry_policy
+                        and status_code in retry_policy.retry_on_status
+                        and not data_sent
+                    ):
+                        async for chunk in response.aiter_bytes():
+                            chunks.append(chunk)
+                        body_text = b"".join(chunks).decode("utf-8", "replace")
+                        state.record_usage(
+                            model=alias.alias,
+                            key_name=key.name,
+                            status_code=status_code,
+                            usage=extract_usage_from_stream(body_text),
+                        )
+                        last_retry_after = parse_retry_after(response.headers.get("retry-after"))
+                        continue
+                    async for chunk in response.aiter_bytes():
+                        chunks.append(chunk)
+                        yield chunk
+                        data_sent = True
+                    body_text = b"".join(chunks).decode("utf-8", "replace")
+                    maybe_freeze_key(
+                        key, response.status_code, response.headers, body_text, settings, state
+                    )
+        except (httpx.RequestError, HTTPException, OSError) as exc:
+            if data_sent:
+                yield stream_error_event(alias, tried, exc)
+                return
+            last_error = exc
+            state.record_usage(model=alias.alias, key_name=key.name, status_code=599, usage=None)
+            continue
+        state.record_usage(
+            model=alias.alias,
+            key_name=key.name,
+            status_code=status_code,
+            usage=extract_usage_from_stream(body_text),
+        )
+        return
 
 
 def upstream_headers(key: KeyRef) -> dict[str, str]:
@@ -188,6 +285,20 @@ def upstream_headers(key: KeyRef) -> dict[str, str]:
     if not value:
         raise HTTPException(status_code=503, detail=f"missing upstream key env: {key.env_var}")
     return {"Authorization": f"Bearer {value}", "Content-Type": "application/json"}
+
+
+def _compute_retry_delay(
+    retry_policy: Any,
+    deadline: float,
+    last_retry_after: float | None,
+) -> float:
+    delay = retry_policy.retry_delay_seconds
+    if last_retry_after is not None:
+        remaining_to_retry_after = last_retry_after - time.time()
+        if remaining_to_retry_after > delay:
+            delay = remaining_to_retry_after
+    remaining_to_deadline = max(0.0, deadline - time.time())
+    return min(delay, remaining_to_deadline)
 
 
 def maybe_freeze_key(
@@ -208,6 +319,46 @@ def maybe_freeze_key(
     retry_until = parse_retry_after(headers.get("retry-after"))
     if status_code == 429 and retry_until is not None:
         state.freeze(key.name, until=retry_until, reason="retry_after")
+
+
+def all_keys_frozen_response(exc: NoAvailableKeyError) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"error": {"message": str(exc), "type": "all_keys_frozen"}},
+        headers={"Retry-After": str(exc.retry_after)},
+    )
+
+
+def upstream_unavailable_response(
+    alias: ModelAlias,
+    tried: set[str],
+    exc: httpx.RequestError | HTTPException | OSError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": {
+                "message": f"all {len(tried)} upstream keys failed for {alias.alias}",
+                "type": "upstream_connect_error",
+                "last_error": type(exc).__name__,
+            }
+        },
+    )
+
+
+def stream_error_event(
+    alias: ModelAlias,
+    tried: set[str],
+    exc: httpx.RequestError | HTTPException | OSError | None,
+) -> bytes:
+    error = {
+        "error": {
+            "message": f"all {len(tried)} upstream keys failed for {alias.alias}",
+            "type": "upstream_connect_error",
+            "last_error": type(exc).__name__ if exc is not None else "NoAvailableKeyError",
+        }
+    }
+    return f"data: {json.dumps(error)}\n\ndata: [DONE]\n\n".encode()
 
 
 def extract_usage(content: Any) -> dict | None:
