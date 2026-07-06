@@ -1,0 +1,23 @@
+AGENTS.md
+  b662ace2e54ef0ea 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "f928b320f8ae73569aa10752ada7684d67586848",
+  "prompts": {
+    "b662ace2e54ef0ea": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0c9a4981fffePtabRojTse8jSc",
+        "model": "cch/gpt-5.5"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
