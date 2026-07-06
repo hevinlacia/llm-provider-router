@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
 from .config import ALIASES, KeyRef, ModelAlias, Settings
-from .usage_store import KeyWeightConfig, UsageStore
+from .key_store import EncryptedKeyConfig
+from .usage_store import KeyWeightConfig, ProviderConfig, UsageStore
 
 
 @dataclass
@@ -30,6 +31,16 @@ class RouterState:
         self.bindings: dict[tuple[str, str], SessionBinding] = {}
         self.usage_store = UsageStore(settings.usage_db_path)
         self.weight_config = KeyWeightConfig(settings.weight_config_path, default_key_weights())
+        self.provider_config = ProviderConfig(
+            settings.provider_config_path,
+            default_provider_base_urls(),
+        )
+        self.key_config = EncryptedKeyConfig(
+            settings.key_config_path,
+            settings.sops_age_recipient,
+            settings.sops_age_key_file,
+            known_key_names(),
+        )
 
     def cleanup(self) -> None:
         now = time.time()
@@ -86,10 +97,33 @@ class RouterState:
             retry_after = int(max(1, (soonest.until - time.time()) if soonest else 60))
             raise NoAvailableKeyError(retry_after=retry_after)
 
-        key = weighted_pick(candidates, session_id=session_id, alias=alias.alias)
+        key = self.usage_adjusted_pick(alias, candidates, session_id=session_id)
         if session_id:
             self.bind(alias.alias, session_id, key.name)
         return key
+
+    def usage_adjusted_pick(
+        self,
+        alias: ModelAlias,
+        candidates: list[KeyRef],
+        session_id: str | None,
+    ) -> KeyRef:
+        token_totals = self.usage_store.key_token_totals_for_model(
+            alias.alias,
+            [key.name for key in candidates],
+        )
+        positive_weight_candidates = [key for key in candidates if key.weight > 0]
+        if not positive_weight_candidates:
+            return weighted_pick(candidates, session_id=session_id, alias=alias.alias)
+        min_ratio = min(
+            token_totals.get(key.name, 0) / key.weight for key in positive_weight_candidates
+        )
+        lowest_usage_candidates = [
+            key
+            for key in positive_weight_candidates
+            if token_totals.get(key.name, 0) / key.weight == min_ratio
+        ]
+        return weighted_pick(lowest_usage_candidates, session_id=session_id, alias=alias.alias)
 
     def snapshot(self) -> dict:
         self.cleanup()
@@ -137,16 +171,21 @@ class RouterState:
 
     def key_config_snapshot(self) -> dict:
         weights = self.key_weight_overrides()
+        provider_urls = self.provider_base_urls()
         aliases = {}
         for alias_name, alias in self.settings_aliases().items():
-            effective_alias = alias.with_key_weights(weights)
+            effective_alias = alias.with_provider_base_urls(provider_urls).with_key_weights(weights)
             total_weight = sum(max(0, key.weight) for key in effective_alias.keys)
             aliases[alias_name] = {
                 "model": alias.litellm_model,
                 "base_url": alias.base_url,
+                "effective_base_url": effective_alias.base_url,
+                "provider": alias.provider,
                 "keys": [
                     {
                         "name": key.name,
+                        "provider": key.provider,
+                        "billing_type": key.billing_type,
                         "default_weight": default_key.weight,
                         "weight": key.weight,
                         "probability": round(key.weight / total_weight, 4)
@@ -162,6 +201,33 @@ class RouterState:
             "config_path": str(self.weight_config.path),
         }
 
+    def provider_base_urls(self) -> dict[str, str]:
+        return self.provider_config.get()
+
+    def provider_config_snapshot(self) -> dict:
+        configured = self.provider_base_urls()
+        defaults = default_provider_base_urls()
+        providers = [
+            {
+                "name": name,
+                "base_url": configured[name],
+                "default_base_url": defaults[name],
+            }
+            for name in sorted(defaults)
+        ]
+        return {"providers": providers, "config_path": str(self.provider_config.path)}
+
+    def set_provider_base_urls(self, base_urls: dict[str, str]) -> dict:
+        known_names = set(default_provider_base_urls())
+        unknown_names = sorted(set(base_urls) - known_names)
+        if unknown_names:
+            raise ValueError(f"unknown provider(s): {', '.join(unknown_names)}")
+        invalid_names = sorted(name for name, base_url in base_urls.items() if not base_url)
+        if invalid_names:
+            raise ValueError(f"empty base URL for provider(s): {', '.join(invalid_names)}")
+        self.provider_config.set(base_urls)
+        return self.provider_config_snapshot()
+
     def set_key_weights(self, weights: dict[str, int]) -> None:
         known_names = {key.name for alias in self.settings_aliases().values() for key in alias.keys}
         unknown_names = sorted(set(weights) - known_names)
@@ -173,8 +239,44 @@ class RouterState:
         effective_weights = self.weight_config.set(weights)
         self.rebind_zero_weight_sessions(effective_weights)
 
+    def key_secret_snapshot(self) -> dict:
+        configured = self.key_config.safe_snapshot()
+        keys = []
+        for key in all_key_refs():
+            encrypted_configured = bool(configured.get(key.name, {}).get("configured"))
+            env_configured = bool(__import__("os").environ.get(key.env_var))
+            if encrypted_configured:
+                source = "encrypted_file"
+            elif env_configured:
+                source = "environment"
+            else:
+                source = "missing"
+            keys.append(
+                {
+                    "name": key.name,
+                    "provider": key.provider,
+                    "billing_type": key.billing_type,
+                    "env_var": key.env_var,
+                    "configured": encrypted_configured or env_configured,
+                    "encrypted_configured": encrypted_configured,
+                    "env_configured": env_configured,
+                    "source": source,
+                }
+            )
+        return {"keys": keys, "config_path": str(self.key_config.path)}
+
+    def set_key_values(self, values: dict[str, str], delete_names: set[str] | None = None) -> dict:
+        self.key_config.set_values(values, delete_names=delete_names)
+        return self.key_secret_snapshot()
+
+    def upstream_key_value(self, key: KeyRef) -> str | None:
+        values = self.key_config.get_all()
+        return values.get(key.name) or __import__("os").environ.get(key.env_var)
+
     def alias_with_runtime_weights(self, alias: ModelAlias) -> ModelAlias:
-        return alias.with_key_weights(self.key_weight_overrides())
+        return alias.with_provider_base_urls(self.provider_base_urls()).with_key_weights(
+            self.key_weight_overrides()
+        )
 
     def rebind_zero_weight_sessions(self, weights: dict[str, int]) -> None:
         zero_weight_names = {name for name, weight in weights.items() if weight <= 0}
@@ -219,6 +321,25 @@ def default_key_weights() -> dict[str, int]:
         for key in alias.keys:
             weights[key.name] = key.weight
     return weights
+
+
+def default_provider_base_urls() -> dict[str, str]:
+    base_urls: dict[str, str] = {}
+    for alias in ALIASES.values():
+        base_urls.setdefault(alias.provider, alias.base_url)
+    return base_urls
+
+
+def all_key_refs() -> list[KeyRef]:
+    refs: dict[str, KeyRef] = {}
+    for alias in ALIASES.values():
+        for key in alias.keys:
+            refs[key.name] = key
+    return [refs[name] for name in sorted(refs)]
+
+
+def known_key_names() -> set[str]:
+    return {key.name for key in all_key_refs()}
 
 
 def parse_retry_after(value: str | None) -> float | None:

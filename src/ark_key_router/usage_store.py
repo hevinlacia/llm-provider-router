@@ -153,6 +153,28 @@ class UsageStore:
                 "db_path": self.db_path,
             }
 
+    def key_token_totals_for_model(self, model: str, key_names: list[str]) -> dict[str, int]:
+        totals = {key_name: 0 for key_name in key_names}
+        if not key_names:
+            return totals
+        range_start, range_end = resolve_time_range("today", None, None)
+        where_sql, args = time_filter_sql(range_start, range_end)
+        placeholders = ", ".join("?" for _ in key_names)
+        rows = self._conn.execute(
+            f"""
+            SELECT key_name, COALESCE(SUM(total_tokens), 0) AS total_tokens
+            FROM usage_events
+            {where_sql}
+            {"AND" if where_sql else "WHERE"} model = ?
+            AND key_name IN ({placeholders})
+            GROUP BY key_name
+            """,
+            (*args, model, *key_names),
+        ).fetchall()
+        for row in rows:
+            totals[str(row["key_name"])] = int(row["total_tokens"] or 0)
+        return totals
+
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
         if any(row["name"] == column for row in rows):
@@ -340,4 +362,49 @@ class KeyWeightConfig:
     def _write(self, weights: dict[str, int]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         content = json.dumps(dict(sorted(weights.items())), indent=2) + "\n"
+        self.path.write_text(content, encoding="utf-8")
+
+
+class ProviderConfig:
+    def __init__(self, path: str, defaults: dict[str, str]):
+        if path == ":memory:":
+            self.path = Path(path)
+        else:
+            expanded_path = Path(os.path.expanduser(path))
+            self.path = expanded_path if expanded_path.is_absolute() else Path.cwd() / expanded_path
+        self.defaults = dict(defaults)
+        self._lock = threading.Lock()
+
+    def get(self) -> dict[str, str]:
+        with self._lock:
+            base_urls = dict(self.defaults)
+            if str(self.path) == ":memory:":
+                return base_urls
+            if not self.path.exists():
+                self._write(base_urls)
+                return base_urls
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                return base_urls
+            if not isinstance(data, dict):
+                return base_urls
+            for provider, base_url in data.items():
+                if provider in base_urls and isinstance(base_url, str) and base_url:
+                    base_urls[str(provider)] = base_url
+            return base_urls
+
+    def set(self, base_urls: dict[str, str]) -> dict[str, str]:
+        with self._lock:
+            next_base_urls = dict(self.defaults)
+            next_base_urls.update(base_urls)
+            if str(self.path) == ":memory:":
+                self.defaults = next_base_urls
+                return next_base_urls
+            self._write(next_base_urls)
+            return next_base_urls
+
+    def _write(self, base_urls: dict[str, str]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        content = json.dumps(dict(sorted(base_urls.items())), indent=2) + "\n"
         self.path.write_text(content, encoding="utf-8")

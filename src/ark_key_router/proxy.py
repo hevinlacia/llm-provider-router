@@ -74,6 +74,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"ok": True, **state.key_config_snapshot()}
 
+    @app.get("/api/config/providers")
+    async def api_config_providers() -> dict[str, Any]:
+        return {"ok": True, **state.provider_config_snapshot()}
+
+    @app.put("/api/config/providers")
+    async def api_config_providers_update(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        providers = payload.get("providers") if isinstance(payload, dict) else None
+        if not isinstance(providers, dict):
+            raise HTTPException(status_code=400, detail="providers must be an object")
+        try:
+            snapshot = state.set_provider_base_urls(
+                {str(name): str(base_url) for name, base_url in providers.items()}
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, **snapshot}
+
+    @app.get("/api/config/keys")
+    async def api_config_keys() -> dict[str, Any]:
+        return {"ok": True, **state.key_secret_snapshot()}
+
+    @app.put("/api/config/keys")
+    async def api_config_keys_update(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        values = payload.get("keys") if isinstance(payload, dict) else None
+        delete_names = payload.get("delete") if isinstance(payload, dict) else None
+        if values is None:
+            values = {}
+        if delete_names is None:
+            delete_names = []
+        if not isinstance(values, dict):
+            raise HTTPException(status_code=400, detail="keys must be an object")
+        if not isinstance(delete_names, list):
+            raise HTTPException(status_code=400, detail="delete must be a list")
+        try:
+            clean_values = {str(name): str(value) for name, value in values.items() if str(value)}
+            snapshot = state.set_key_values(clean_values, {str(name) for name in delete_names})
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, **snapshot}
+
     @app.post("/v1/chat/completions")
     async def chat_completions(
         request: Request,
@@ -176,7 +218,7 @@ async def call_upstream(
             async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
                 response = await client.post(
                     f"{alias.base_url.rstrip('/')}/chat/completions",
-                    headers=upstream_headers(key),
+                    headers=upstream_headers(key, state),
                     json=payload,
                 )
         except (httpx.RequestError, HTTPException, OSError) as exc:
@@ -254,7 +296,7 @@ async def stream_upstream(
                 async with client.stream(
                     "POST",
                     f"{alias.base_url.rstrip('/')}/chat/completions",
-                    headers=upstream_headers(key),
+                    headers=upstream_headers(key, state),
                     json=payload,
                 ) as response:
                     status_code = response.status_code
@@ -298,10 +340,10 @@ async def stream_upstream(
         return
 
 
-def upstream_headers(key: KeyRef) -> dict[str, str]:
-    value = os.environ.get(key.env_var)
+def upstream_headers(key: KeyRef, state: RouterState) -> dict[str, str]:
+    value = state.upstream_key_value(key)
     if not value:
-        raise HTTPException(status_code=503, detail=f"missing upstream key env: {key.env_var}")
+        raise HTTPException(status_code=503, detail=f"missing upstream key: {key.name}")
     return {"Authorization": f"Bearer {value}", "Content-Type": "application/json"}
 
 

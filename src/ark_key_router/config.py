@@ -6,6 +6,10 @@ from dataclasses import dataclass
 
 DEFAULT_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding/v3"
 DEFAULT_WEIGHT_CONFIG_PATH = "config/key-weights.json"
+DEFAULT_PROVIDER_CONFIG_PATH = "config/providers.json"
+DEFAULT_KEY_CONFIG_PATH = "config/api-keys.sops.json"
+DEFAULT_SOPS_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
+DEFAULT_SOPS_AGE_RECIPIENT = "age1n4kxrm8969pqaax2u63akszmdgvu5dr2tfnwpt2d957ewtwx4sescvvz7d"
 
 
 @dataclass(frozen=True)
@@ -13,9 +17,11 @@ class KeyRef:
     name: str
     env_var: str
     weight: int
+    provider: str = "ark"
+    billing_type: str = "subscription"
 
     def with_weight(self, weight: int) -> "KeyRef":
-        return KeyRef(self.name, self.env_var, weight)
+        return KeyRef(self.name, self.env_var, weight, self.provider, self.billing_type)
 
 
 @dataclass(frozen=True)
@@ -48,6 +54,21 @@ class ModelAlias:
             retry_policy=self.retry_policy,
         )
 
+    @property
+    def provider(self) -> str:
+        if self.keys:
+            return self.keys[0].provider
+        return self.alias
+
+    def with_provider_base_urls(self, base_urls: dict[str, str]) -> "ModelAlias":
+        return ModelAlias(
+            alias=self.alias,
+            litellm_model=self.litellm_model,
+            base_url=base_urls.get(self.provider, self.base_url),
+            keys=self.keys,
+            retry_policy=self.retry_policy,
+        )
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -60,6 +81,10 @@ class Settings:
     local_bearer_token: str | None
     usage_db_path: str
     weight_config_path: str
+    provider_config_path: str
+    key_config_path: str
+    sops_age_key_file: str
+    sops_age_recipient: str
 
 
 ARK_KEYS: tuple[KeyRef, ...] = (
@@ -71,7 +96,9 @@ ARK_KEYS: tuple[KeyRef, ...] = (
     KeyRef("moss", "OPENCODE_AI_ARK_MOSS_API_KEY", 4),
 )
 
-OAI_HEVIN_KEYS: tuple[KeyRef, ...] = (KeyRef("oai-hevin", "OPENCODE_AI_OPENAI_HEVIN_API_KEY", 1),)
+OAI_HEVIN_KEYS: tuple[KeyRef, ...] = (
+    KeyRef("oai-hevin", "OPENCODE_AI_OPENAI_HEVIN_API_KEY", 1, "openai-relay"),
+)
 
 OAI_RELAY_RETRY_POLICY = RetryPolicy(
     max_retry_seconds=1800,
@@ -80,7 +107,13 @@ OAI_RELAY_RETRY_POLICY = RetryPolicy(
 )
 
 DEEPSEEK_OFFICIAL_KEYS: tuple[KeyRef, ...] = (
-    KeyRef("deepseek-official", "OPENCODE_AI_DEEPSEEK_API_KEY", 1),
+    KeyRef(
+        "deepseek-official",
+        "OPENCODE_AI_DEEPSEEK_API_KEY",
+        1,
+        "deepseek-official",
+        "payg",
+    ),
 )
 
 
@@ -159,5 +192,21 @@ def load_settings() -> Settings:
         weight_config_path=os.getenv(
             "ARK_KEY_ROUTER_WEIGHT_CONFIG_PATH",
             DEFAULT_WEIGHT_CONFIG_PATH,
+        ),
+        provider_config_path=os.getenv(
+            "ARK_KEY_ROUTER_PROVIDER_CONFIG_PATH",
+            DEFAULT_PROVIDER_CONFIG_PATH,
+        ),
+        key_config_path=os.getenv(
+            "ARK_KEY_ROUTER_KEY_CONFIG_PATH",
+            DEFAULT_KEY_CONFIG_PATH,
+        ),
+        sops_age_key_file=os.getenv(
+            "SOPS_AGE_KEY_FILE",
+            DEFAULT_SOPS_AGE_KEY_FILE,
+        ),
+        sops_age_recipient=os.getenv(
+            "ARK_KEY_ROUTER_SOPS_AGE_RECIPIENT",
+            DEFAULT_SOPS_AGE_RECIPIENT,
         ),
     )

@@ -21,6 +21,10 @@ def settings(usage_db_path: str = ":memory:", weight_config_path: str = ":memory
         local_bearer_token=None,
         usage_db_path=usage_db_path,
         weight_config_path=weight_config_path,
+        provider_config_path=":memory:",
+        key_config_path=":memory:",
+        sops_age_key_file="~/.config/sops/age/keys.txt",
+        sops_age_recipient="age1test",
     )
 
 
@@ -65,6 +69,47 @@ def test_select_key_excluding_rebinds_session() -> None:
     first = state.select_key(alias(), "session-a")
     second = state.select_key_excluding(alias(), "session-a", {first.name})
     assert second.name != first.name
+
+
+def test_existing_session_binding_still_wins_over_usage_balancing() -> None:
+    state = RouterState(settings())
+    state.bind("glm-latest-auto", "session-a", "garvin")
+    state.record_usage(
+        model="glm-latest-auto",
+        key_name="garvin",
+        status_code=200,
+        usage={"total_tokens": 600},
+    )
+
+    selected = state.select_key(alias(), "session-a")
+
+    assert selected.name == "garvin"
+
+
+def test_new_session_prefers_alias_key_with_lowest_weighted_token_usage() -> None:
+    state = RouterState(settings())
+    state.record_usage(
+        model="glm-latest-auto",
+        key_name="garvin",
+        status_code=200,
+        usage={"total_tokens": 600},
+    )
+    state.record_usage(
+        model="glm-latest-auto",
+        key_name="wilford",
+        status_code=200,
+        usage={"total_tokens": 60},
+    )
+    state.record_usage(
+        model="glm-latest-auto",
+        key_name="cyril",
+        status_code=200,
+        usage={"total_tokens": 0},
+    )
+
+    selected = state.select_key(alias(), "session-b")
+
+    assert selected.name == "wilford"
 
 
 def test_select_key_excluding_all_candidates_raises_retry_after() -> None:
@@ -258,6 +303,56 @@ def test_zero_weight_drops_existing_session_binding(tmp_path) -> None:
     selected = state.select_key(alias().with_key_weights(state.key_weight_overrides()), "session-a")
 
     assert selected.name != "garvin"
+
+
+def test_provider_base_url_can_be_changed_at_runtime() -> None:
+    state = RouterState(settings())
+
+    state.set_provider_base_urls({"ark": "https://ark.example.invalid/v1"})
+
+    weighted_alias = state.alias_with_runtime_weights(alias())
+    snapshot = state.provider_config_snapshot()
+
+    assert weighted_alias.base_url == "https://ark.example.invalid/v1"
+    assert snapshot["providers"][0]["name"] == "ark"
+
+
+def test_key_metadata_groups_provider_and_billing_type() -> None:
+    state = RouterState(settings())
+
+    snapshot = state.key_secret_snapshot()
+    deepseek = next(item for item in snapshot["keys"] if item["name"] == "deepseek-official")
+    garvin = next(item for item in snapshot["keys"] if item["name"] == "garvin")
+
+    assert deepseek["provider"] == "deepseek-official"
+    assert deepseek["billing_type"] == "payg"
+    assert garvin["provider"] == "ark"
+    assert garvin["billing_type"] == "subscription"
+
+
+def test_encrypted_key_config_overrides_environment(monkeypatch) -> None:
+    state = RouterState(settings())
+    monkeypatch.setenv("OPENCODE_AI_ARK_GARVIN_API_KEY", "env-key")
+
+    state.set_key_values({"garvin": "configured-key"})
+
+    assert state.upstream_key_value(ARK_KEYS[0]) == "configured-key"
+    snapshot = state.key_secret_snapshot()
+    garvin = next(item for item in snapshot["keys"] if item["name"] == "garvin")
+    assert garvin["source"] == "encrypted_file"
+
+
+def test_encrypted_key_config_can_remove_value(monkeypatch) -> None:
+    state = RouterState(settings())
+    monkeypatch.setenv("OPENCODE_AI_ARK_GARVIN_API_KEY", "env-key")
+    state.set_key_values({"garvin": "configured-key"})
+
+    state.set_key_values({}, {"garvin"})
+
+    assert state.upstream_key_value(ARK_KEYS[0]) == "env-key"
+    snapshot = state.key_secret_snapshot()
+    garvin = next(item for item in snapshot["keys"] if item["name"] == "garvin")
+    assert garvin["source"] == "environment"
 
 
 def _oai_alias() -> ModelAlias:

@@ -6,6 +6,7 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICE_NAME="ark-key-router"
 SERVICE_FILE="$HOME/.config/systemd/user/${SERVICE_NAME}.service"
+UV_BIN="$(command -v uv)"
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
@@ -23,7 +24,7 @@ Environment=ARK_KEY_ROUTER_HOST=127.0.0.1
 Environment=ARK_KEY_ROUTER_PORT=8789
 Environment=SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 Environment=SSL_CERT_DIR=/etc/ssl/certs
-ExecStart=$HOME/.local/bin/uv run ark-key-router
+ExecStart=${UV_BIN} run ark-key-router
 Restart=on-failure
 RestartSec=3
 TimeoutStartSec=60
