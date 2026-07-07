@@ -183,7 +183,8 @@ def load_settings() -> Settings:
             os.getenv("ARK_KEY_ROUTER_5H_QUOTA_FALLBACK_SECONDS", "5400")
         ),
         request_timeout_seconds=float(os.getenv("ARK_KEY_ROUTER_REQUEST_TIMEOUT_SECONDS", "600")),
-        local_bearer_token=os.getenv("ARK_KEY_ROUTER_BEARER_TOKEN")
+        local_bearer_token=os.getenv("ARK_KEY_ROUTER_API_KEY")
+        or os.getenv("ARK_KEY_ROUTER_BEARER_TOKEN")
         or os.getenv("OPENCODE_AI_LITELLM_API_KEY"),
         usage_db_path=os.getenv(
             "ARK_KEY_ROUTER_USAGE_DB_PATH",

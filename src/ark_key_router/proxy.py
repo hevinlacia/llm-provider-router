@@ -52,6 +52,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return state.usage_snapshot(period=period, start=start, end=end)
 
+    @app.get("/v1/models")
+    async def models(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        validate_auth(settings, authorization)
+        return {
+            "object": "list",
+            "data": [
+                {
+                    "id": alias.alias,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": "ark-key-router",
+                }
+                for alias in ALIASES.values()
+            ],
+        }
+
     @app.post("/api/usage/reset")
     async def api_usage_reset() -> dict[str, Any]:
         state.reset_usage()

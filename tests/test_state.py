@@ -4,9 +4,10 @@ import time
 from unittest.mock import AsyncMock, patch
 
 import httpx
+from fastapi.testclient import TestClient
 
 from ark_key_router.config import ARK_KEYS, ModelAlias, RetryPolicy, Settings
-from ark_key_router.proxy import call_upstream
+from ark_key_router.proxy import call_upstream, create_app
 from ark_key_router.state import NoAvailableKeyError, RouterState, parse_quota_reset
 
 
@@ -277,6 +278,51 @@ def test_usage_stats_custom_range_can_exclude_events(tmp_path) -> None:
 
     assert usage["total"]["requests"] == 0
     assert usage["by_day"] == {}
+
+
+def test_settings_accepts_ark_key_router_api_key() -> None:
+    from ark_key_router.config import load_settings
+
+    with patch.dict("os.environ", {"ARK_KEY_ROUTER_API_KEY": "local-token"}, clear=True):
+        assert load_settings().local_bearer_token == "local-token"
+
+
+def test_models_endpoint_returns_openai_compatible_list() -> None:
+    client = TestClient(create_app(settings()))
+
+    response = client.get("/v1/models")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["object"] == "list"
+    assert {item["id"] for item in body["data"]} >= {"glm-latest-auto", "minimax-latest-auto"}
+
+
+def test_models_endpoint_validates_local_token() -> None:
+    client = TestClient(
+        create_app(
+            Settings(
+                host="127.0.0.1",
+                port=8789,
+                session_ttl_seconds=3600,
+                monthly_quota_fallback_seconds=86400,
+                five_hour_quota_fallback_seconds=5400,
+                request_timeout_seconds=60,
+                local_bearer_token="local-token",
+                usage_db_path=":memory:",
+                weight_config_path=":memory:",
+                provider_config_path=":memory:",
+                key_config_path=":memory:",
+                sops_age_key_file="~/.config/sops/age/keys.txt",
+                sops_age_recipient="age1test",
+            )
+        )
+    )
+
+    assert client.get("/v1/models").status_code == 401
+    assert (
+        client.get("/v1/models", headers={"Authorization": "Bearer local-token"}).status_code == 200
+    )
 
 
 def test_runtime_key_weights_are_persisted_and_applied(tmp_path) -> None:
