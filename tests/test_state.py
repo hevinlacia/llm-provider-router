@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from fastapi.testclient import TestClient
 
-from ark_key_router.config import ARK_KEYS, ModelAlias, RetryPolicy, Settings
+from ark_key_router.config import ALIASES, ARK_KEYS, ModelAlias, RetryPolicy, Settings
 from ark_key_router.proxy import call_upstream, create_app
 from ark_key_router.state import NoAvailableKeyError, RouterState, parse_quota_reset
 
@@ -295,7 +295,20 @@ def test_models_endpoint_returns_openai_compatible_list() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["object"] == "list"
-    assert {item["id"] for item in body["data"]} >= {"glm-latest-auto", "minimax-latest-auto"}
+    assert {item["id"] for item in body["data"]} >= {
+        "glm-latest-auto",
+        "minimax-latest-auto",
+        "high-model-auto",
+        "low-model-auto",
+        "picture-model-auto",
+    }
+
+
+def test_model_tier_aliases_route_to_expected_upstreams() -> None:
+    assert ALIASES["high-model-auto"].upstream_model == "gpt-5.5"
+    assert ALIASES["high-model-auto"].keys[0].provider == "openai-relay"
+    assert ALIASES["low-model-auto"].upstream_model == "deepseek-v4-flash"
+    assert ALIASES["picture-model-auto"].upstream_model == "minimax-m3"
 
 
 def test_models_endpoint_validates_local_token() -> None:

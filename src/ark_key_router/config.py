@@ -118,6 +118,25 @@ DEEPSEEK_OFFICIAL_KEYS: tuple[KeyRef, ...] = (
 
 
 ALIASES: dict[str, ModelAlias] = {
+    "high-model-auto": ModelAlias(
+        alias="high-model-auto",
+        litellm_model="openai/gpt-5.5",
+        base_url="https://api.aixhan.com/v1",
+        keys=OAI_HEVIN_KEYS,
+        retry_policy=OAI_RELAY_RETRY_POLICY,
+    ),
+    "low-model-auto": ModelAlias(
+        alias="low-model-auto",
+        litellm_model="openai/deepseek-v4-flash",
+        base_url=DEFAULT_ARK_BASE_URL,
+        keys=ARK_KEYS,
+    ),
+    "picture-model-auto": ModelAlias(
+        alias="picture-model-auto",
+        litellm_model="openai/minimax-m3",
+        base_url=DEFAULT_ARK_BASE_URL,
+        keys=ARK_KEYS,
+    ),
     "glm-latest-auto": ModelAlias(
         alias="glm-latest-auto",
         litellm_model="openai/glm-5.2",
