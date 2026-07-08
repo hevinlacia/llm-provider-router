@@ -1,15 +1,36 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 DEFAULT_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding/v3"
 DEFAULT_WEIGHT_CONFIG_PATH = "config/key-weights.json"
 DEFAULT_PROVIDER_CONFIG_PATH = "config/providers.json"
+DEFAULT_ROUTER_AUTH_CONFIG_PATH = "config/router-auth.json"
 DEFAULT_KEY_CONFIG_PATH = "config/api-keys.sops.json"
 DEFAULT_SOPS_AGE_KEY_FILE = "~/.config/sops/age/keys.txt"
 DEFAULT_SOPS_AGE_RECIPIENT = "age1n4kxrm8969pqaax2u63akszmdgvu5dr2tfnwpt2d957ewtwx4sescvvz7d"
+
+
+def _load_router_bearer_token(config_path: str) -> str | None:
+    expanded = Path(os.path.expanduser(config_path))
+    if not expanded.is_absolute():
+        expanded = Path.cwd() / expanded
+    if not expanded.is_file():
+        return None
+    try:
+        data = json.loads(expanded.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    value = data.get("bearer_token")
+    if isinstance(value, str) and value:
+        return value
+    return None
 
 
 @dataclass(frozen=True)
@@ -82,6 +103,7 @@ class Settings:
     usage_db_path: str
     weight_config_path: str
     provider_config_path: str
+    router_auth_config_path: str
     key_config_path: str
     sops_age_key_file: str
     sops_age_recipient: str
@@ -183,8 +205,13 @@ def load_settings() -> Settings:
             os.getenv("ARK_KEY_ROUTER_5H_QUOTA_FALLBACK_SECONDS", "5400")
         ),
         request_timeout_seconds=float(os.getenv("ARK_KEY_ROUTER_REQUEST_TIMEOUT_SECONDS", "600")),
-        local_bearer_token=os.getenv("ARK_KEY_ROUTER_BEARER_TOKEN")
-        or os.getenv("OPENCODE_AI_LITELLM_API_KEY"),
+        local_bearer_token=(
+            os.getenv("ARK_KEY_ROUTER_BEARER_TOKEN")
+            or _load_router_bearer_token(
+                os.getenv("ARK_KEY_ROUTER_AUTH_CONFIG_PATH", DEFAULT_ROUTER_AUTH_CONFIG_PATH)
+            )
+            or os.getenv("OPENCODE_AI_LITELLM_API_KEY")
+        ),
         usage_db_path=os.getenv(
             "ARK_KEY_ROUTER_USAGE_DB_PATH",
             "~/.local/state/ark-key-router/usage.sqlite3",
@@ -196,6 +223,10 @@ def load_settings() -> Settings:
         provider_config_path=os.getenv(
             "ARK_KEY_ROUTER_PROVIDER_CONFIG_PATH",
             DEFAULT_PROVIDER_CONFIG_PATH,
+        ),
+        router_auth_config_path=os.getenv(
+            "ARK_KEY_ROUTER_AUTH_CONFIG_PATH",
+            DEFAULT_ROUTER_AUTH_CONFIG_PATH,
         ),
         key_config_path=os.getenv(
             "ARK_KEY_ROUTER_KEY_CONFIG_PATH",

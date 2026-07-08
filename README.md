@@ -90,10 +90,11 @@ ARK_KEY_ROUTER_SESSION_TTL_SECONDS=3600
 ARK_KEY_ROUTER_MONTHLY_QUOTA_FALLBACK_SECONDS=86400
 ARK_KEY_ROUTER_5H_QUOTA_FALLBACK_SECONDS=5400
 ARK_KEY_ROUTER_REQUEST_TIMEOUT_SECONDS=600
-ARK_KEY_ROUTER_BEARER_TOKEN=<optional; falls back to OPENCODE_AI_LITELLM_API_KEY>
+ARK_KEY_ROUTER_BEARER_TOKEN=<optional; falls back to config/router-auth.json, then OPENCODE_AI_LITELLM_API_KEY>
 ARK_KEY_ROUTER_USAGE_DB_PATH=~/.local/state/ark-key-router/usage.sqlite3
 ARK_KEY_ROUTER_WEIGHT_CONFIG_PATH=config/key-weights.json
 ARK_KEY_ROUTER_PROVIDER_CONFIG_PATH=config/providers.json
+ARK_KEY_ROUTER_AUTH_CONFIG_PATH=config/router-auth.json
 ARK_KEY_ROUTER_KEY_CONFIG_PATH=config/api-keys.sops.json
 ARK_KEY_ROUTER_SOPS_AGE_RECIPIENT=age1n4kxrm8969pqaax2u63akszmdgvu5dr2tfnwpt2d957ewtwx4sescvvz7d
 SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt
@@ -111,6 +112,18 @@ types are `subscription` for Ark/OpenAI relay keys and `payg` for the official D
 
 Provider base URLs are stored in `config/providers.json` and can be edited from Settings.
 New requests pick up provider URL changes immediately without restarting the router.
+
+The router's own bearer token (used to authenticate incoming `Authorization: Bearer ...`
+requests from OpenCode and the dashboard) is read in this order:
+
+1. `ARK_KEY_ROUTER_BEARER_TOKEN` environment variable.
+2. `config/router-auth.json` — a plaintext file `{ "bearer_token": "..." }` shipped
+   in the repository. Unlike the upstream `api-keys.sops.json` keys, this is a
+   low-risk local-only token and is committed to git so it syncs across machines
+   together with the router itself. Override the path with
+   `ARK_KEY_ROUTER_AUTH_CONFIG_PATH`.
+3. `OPENCODE_AI_LITELLM_API_KEY` for backward compatibility with the legacy
+   LiteLLM deployment.
 
 Key routing weights are stored in `config/key-weights.json` by default, so the
 preferred local ratios can be committed and synced to GitHub without committing

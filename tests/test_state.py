@@ -22,6 +22,7 @@ def settings(usage_db_path: str = ":memory:", weight_config_path: str = ":memory
         usage_db_path=usage_db_path,
         weight_config_path=weight_config_path,
         provider_config_path=":memory:",
+        router_auth_config_path=":memory:",
         key_config_path=":memory:",
         sops_age_key_file="~/.config/sops/age/keys.txt",
         sops_age_recipient="age1test",
