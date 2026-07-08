@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import random
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -9,7 +11,10 @@ from email.utils import parsedate_to_datetime
 
 from .config import ALIASES, KeyRef, ModelAlias, Settings
 from .key_store import EncryptedKeyConfig
-from .usage_store import KeyWeightConfig, ProviderConfig, UsageStore
+from .usage_store import CustomKeyPoolConfig, KeyWeightConfig, ProviderConfig, UsageStore
+
+
+KEY_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
 @dataclass
@@ -35,11 +40,12 @@ class RouterState:
             settings.provider_config_path,
             default_provider_base_urls(),
         )
+        self.custom_key_config = CustomKeyPoolConfig(settings.custom_key_config_path)
         self.key_config = EncryptedKeyConfig(
             settings.key_config_path,
             settings.sops_age_recipient,
             settings.sops_age_key_file,
-            known_key_names(),
+            self.known_key_names(),
         )
 
     def cleanup(self) -> None:
@@ -167,6 +173,7 @@ class RouterState:
         return self.usage_store.snapshot(period=period, start=start, end=end)
 
     def key_weight_overrides(self) -> dict[str, int]:
+        self.sync_custom_key_weight_defaults()
         return self.weight_config.get()
 
     def key_config_snapshot(self) -> dict:
@@ -229,6 +236,7 @@ class RouterState:
         return self.provider_config_snapshot()
 
     def set_key_weights(self, weights: dict[str, int]) -> None:
+        self.sync_custom_key_weight_defaults()
         known_names = {key.name for alias in self.settings_aliases().values() for key in alias.keys}
         unknown_names = sorted(set(weights) - known_names)
         if unknown_names:
@@ -239,13 +247,18 @@ class RouterState:
         effective_weights = self.weight_config.set(weights)
         self.rebind_zero_weight_sessions(effective_weights)
 
+    def sync_custom_key_weight_defaults(self) -> None:
+        self.weight_config.add_defaults({key.name: key.weight for key in self.custom_key_refs()})
+
     def key_secret_snapshot(self) -> dict:
         configured = self.key_config.safe_snapshot()
         keys = []
-        for key in all_key_refs():
+        for key in self.all_key_refs():
             encrypted_configured = bool(configured.get(key.name, {}).get("configured"))
             env_configured = bool(__import__("os").environ.get(key.env_var))
-            if encrypted_configured:
+            if encrypted_configured and env_configured:
+                source = "encrypted_file+runtime_env"
+            elif encrypted_configured:
                 source = "encrypted_file"
             elif env_configured:
                 source = "environment"
@@ -263,7 +276,54 @@ class RouterState:
                     "source": source,
                 }
             )
-        return {"keys": keys, "config_path": str(self.key_config.path)}
+        return {
+            "keys": keys,
+            "auto_aliases": self.auto_alias_names(),
+            "config_path": str(self.key_config.path),
+            "custom_key_config_path": str(self.custom_key_config.path),
+        }
+
+    def add_key_to_pools(
+        self,
+        *,
+        name: str,
+        value: str,
+        aliases: list[str],
+        weight: int = 1,
+        provider: str = "ark",
+        billing_type: str = "subscription",
+    ) -> dict:
+        name = normalize_custom_key_name(name)
+        if not KEY_NAME_PATTERN.fullmatch(name):
+            raise ValueError("key name must use lowercase letters, numbers, and hyphens")
+        if name in self.known_key_names():
+            raise ValueError(f"key already exists: {name}")
+        if not value:
+            raise ValueError("key value is required")
+        auto_aliases = set(self.auto_alias_names())
+        alias_names = sorted(set(aliases))
+        unknown_aliases = sorted(set(alias_names) - auto_aliases)
+        if unknown_aliases:
+            raise ValueError(f"unknown auto alias(es): {', '.join(unknown_aliases)}")
+        if not alias_names:
+            raise ValueError("select at least one auto key pool")
+        if weight < 0:
+            raise ValueError("weight must be zero or greater")
+
+        env_var = f"OPENCODE_AI_ARK_{name.replace('-', '_').upper()}_API_KEY"
+        self.key_config.set_known_names(self.known_key_names() | {name})
+        self.key_config.set_values({name: value})
+        os.environ[env_var] = value
+        self.custom_key_config.add_key(
+            name=name,
+            env_var=env_var,
+            provider=provider,
+            billing_type=billing_type,
+            weight=weight,
+            aliases=alias_names,
+        )
+        self.key_config.set_known_names(self.known_key_names())
+        return self.key_secret_snapshot()
 
     def set_key_values(self, values: dict[str, str], delete_names: set[str] | None = None) -> dict:
         self.key_config.set_values(values, delete_names=delete_names)
@@ -289,7 +349,60 @@ class RouterState:
         }
 
     def settings_aliases(self) -> dict[str, ModelAlias]:
-        return ALIASES
+        aliases = dict(ALIASES)
+        for key in self.custom_key_refs():
+            for alias_name in self.custom_key_aliases(key.name):
+                alias = aliases.get(alias_name)
+                if alias is None:
+                    continue
+                aliases[alias_name] = ModelAlias(
+                    alias=alias.alias,
+                    litellm_model=alias.litellm_model,
+                    base_url=alias.base_url,
+                    keys=(*alias.keys, key),
+                    retry_policy=alias.retry_policy,
+                )
+        return aliases
+
+    def auto_alias_names(self) -> list[str]:
+        return sorted(name for name in ALIASES if "auto" in name)
+
+    def custom_key_refs(self) -> list[KeyRef]:
+        refs: list[KeyRef] = []
+        for name, item in sorted(self.custom_key_config.get().get("keys", {}).items()):
+            if not isinstance(item, dict):
+                continue
+            try:
+                weight = int(item.get("weight", 1))
+            except (TypeError, ValueError):
+                weight = 1
+            refs.append(
+                KeyRef(
+                    str(name),
+                    str(item.get("env_var") or f"OPENCODE_AI_ARK_{str(name).upper()}_API_KEY"),
+                    weight,
+                    str(item.get("provider") or "ark"),
+                    str(item.get("billing_type") or "subscription"),
+                )
+            )
+        return refs
+
+    def custom_key_aliases(self, key_name: str) -> list[str]:
+        item = self.custom_key_config.get().get("keys", {}).get(key_name, {})
+        aliases = item.get("aliases") if isinstance(item, dict) else []
+        if not isinstance(aliases, list):
+            return []
+        return [str(alias) for alias in aliases]
+
+    def all_key_refs(self) -> list[KeyRef]:
+        refs: dict[str, KeyRef] = {}
+        for alias in self.settings_aliases().values():
+            for key in alias.keys:
+                refs[key.name] = key
+        return [refs[name] for name in sorted(refs)]
+
+    def known_key_names(self) -> set[str]:
+        return {key.name for key in self.all_key_refs()}
 
 
 class NoAvailableKeyError(Exception):
@@ -340,6 +453,18 @@ def all_key_refs() -> list[KeyRef]:
 
 def known_key_names() -> set[str]:
     return {key.name for key in all_key_refs()}
+
+
+def normalize_custom_key_name(value: str) -> str:
+    name = value.strip()
+    upper_name = name.upper()
+    for prefix in ("OPENCODE_AI_ARK_", "AI_ARK_"):
+        if upper_name.startswith(prefix):
+            name = name[len(prefix) :]
+            break
+    if name.upper().endswith("_API_KEY"):
+        name = name[: -len("_API_KEY")]
+    return name.strip("_-").lower().replace("_", "-")
 
 
 def parse_retry_after(value: str | None) -> float | None:

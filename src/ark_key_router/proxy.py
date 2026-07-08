@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import time
 from typing import Any
 
@@ -128,6 +127,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             clean_values = {str(name): str(value) for name, value in values.items() if str(value)}
             snapshot = state.set_key_values(clean_values, {str(name) for name in delete_names})
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, **snapshot}
+
+    @app.post("/api/config/keys")
+    async def api_config_keys_add(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="payload must be an object")
+        aliases = payload.get("aliases")
+        if not isinstance(aliases, list):
+            raise HTTPException(status_code=400, detail="aliases must be a list")
+        try:
+            snapshot = state.add_key_to_pools(
+                name=str(payload.get("name") or ""),
+                value=str(payload.get("value") or ""),
+                aliases=[str(alias) for alias in aliases],
+                weight=int(payload.get("weight") or 1),
+            )
         except (RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"ok": True, **snapshot}

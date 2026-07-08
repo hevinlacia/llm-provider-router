@@ -28,7 +28,17 @@ DASHBOARD_HTML = """
     .field label { color: #94a3b8; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
     select, input { background: #111827; border: 1px solid #334155; border-radius: 10px; color: #e5e7eb; padding: 9px 10px; }
     input.weight-input { width: 86px; text-align: right; }
-    input.key-input { width: min(420px, 100%); }
+    input.key-input { width: min(360px, 100%); }
+    input.add-key-name { width: 180px; }
+    .add-key-panel { background: #0b1220; border: 1px solid #1f2937; border-radius: 14px; margin: 16px 0 20px; padding: 14px; }
+    .add-key-grid { align-items: end; display: grid; gap: 12px; grid-template-columns: 180px minmax(260px, 1fr) 96px; max-width: 760px; }
+    .add-key-grid input { box-sizing: border-box; width: 100%; }
+    .pool-list { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    .pool-list label { align-items: center; background: #111827; border: 1px solid #334155; border-radius: 999px; display: inline-flex; gap: 6px; padding: 7px 10px; }
+    .table-wrap { overflow-x: auto; }
+    .api-key-table { min-width: 1060px; }
+    .api-key-table td:nth-child(3) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: nowrap; }
+    .api-key-table .key-input { width: 300px; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 22px 0; }
     .card { background: linear-gradient(180deg, #111827, #0f172a); border: 1px solid #1f2937; border-radius: 16px; padding: 16px; box-shadow: 0 18px 60px rgb(0 0 0 / 22%); }
     .section-title { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
@@ -49,7 +59,7 @@ DASHBOARD_HTML = """
     .provider-group .muted { font-size: 12px; }
     .page { display: none; }
     .page.active { display: block; }
-    @media (max-width: 760px) { .shell { grid-template-columns: 1fr; } aside { position: sticky; top: 0; z-index: 1; } nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } main { padding: 18px; } header { align-items: flex-start; flex-direction: column; } }
+    @media (max-width: 760px) { .shell { grid-template-columns: 1fr; } aside { position: sticky; top: 0; z-index: 1; } nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } main { padding: 18px; } header { align-items: flex-start; flex-direction: column; } .add-key-grid { grid-template-columns: 1fr; max-width: none; } }
   </style>
 </head>
 <body>
@@ -172,6 +182,8 @@ function providersTable(config) {
 function keysTable(config) {
   const entries = config.keys || [];
   if (!entries.length) return '<p class="muted">No configurable API keys.</p>';
+  const autoAliases = config.auto_aliases || [];
+  const addKeyForm = `<div class="add-key-panel"><h3>Add Ark Key</h3><div class="muted">Add a new encrypted key and attach it to selected auto key pools. Key name accepts forms like shell, AI_ARK_SHELL_API_KEY, or OPENCODE_AI_ARK_SHELL_API_KEY.</div><div class="add-key-grid"><div class="field"><label for="add-key-name">Key Name</label><input id="add-key-name" class="add-key-name" autocomplete="off" placeholder="shell"></div><div class="field"><label for="add-key-value">API Key</label><input id="add-key-value" class="key-input" type="password" autocomplete="off" placeholder="Stored encrypted; never displayed"></div><div class="field"><label for="add-key-weight">Weight</label><input id="add-key-weight" class="weight-input" type="number" min="0" step="1" value="1"></div></div><div class="pool-list">${autoAliases.map((name) => `<label><input class="add-key-alias" type="checkbox" value="${name}" checked>${name}</label>`).join('')}</div><div class="toolbar"><button onclick="addKey()">Add Key</button><span id="add-key-status" class="muted"></span></div></div>`;
   const grouped = entries.reduce((groups, item) => {
     if (!groups[item.provider]) groups[item.provider] = [];
     groups[item.provider].push(item);
@@ -183,9 +195,9 @@ function keysTable(config) {
       const statusLabel = item.configured ? item.source : 'missing';
       return `<tr><td>${item.name}</td><td>${billingLabel(item.billing_type)}</td><td>${item.env_var}</td><td><span class="status ${statusClass}">${statusLabel}</span></td><td><input class="key-input" data-key="${item.name}" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></td><td><input class="delete-key" data-key="${item.name}" type="checkbox"></td></tr>`;
     }).join('');
-    return `<div class="provider-group"><h3>${provider}</h3><div class="muted">Keys for this provider are routed through its configured base URL.</div><table><thead><tr><th>Key</th><th>Billing</th><th>Env Var</th><th>Status</th><th>New Value</th><th>Delete Encrypted</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    return `<div class="provider-group"><h3>${provider}</h3><div class="muted">Keys for this provider are routed through its configured base URL.</div><div class="table-wrap"><table class="api-key-table"><thead><tr><th>Key</th><th>Billing</th><th>Env Var</th><th>Status</th><th>New Value</th><th>Delete Encrypted</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
   }).join('');
-  return `${groups}<div class="toolbar"><button onclick="saveKeys()">Save API Keys</button><button class="secondary" onclick="loadKeys()">Reload Keys</button><span id="keys-status" class="muted"></span></div>`;
+  return `${addKeyForm}${groups}<div class="toolbar"><button onclick="saveKeys()">Save API Keys</button><button class="secondary" onclick="loadKeys()">Reload Keys</button><span id="keys-status" class="muted"></span></div>`;
 }
 
 function billingLabel(value) {
@@ -273,7 +285,7 @@ async function loadKeys() {
 }
 
 async function saveWeights() {
-  const inputs = document.querySelectorAll('.weight-input');
+  const inputs = document.querySelectorAll('.weight-input[data-key]');
   const weights = {};
   for (const input of inputs) {
     weights[input.dataset.key] = Number(input.value || 0);
@@ -320,7 +332,7 @@ async function saveProviders() {
 
 async function saveKeys() {
   const values = {};
-  for (const input of document.querySelectorAll('.key-input')) {
+  for (const input of document.querySelectorAll('.key-input[data-key]')) {
     if (input.value) values[input.dataset.key] = input.value;
   }
   const deleteNames = [];
@@ -342,6 +354,31 @@ async function saveKeys() {
   status.className = 'ok';
   status.textContent = 'Saved encrypted key config. New requests use it immediately.';
   document.getElementById('api-keys').innerHTML = keysTable(result);
+}
+
+async function addKey() {
+  const status = document.getElementById('add-key-status');
+  const aliases = Array.from(document.querySelectorAll('.add-key-alias:checked')).map((input) => input.value);
+  const response = await fetch('/api/config/keys', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: document.getElementById('add-key-name').value,
+      value: document.getElementById('add-key-value').value,
+      weight: Number(document.getElementById('add-key-weight').value || 1),
+      aliases,
+    }),
+  });
+  const result = await response.json();
+  if (!response.ok) {
+    status.className = 'error';
+    status.textContent = result.detail || 'Failed to add key';
+    return;
+  }
+  status.className = 'ok';
+  status.textContent = 'Added encrypted key to selected auto pools.';
+  document.getElementById('api-keys').innerHTML = keysTable(result);
+  await loadWeights();
 }
 
 async function resetUsage() {

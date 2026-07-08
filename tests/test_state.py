@@ -23,6 +23,8 @@ def settings(usage_db_path: str = ":memory:", weight_config_path: str = ":memory
         usage_db_path=usage_db_path,
         weight_config_path=weight_config_path,
         provider_config_path=":memory:",
+        custom_key_config_path=":memory:",
+        router_auth_config_path=":memory:",
         key_config_path=":memory:",
         sops_age_key_file="~/.config/sops/age/keys.txt",
         sops_age_recipient="age1test",
@@ -325,6 +327,8 @@ def test_models_endpoint_validates_local_token() -> None:
                 usage_db_path=":memory:",
                 weight_config_path=":memory:",
                 provider_config_path=":memory:",
+                custom_key_config_path=":memory:",
+                router_auth_config_path=":memory:",
                 key_config_path=":memory:",
                 sops_age_key_file="~/.config/sops/age/keys.txt",
                 sops_age_recipient="age1test",
@@ -398,7 +402,7 @@ def test_encrypted_key_config_overrides_environment(monkeypatch) -> None:
     assert state.upstream_key_value(ARK_KEYS[0]) == "configured-key"
     snapshot = state.key_secret_snapshot()
     garvin = next(item for item in snapshot["keys"] if item["name"] == "garvin")
-    assert garvin["source"] == "encrypted_file"
+    assert garvin["source"] == "encrypted_file+runtime_env"
 
 
 def test_encrypted_key_config_can_remove_value(monkeypatch) -> None:
@@ -412,6 +416,104 @@ def test_encrypted_key_config_can_remove_value(monkeypatch) -> None:
     snapshot = state.key_secret_snapshot()
     garvin = next(item for item in snapshot["keys"] if item["name"] == "garvin")
     assert garvin["source"] == "environment"
+
+
+def test_custom_key_can_be_added_to_selected_auto_pools() -> None:
+    state = RouterState(settings())
+
+    snapshot = state.add_key_to_pools(
+        name="new-ark",
+        value="configured-key",
+        aliases=["glm-latest-auto", "minimax-latest-auto"],
+        weight=2,
+    )
+
+    key = next(item for item in snapshot["keys"] if item["name"] == "new-ark")
+    assert key["configured"] is True
+    assert key["source"] == "encrypted_file+runtime_env"
+    assert state.upstream_key_value(state.custom_key_refs()[0]) == "configured-key"
+    glm_keys = [key.name for key in state.settings_aliases()["glm-latest-auto"].keys]
+    flash_keys = [key.name for key in state.settings_aliases()["deepseek-v4-flash-auto"].keys]
+    minimax_keys = [key.name for key in state.settings_aliases()["minimax-latest-auto"].keys]
+    assert "new-ark" in glm_keys
+    assert "new-ark" not in flash_keys
+    assert "new-ark" in minimax_keys
+
+
+def test_custom_key_rejects_non_auto_pool() -> None:
+    state = RouterState(settings())
+
+    try:
+        state.add_key_to_pools(
+            name="new-ark",
+            value="configured-key",
+            aliases=["openai-gpt-5.5-hevin"],
+        )
+    except ValueError as exc:
+        assert "unknown auto alias" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_custom_key_name_accepts_env_var_style() -> None:
+    state = RouterState(settings())
+
+    snapshot = state.add_key_to_pools(
+        name="AI_ARK_SHELL_API_KEY",
+        value="configured-key",
+        aliases=["glm-latest-auto"],
+    )
+
+    key = next(item for item in snapshot["keys"] if item["name"] == "shell")
+    assert key["env_var"] == "OPENCODE_AI_ARK_SHELL_API_KEY"
+    assert key["source"] == "encrypted_file+runtime_env"
+
+
+def test_custom_key_add_updates_runtime_environment(monkeypatch) -> None:
+    monkeypatch.delenv("OPENCODE_AI_ARK_SHELL_API_KEY", raising=False)
+    state = RouterState(settings())
+
+    state.add_key_to_pools(
+        name="shell",
+        value="configured-key",
+        aliases=["glm-latest-auto"],
+    )
+
+    assert __import__("os").environ["OPENCODE_AI_ARK_SHELL_API_KEY"] == "configured-key"
+    shell_ref = next(key for key in state.custom_key_refs() if key.name == "shell")
+    assert state.upstream_key_value(shell_ref) == "configured-key"
+
+
+def test_custom_key_appears_in_key_weights() -> None:
+    state = RouterState(settings())
+
+    state.add_key_to_pools(
+        name="shell",
+        value="configured-key",
+        aliases=["glm-latest-auto"],
+        weight=3,
+    )
+
+    snapshot = state.key_config_snapshot()
+    assert snapshot["weights"]["shell"] == 3
+
+
+def test_custom_key_weight_can_be_saved() -> None:
+    state = RouterState(settings())
+
+    state.add_key_to_pools(
+        name="shell",
+        value="configured-key",
+        aliases=["glm-latest-auto"],
+        weight=1,
+    )
+    state.set_key_weights({"shell": 7})
+
+    snapshot = state.key_config_snapshot()
+    weighted_alias = state.alias_with_runtime_weights(state.settings_aliases()["glm-latest-auto"])
+    shell = next(key for key in weighted_alias.keys if key.name == "shell")
+    assert snapshot["weights"]["shell"] == 7
+    assert shell.weight == 7
 
 
 def _oai_alias() -> ModelAlias:

@@ -359,6 +359,11 @@ class KeyWeightConfig:
             self._write(next_weights)
             return next_weights
 
+    def add_defaults(self, defaults: dict[str, int]) -> None:
+        with self._lock:
+            for name, weight in defaults.items():
+                self.defaults.setdefault(name, weight)
+
     def _write(self, weights: dict[str, int]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         content = json.dumps(dict(sorted(weights.items())), indent=2) + "\n"
@@ -407,4 +412,67 @@ class ProviderConfig:
     def _write(self, base_urls: dict[str, str]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         content = json.dumps(dict(sorted(base_urls.items())), indent=2) + "\n"
+        self.path.write_text(content, encoding="utf-8")
+
+
+class CustomKeyPoolConfig:
+    def __init__(self, path: str):
+        if path == ":memory:":
+            self.path = Path(path)
+        else:
+            expanded_path = Path(os.path.expanduser(path))
+            self.path = expanded_path if expanded_path.is_absolute() else Path.cwd() / expanded_path
+        self._memory: dict[str, dict] = {"keys": {}}
+        self._lock = threading.Lock()
+
+    def get(self) -> dict[str, dict]:
+        with self._lock:
+            return self._read_unlocked()
+
+    def add_key(
+        self,
+        *,
+        name: str,
+        env_var: str,
+        provider: str,
+        billing_type: str,
+        weight: int,
+        aliases: list[str],
+    ) -> dict[str, dict]:
+        with self._lock:
+            config = self._read_unlocked()
+            keys = dict(config.get("keys", {}))
+            keys[name] = {
+                "env_var": env_var,
+                "provider": provider,
+                "billing_type": billing_type,
+                "weight": weight,
+                "aliases": sorted(set(aliases)),
+            }
+            config["keys"] = keys
+            self._write_unlocked(config)
+            return config
+
+    def _read_unlocked(self) -> dict[str, dict]:
+        if str(self.path) == ":memory:":
+            return {"keys": dict(self._memory.get("keys", {}))}
+        if not self.path.exists():
+            self._write_unlocked({"keys": {}})
+            return {"keys": {}}
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {"keys": {}}
+        if not isinstance(data, dict) or not isinstance(data.get("keys"), dict):
+            return {"keys": {}}
+        return {"keys": data["keys"]}
+
+    def _write_unlocked(self, config: dict[str, dict]) -> None:
+        if str(self.path) == ":memory:":
+            self._memory = {"keys": dict(config.get("keys", {}))}
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        content = (
+            json.dumps({"keys": dict(sorted(config.get("keys", {}).items()))}, indent=2) + "\n"
+        )
         self.path.write_text(content, encoding="utf-8")

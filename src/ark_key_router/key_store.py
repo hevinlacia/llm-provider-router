@@ -58,6 +58,10 @@ class EncryptedKeyConfig:
                 self._write_unlocked(current)
             return self._safe_snapshot_from_values(current)
 
+    def set_known_names(self, known_names: set[str]) -> None:
+        with self._lock:
+            self.known_names = set(known_names)
+
     def safe_snapshot(self) -> dict[str, dict[str, bool | str]]:
         values = self.get_all()
         return self._safe_snapshot_from_values(values)

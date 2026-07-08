@@ -1,0 +1,16 @@
+{
+  "keys": {
+    "shell": {
+      "env_var": "OPENCODE_AI_ARK_SHELL_API_KEY",
+      "provider": "ark",
+      "billing_type": "subscription",
+      "weight": 1,
+      "aliases": [
+        "deepseek-v4-flash-auto",
+        "deepseek-v4-pro-auto",
+        "glm-latest-auto",
+        "minimax-latest-auto"
+      ]
+    }
+  }
+}
