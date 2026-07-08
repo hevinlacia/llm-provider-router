@@ -7,7 +7,7 @@ DASHBOARD_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Ark Key Router</title>
+  <title>LLM Provider Router</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
     body { margin: 0; background: #0b1020; color: #e5e7eb; }
@@ -65,7 +65,7 @@ DASHBOARD_HTML = """
 <body>
 <div class="shell">
   <aside>
-    <div class="brand">Ark Key Router</div>
+    <div class="brand">LLM Provider Router</div>
     <nav>
       <button id="nav-home" class="nav-button active" onclick="showPage('home')">Home</button>
       <button id="nav-settings" class="nav-button" onclick="showPage('settings')">Settings</button>

@@ -17,7 +17,7 @@ from .state import NoAvailableKeyError, RouterState, parse_quota_reset, parse_re
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     state = RouterState(settings)
-    app = FastAPI(title="Ark Key Router", version="0.1.0")
+    app = FastAPI(title="LLM Provider Router", version="0.1.0")
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -61,7 +61,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "id": alias.alias,
                     "object": "model",
                     "created": 0,
-                    "owned_by": "ark-key-router",
+                    "owned_by": "llm-provider-router",
                 }
                 for alias in ALIASES.values()
             ],

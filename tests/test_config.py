@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from ark_key_router.config import (
+from llm_provider_router.config import (
     DEFAULT_ROUTER_AUTH_CONFIG_PATH,
     _load_router_bearer_token,
     load_settings,
@@ -65,9 +65,9 @@ def test_default_router_auth_path() -> None:
 def test_load_settings_reads_file_token_when_env_missing(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "router-auth.json"
     config_path.write_text(json.dumps({"bearer_token": "from-file"}), encoding="utf-8")
-    monkeypatch.delenv("ARK_KEY_ROUTER_BEARER_TOKEN", raising=False)
-    monkeypatch.delenv("ARK_KEY_ROUTER_API_KEY", raising=False)
-    monkeypatch.setenv("ARK_KEY_ROUTER_AUTH_CONFIG_PATH", str(config_path))
+    monkeypatch.delenv("LLM_PROVIDER_ROUTER_BEARER_TOKEN", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER_ROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER_ROUTER_AUTH_CONFIG_PATH", str(config_path))
 
     assert load_settings().local_bearer_token == "from-file"
 
@@ -75,9 +75,9 @@ def test_load_settings_reads_file_token_when_env_missing(monkeypatch, tmp_path: 
 def test_load_settings_env_overrides_file(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "router-auth.json"
     config_path.write_text(json.dumps({"bearer_token": "from-file"}), encoding="utf-8")
-    monkeypatch.setenv("ARK_KEY_ROUTER_BEARER_TOKEN", "from-env")
-    monkeypatch.setenv("ARK_KEY_ROUTER_AUTH_CONFIG_PATH", str(config_path))
-    monkeypatch.setenv("ARK_KEY_ROUTER_API_KEY", "from-api-env")
+    monkeypatch.setenv("LLM_PROVIDER_ROUTER_BEARER_TOKEN", "from-env")
+    monkeypatch.setenv("LLM_PROVIDER_ROUTER_AUTH_CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("LLM_PROVIDER_ROUTER_API_KEY", "from-api-env")
 
     assert load_settings().local_bearer_token == "from-env"
 
@@ -85,24 +85,24 @@ def test_load_settings_env_overrides_file(monkeypatch, tmp_path: Path) -> None:
 def test_load_settings_api_key_env_overrides_file(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "router-auth.json"
     config_path.write_text(json.dumps({"bearer_token": "from-file"}), encoding="utf-8")
-    monkeypatch.delenv("ARK_KEY_ROUTER_BEARER_TOKEN", raising=False)
-    monkeypatch.setenv("ARK_KEY_ROUTER_AUTH_CONFIG_PATH", str(config_path))
-    monkeypatch.setenv("ARK_KEY_ROUTER_API_KEY", "from-api-env")
+    monkeypatch.delenv("LLM_PROVIDER_ROUTER_BEARER_TOKEN", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER_ROUTER_AUTH_CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("LLM_PROVIDER_ROUTER_API_KEY", "from-api-env")
 
     assert load_settings().local_bearer_token == "from-api-env"
 
 
 def test_load_settings_falls_back_to_api_key_env(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.delenv("ARK_KEY_ROUTER_BEARER_TOKEN", raising=False)
-    monkeypatch.setenv("ARK_KEY_ROUTER_AUTH_CONFIG_PATH", str(tmp_path / "missing.json"))
-    monkeypatch.setenv("ARK_KEY_ROUTER_API_KEY", "from-api-env")
+    monkeypatch.delenv("LLM_PROVIDER_ROUTER_BEARER_TOKEN", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER_ROUTER_AUTH_CONFIG_PATH", str(tmp_path / "missing.json"))
+    monkeypatch.setenv("LLM_PROVIDER_ROUTER_API_KEY", "from-api-env")
 
     assert load_settings().local_bearer_token == "from-api-env"
 
 
 def test_load_settings_returns_none_when_no_source(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.delenv("ARK_KEY_ROUTER_BEARER_TOKEN", raising=False)
-    monkeypatch.setenv("ARK_KEY_ROUTER_AUTH_CONFIG_PATH", str(tmp_path / "missing.json"))
-    monkeypatch.delenv("ARK_KEY_ROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER_ROUTER_BEARER_TOKEN", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER_ROUTER_AUTH_CONFIG_PATH", str(tmp_path / "missing.json"))
+    monkeypatch.delenv("LLM_PROVIDER_ROUTER_API_KEY", raising=False)
 
     assert load_settings().local_bearer_token is None

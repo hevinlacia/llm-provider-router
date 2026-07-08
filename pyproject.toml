@@ -1,5 +1,5 @@
 [project]
-name = "ark-key-router"
+name = "llm-provider-router"
 version = "0.1.0"
 description = "Small OpenAI-compatible key-router proxy for Ark model aliases"
 readme = "README.md"
@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ark-key-router = "ark_key_router.main:main"
+llm-provider-router = "llm_provider_router.main:main"
 
 [dependency-groups]
 dev = [

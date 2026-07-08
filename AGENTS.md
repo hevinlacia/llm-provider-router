@@ -1,4 +1,4 @@
-# AGENTS.md — Ark Key Router
+# AGENTS.md — LLM Provider Router
 
 Personal tool project under `~/Developer/tools/`.
 

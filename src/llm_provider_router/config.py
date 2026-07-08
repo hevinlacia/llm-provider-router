@@ -216,45 +216,45 @@ ALIASES: dict[str, ModelAlias] = {
 
 def load_settings() -> Settings:
     return Settings(
-        host=os.getenv("ARK_KEY_ROUTER_HOST", "127.0.0.1"),
-        port=int(os.getenv("ARK_KEY_ROUTER_PORT", "8789")),
-        session_ttl_seconds=int(os.getenv("ARK_KEY_ROUTER_SESSION_TTL_SECONDS", "3600")),
+        host=os.getenv("LLM_PROVIDER_ROUTER_HOST", "127.0.0.1"),
+        port=int(os.getenv("LLM_PROVIDER_ROUTER_PORT", "8789")),
+        session_ttl_seconds=int(os.getenv("LLM_PROVIDER_ROUTER_SESSION_TTL_SECONDS", "3600")),
         monthly_quota_fallback_seconds=int(
-            os.getenv("ARK_KEY_ROUTER_MONTHLY_QUOTA_FALLBACK_SECONDS", "86400")
+            os.getenv("LLM_PROVIDER_ROUTER_MONTHLY_QUOTA_FALLBACK_SECONDS", "86400")
         ),
         five_hour_quota_fallback_seconds=int(
-            os.getenv("ARK_KEY_ROUTER_5H_QUOTA_FALLBACK_SECONDS", "5400")
+            os.getenv("LLM_PROVIDER_ROUTER_5H_QUOTA_FALLBACK_SECONDS", "5400")
         ),
-        request_timeout_seconds=float(os.getenv("ARK_KEY_ROUTER_REQUEST_TIMEOUT_SECONDS", "600")),
+        request_timeout_seconds=float(os.getenv("LLM_PROVIDER_ROUTER_REQUEST_TIMEOUT_SECONDS", "600")),
         local_bearer_token=(
-            os.getenv("ARK_KEY_ROUTER_BEARER_TOKEN")
-            or os.getenv("ARK_KEY_ROUTER_API_KEY")
+            os.getenv("LLM_PROVIDER_ROUTER_BEARER_TOKEN")
+            or os.getenv("LLM_PROVIDER_ROUTER_API_KEY")
             or _load_router_bearer_token(
-                os.getenv("ARK_KEY_ROUTER_AUTH_CONFIG_PATH", DEFAULT_ROUTER_AUTH_CONFIG_PATH)
+                os.getenv("LLM_PROVIDER_ROUTER_AUTH_CONFIG_PATH", DEFAULT_ROUTER_AUTH_CONFIG_PATH)
             )
         ),
         usage_db_path=os.getenv(
-            "ARK_KEY_ROUTER_USAGE_DB_PATH",
-            "~/.local/state/ark-key-router/usage.sqlite3",
+            "LLM_PROVIDER_ROUTER_USAGE_DB_PATH",
+            "~/.local/state/llm-provider-router/usage.sqlite3",
         ),
         weight_config_path=os.getenv(
-            "ARK_KEY_ROUTER_WEIGHT_CONFIG_PATH",
+            "LLM_PROVIDER_ROUTER_WEIGHT_CONFIG_PATH",
             DEFAULT_WEIGHT_CONFIG_PATH,
         ),
         provider_config_path=os.getenv(
-            "ARK_KEY_ROUTER_PROVIDER_CONFIG_PATH",
+            "LLM_PROVIDER_ROUTER_PROVIDER_CONFIG_PATH",
             DEFAULT_PROVIDER_CONFIG_PATH,
         ),
         custom_key_config_path=os.getenv(
-            "ARK_KEY_ROUTER_CUSTOM_KEY_CONFIG_PATH",
+            "LLM_PROVIDER_ROUTER_CUSTOM_KEY_CONFIG_PATH",
             DEFAULT_CUSTOM_KEY_CONFIG_PATH,
         ),
         router_auth_config_path=os.getenv(
-            "ARK_KEY_ROUTER_AUTH_CONFIG_PATH",
+            "LLM_PROVIDER_ROUTER_AUTH_CONFIG_PATH",
             DEFAULT_ROUTER_AUTH_CONFIG_PATH,
         ),
         key_config_path=os.getenv(
-            "ARK_KEY_ROUTER_KEY_CONFIG_PATH",
+            "LLM_PROVIDER_ROUTER_KEY_CONFIG_PATH",
             DEFAULT_KEY_CONFIG_PATH,
         ),
         sops_age_key_file=os.getenv(
@@ -262,7 +262,7 @@ def load_settings() -> Settings:
             DEFAULT_SOPS_AGE_KEY_FILE,
         ),
         sops_age_recipient=os.getenv(
-            "ARK_KEY_ROUTER_SOPS_AGE_RECIPIENT",
+            "LLM_PROVIDER_ROUTER_SOPS_AGE_RECIPIENT",
             DEFAULT_SOPS_AGE_RECIPIENT,
         ),
     )

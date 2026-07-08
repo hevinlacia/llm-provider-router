@@ -1,16 +1,16 @@
 #!/bin/bash
-# Register ark-key-router as a systemd user service.
+# Register llm-provider-router as a systemd user service.
 # Usage: bin/install-service.sh
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SERVICE_NAME="ark-key-router"
+SERVICE_NAME="llm-provider-router"
 SERVICE_FILE="$HOME/.config/systemd/user/${SERVICE_NAME}.service"
 UV_BIN="$(command -v uv)"
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Ark key router OpenAI-compatible proxy
+Description=LLM provider router OpenAI-compatible proxy
 After=network-online.target
 Wants=network-online.target
 
@@ -20,11 +20,11 @@ WorkingDirectory=${PROJECT_DIR}
 EnvironmentFile=$HOME/.config/opencode/opencode-secrets.env
 EnvironmentFile=$HOME/.config/opencode/opencode-internal.env
 EnvironmentFile=$HOME/.config/opencode/opencode-config.env
-Environment=ARK_KEY_ROUTER_HOST=127.0.0.1
-Environment=ARK_KEY_ROUTER_PORT=8789
+Environment=LLM_PROVIDER_ROUTER_HOST=127.0.0.1
+Environment=LLM_PROVIDER_ROUTER_PORT=8789
 Environment=SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 Environment=SSL_CERT_DIR=/etc/ssl/certs
-ExecStart=${UV_BIN} run ark-key-router
+ExecStart=${UV_BIN} run llm-provider-router
 Restart=on-failure
 RestartSec=3
 TimeoutStartSec=60

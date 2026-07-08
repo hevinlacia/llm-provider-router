@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from fastapi.testclient import TestClient
 
-from ark_key_router.config import ALIASES, ARK_KEYS, ModelAlias, RetryPolicy, Settings
-from ark_key_router.proxy import call_upstream, create_app
-from ark_key_router.state import NoAvailableKeyError, RouterState, parse_quota_reset
+from llm_provider_router.config import ALIASES, ARK_KEYS, ModelAlias, RetryPolicy, Settings
+from llm_provider_router.proxy import call_upstream, create_app
+from llm_provider_router.state import NoAvailableKeyError, RouterState, parse_quota_reset
 
 
 def settings(usage_db_path: str = ":memory:", weight_config_path: str = ":memory:") -> Settings:
@@ -160,7 +160,7 @@ def test_call_upstream_retries_next_key_after_connect_error() -> None:
 
     async def run_test() -> None:
         with patch.dict("os.environ", {key.env_var: "test-key" for key in alias().keys}):
-            with patch("ark_key_router.proxy.httpx.AsyncClient", Client):
+            with patch("llm_provider_router.proxy.httpx.AsyncClient", Client):
                 result = await call_upstream(
                     alias(),
                     "session-a",
@@ -282,10 +282,10 @@ def test_usage_stats_custom_range_can_exclude_events(tmp_path) -> None:
     assert usage["by_day"] == {}
 
 
-def test_settings_accepts_ark_key_router_api_key() -> None:
-    from ark_key_router.config import load_settings
+def test_settings_accepts_llm_provider_router_api_key() -> None:
+    from llm_provider_router.config import load_settings
 
-    with patch.dict("os.environ", {"ARK_KEY_ROUTER_API_KEY": "local-token"}, clear=True):
+    with patch.dict("os.environ", {"LLM_PROVIDER_ROUTER_API_KEY": "local-token"}, clear=True):
         assert load_settings().local_bearer_token == "local-token"
 
 
@@ -517,7 +517,7 @@ def test_custom_key_weight_can_be_saved() -> None:
 
 
 def _oai_alias() -> ModelAlias:
-    from ark_key_router.config import KeyRef
+    from llm_provider_router.config import KeyRef
 
     return ModelAlias(
         alias="openai-gpt-5.5-hevin",
@@ -552,8 +552,8 @@ def test_call_upstream_retries_on_429_with_retry_policy() -> None:
 
     async def run_test() -> None:
         with patch.dict("os.environ", {"OPENCODE_AI_OPENAI_HEVIN_API_KEY": "test-key"}):
-            with patch("ark_key_router.proxy.httpx.AsyncClient", Client):
-                with patch("ark_key_router.proxy.asyncio.sleep", new_callable=AsyncMock):
+            with patch("llm_provider_router.proxy.httpx.AsyncClient", Client):
+                with patch("llm_provider_router.proxy.asyncio.sleep", new_callable=AsyncMock):
                     result = await call_upstream(
                         _oai_alias(),
                         "session-a",
@@ -605,7 +605,7 @@ def test_call_upstream_returns_last_retriable_status_when_deadline_exceeded() ->
 
     async def run_test() -> None:
         with patch.dict("os.environ", {"OPENCODE_AI_OPENAI_HEVIN_API_KEY": "test-key"}):
-            with patch("ark_key_router.proxy.httpx.AsyncClient", Client):
+            with patch("llm_provider_router.proxy.httpx.AsyncClient", Client):
                 result = await call_upstream(
                     alias_with_short_deadline,
                     "session-a",
