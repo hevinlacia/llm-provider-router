@@ -11,7 +11,13 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from .config import KeyRef, ModelAlias, Settings, load_settings
 from .dashboard import DASHBOARD_HTML
-from .state import NoAvailableKeyError, RouterState, parse_quota_reset, parse_retry_after
+from .state import (
+    NoAvailableKeyError,
+    RouterState,
+    parse_auth_invalid,
+    parse_quota_reset,
+    parse_retry_after,
+)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -268,6 +274,7 @@ async def call_upstream(
         body_text = response.text
 
         if retry_policy and response.status_code in retry_policy.retry_on_status:
+            maybe_freeze_key(key, response.status_code, response.headers, body_text, settings, state)
             try:
                 content = response.json()
             except json.JSONDecodeError:
@@ -375,6 +382,9 @@ async def stream_upstream(
                         async for chunk in response.aiter_bytes():
                             chunks.append(chunk)
                         body_text = b"".join(chunks).decode("utf-8", "replace")
+                        maybe_freeze_key(
+                            key, status_code, response.headers, body_text, settings, state
+                        )
                         state.record_usage(
                             model=alias.alias,
                             key_name=key.name,
@@ -443,6 +453,12 @@ def maybe_freeze_key(
         until, reason = quota
         state.freeze(key.name, until=until, reason=reason)
         return
+    if status_code in (401, 403):
+        auth_invalid = parse_auth_invalid(body_text, settings)
+        if auth_invalid is not None:
+            until, reason = auth_invalid
+            state.freeze(key.name, until=until, reason=reason)
+            return
     retry_until = parse_retry_after(headers.get("retry-after"))
     if status_code == 429 and retry_until is not None:
         state.freeze(key.name, until=retry_until, reason="retry_after")

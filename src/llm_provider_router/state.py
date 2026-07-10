@@ -541,6 +541,25 @@ def parse_quota_reset(text: str, settings: Settings) -> tuple[float, str] | None
     return time.time() + settings.five_hour_quota_fallback_seconds, "five_hour_quota"
 
 
+def parse_auth_invalid(text: str, settings: Settings) -> tuple[float, str] | None:
+    """Detect upstream 401/403 authentication failures and freeze the key.
+
+    Ark returns authentication errors when a subscription key is revoked,
+    expired, or has otherwise stopped authorizing requests (this can overlap
+    with quota exhaustion surfacing as auth errors instead of the quota text).
+    Such a key will not recover on its own within a request, so freeze it long
+    enough for the operator to investigate, while failover routes to healthy keys.
+    """
+    lowered = text.lower()
+    if not (
+        "authentication_error" in lowered
+        or "authentication fails" in lowered
+        or ("api key" in lowered and "invalid" in lowered)
+    ):
+        return None
+    return time.time() + settings.auth_invalid_freeze_seconds, "auth_invalid"
+
+
 def parse_reset_timestamp(text: str) -> float | None:
     import re
 

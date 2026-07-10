@@ -8,7 +8,8 @@ This project is a small replacement path for LiteLLM's key-pool routing. It keep
 - Sliding TTL: active session bindings refresh for 1 hour by default.
 - Quota freeze: provider quota errors freeze the selected key until the reset timestamp from the error message.
 - Fallback freeze: if the provider gives no reset timestamp, monthly quota freezes for 24 hours and 5-hour quota freezes for 1.5 hours.
-- Failover: if a bound key is frozen, the same session is rebound to another healthy key.
+- Auth freeze: 401/403 authentication errors (revoked/expired/invalid key, including quota exhaustion surfacing as auth errors) freeze the key for a configurable duration (default 24 hours) so failover routes around it.
+- Failover: Ark `*-auto` aliases retry across keys on 401/402/429/5xx; if a bound key is frozen, the same session is rebound to another healthy key.
 - Streaming: SSE streams are proxied without buffering the whole response.
 - Usage metrics: request/error counts and OpenAI `usage` tokens are tracked in memory by model, key, and status code.
 
@@ -89,6 +90,7 @@ LLM_PROVIDER_ROUTER_PORT=8789
 LLM_PROVIDER_ROUTER_SESSION_TTL_SECONDS=3600
 LLM_PROVIDER_ROUTER_MONTHLY_QUOTA_FALLBACK_SECONDS=86400
 LLM_PROVIDER_ROUTER_5H_QUOTA_FALLBACK_SECONDS=5400
+LLM_PROVIDER_ROUTER_AUTH_INVALID_FREEZE_SECONDS=86400
 LLM_PROVIDER_ROUTER_REQUEST_TIMEOUT_SECONDS=600
 LLM_PROVIDER_ROUTER_BEARER_TOKEN=<optional; falls back to config/router-auth.json, then LLM_PROVIDER_ROUTER_API_KEY>
 LLM_PROVIDER_ROUTER_USAGE_DB_PATH=~/.local/state/llm-provider-router/usage.sqlite3

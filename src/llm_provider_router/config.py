@@ -111,6 +111,7 @@ class Settings:
     key_config_path: str
     sops_age_key_file: str
     sops_age_recipient: str
+    auth_invalid_freeze_seconds: int = 86400
 
 
 ARK_KEYS: tuple[KeyRef, ...] = (
@@ -132,6 +133,14 @@ OAI_RELAY_RETRY_POLICY = RetryPolicy(
     retry_on_status=(429, 500, 502, 503, 504),
 )
 
+# Ark auto aliases pool multiple Ark subscription keys. Failover across keys on
+# auth/quota/server errors instead of surfacing the first bad key to the client.
+ARK_RETRY_POLICY = RetryPolicy(
+    max_retry_seconds=300,
+    retry_delay_seconds=5,
+    retry_on_status=(401, 402, 429, 500, 502, 503, 504),
+)
+
 DEEPSEEK_OFFICIAL_KEYS: tuple[KeyRef, ...] = (
     KeyRef(
         "deepseek-official",
@@ -144,35 +153,54 @@ DEEPSEEK_OFFICIAL_KEYS: tuple[KeyRef, ...] = (
 
 
 ALIASES: dict[str, ModelAlias] = {
+    "high-model-auto": ModelAlias(
+        alias="high-model-auto",
+        litellm_model="openai/gpt-5.5",
+        base_url="https://api.aixhan.com/v1",
+        keys=OAI_HEVIN_KEYS,
+        retry_policy=OAI_RELAY_RETRY_POLICY,
+    ),
+    "low-model-auto": ModelAlias(
+        alias="low-model-auto",
+        litellm_model="openai/deepseek-v4-flash",
+        base_url=DEFAULT_ARK_BASE_URL,
+        keys=ARK_KEYS,
+        retry_policy=ARK_RETRY_POLICY,
+    ),
     "picture-model-auto": ModelAlias(
         alias="picture-model-auto",
         litellm_model="openai/minimax-m3",
         base_url=DEFAULT_ARK_BASE_URL,
         keys=ARK_KEYS,
+        retry_policy=ARK_RETRY_POLICY,
     ),
     "glm-latest-auto": ModelAlias(
         alias="glm-latest-auto",
         litellm_model="openai/glm-5.2",
         base_url=DEFAULT_ARK_BASE_URL,
         keys=ARK_KEYS,
+        retry_policy=ARK_RETRY_POLICY,
     ),
     "deepseek-v4-pro-auto": ModelAlias(
         alias="deepseek-v4-pro-auto",
         litellm_model="openai/deepseek-v4-pro",
         base_url=DEFAULT_ARK_BASE_URL,
         keys=ARK_KEYS,
+        retry_policy=ARK_RETRY_POLICY,
     ),
     "deepseek-v4-flash-auto": ModelAlias(
         alias="deepseek-v4-flash-auto",
         litellm_model="openai/deepseek-v4-flash",
         base_url=DEFAULT_ARK_BASE_URL,
         keys=ARK_KEYS,
+        retry_policy=ARK_RETRY_POLICY,
     ),
     "minimax-latest-auto": ModelAlias(
         alias="minimax-latest-auto",
         litellm_model="openai/minimax-m3",
         base_url=DEFAULT_ARK_BASE_URL,
         keys=ARK_KEYS,
+        retry_policy=ARK_RETRY_POLICY,
     ),
     "openai-gpt-5.5-hevin": ModelAlias(
         alias="openai-gpt-5.5-hevin",
@@ -262,5 +290,8 @@ def load_settings() -> Settings:
         sops_age_recipient=os.getenv(
             "LLM_PROVIDER_ROUTER_SOPS_AGE_RECIPIENT",
             DEFAULT_SOPS_AGE_RECIPIENT,
+        ),
+        auth_invalid_freeze_seconds=int(
+            os.getenv("LLM_PROVIDER_ROUTER_AUTH_INVALID_FREEZE_SECONDS", "86400")
         ),
     )

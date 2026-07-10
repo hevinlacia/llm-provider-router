@@ -9,13 +9,19 @@ from fastapi.testclient import TestClient
 from llm_provider_router.config import (
     ALIASES,
     ARK_KEYS,
+    ARK_RETRY_POLICY,
     DEFAULT_MODEL_ROUTES,
     ModelAlias,
     RetryPolicy,
     Settings,
 )
 from llm_provider_router.proxy import call_upstream, create_app
-from llm_provider_router.state import NoAvailableKeyError, RouterState, parse_quota_reset
+from llm_provider_router.state import (
+    NoAvailableKeyError,
+    RouterState,
+    parse_auth_invalid,
+    parse_quota_reset,
+)
 from llm_provider_router.usage_store import ModelRouteConfig
 
 
@@ -143,6 +149,22 @@ def test_parse_quota_reset_timestamp() -> None:
     until, reason = result
     assert until > time.time()
     assert reason == "five_hour_quota"
+
+
+def test_parse_auth_invalid_recognizes_ark_authentication_error() -> None:
+    body = (
+        '{"message":"Authentication Fails, Your api key: ****KEY} is invalid",'
+        '"type":"authentication_error","param":null,"code":"invalid_request_error"}'
+    )
+    result = parse_auth_invalid(body, settings())
+    assert result is not None
+    until, reason = result
+    assert reason == "auth_invalid"
+    assert until > time.time() + 86000
+
+
+def test_parse_auth_invalid_ignores_non_auth_body() -> None:
+    assert parse_auth_invalid('{"error":{"message":"rate limited"}}', settings()) is None
 
 
 def test_litellm_openai_prefix_is_removed_for_upstream() -> None:
@@ -551,6 +573,67 @@ def test_custom_key_weight_can_be_saved() -> None:
     shell = next(key for key in weighted_alias.keys if key.name == "shell")
     assert snapshot["weights"]["shell"] == 7
     assert shell.weight == 7
+
+
+def _ark_alias() -> ModelAlias:
+    return ModelAlias(
+        alias="glm-latest-auto",
+        litellm_model="openai/glm-5.2",
+        base_url="https://example.invalid/v1",
+        keys=ARK_KEYS[:2],
+        retry_policy=ARK_RETRY_POLICY,
+    )
+
+
+def test_call_upstream_freezes_bad_key_and_failovers_on_401() -> None:
+    state = RouterState(settings())
+    # bind session to the first key so the first upstream call is deterministic
+    ark = _ark_alias()
+    state.bind("glm-latest-auto", "session-a", ark.keys[0].name)
+    request = httpx.Request("POST", "https://example.invalid/v1/chat/completions")
+    auth_error_body = {
+        "message": "Authentication Fails, Your api key: ****KEY} is invalid",
+        "type": "authentication_error",
+        "param": None,
+        "code": "invalid_request_error",
+    }
+    error_resp = httpx.Response(401, json=auth_error_body, request=request)
+    ok_resp = httpx.Response(200, json={"usage": {"total_tokens": 1}}, request=request)
+    post = AsyncMock(side_effect=[error_resp, ok_resp])
+
+    class Client:
+        def __init__(self, timeout: float):
+            self.timeout = timeout
+            self.post = post
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    async def run_test() -> None:
+        with patch.dict("os.environ", {key.env_var: "test-key" for key in ark.keys}):
+            with patch("llm_provider_router.proxy.httpx.AsyncClient", Client):
+                with patch("llm_provider_router.proxy.asyncio.sleep", new_callable=AsyncMock):
+                    result = await call_upstream(
+                        ark,
+                        "session-a",
+                        {"model": "glm-5.2", "messages": []},
+                        settings(),
+                        state,
+                    )
+        assert result.status_code == 200
+
+    import asyncio
+
+    asyncio.run(run_test())
+    assert post.await_count == 2
+    # the first key hit a 401 and must be frozen with auth_invalid reason
+    assert state.is_frozen(ark.keys[0].name)
+    # the session rebinds to the healthy key
+    rebound = state.select_key(ark, "session-a")
+    assert rebound.name == ark.keys[1].name
 
 
 def _oai_alias() -> ModelAlias:
