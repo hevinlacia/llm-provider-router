@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 llm-provider-router = "llm_provider_router.main:main"
+llm-provider-router-front-proxy = "llm_provider_router.front_proxy:main"
 
 [dependency-groups]
 dev = [

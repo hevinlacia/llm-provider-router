@@ -183,8 +183,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         last_frozen: NoAvailableKeyError | None = None
         for base_alias in route_aliases:
             alias = state.alias_with_runtime_weights(base_alias)
-            upstream_payload = dict(payload)
-            upstream_payload["model"] = alias.upstream_model
+            upstream_payload = prepare_upstream_payload(payload, alias.upstream_model)
+
             try:
                 return await call_upstream(alias, session_id, upstream_payload, settings, state)
             except NoAvailableKeyError as exc:
@@ -221,6 +221,26 @@ def extract_session_id(
         or litellm_metadata.get("session_id")
         or litellm_metadata.get("trace_id")
     )
+
+
+def prepare_upstream_payload(payload: dict[str, Any], upstream_model: str) -> dict[str, Any]:
+    upstream_payload = dict(payload)
+    upstream_payload["model"] = upstream_model
+    messages = upstream_payload.get("messages")
+    if isinstance(messages, list):
+        upstream_payload["messages"] = [normalize_upstream_message(message) for message in messages]
+    return upstream_payload
+
+
+def normalize_upstream_message(message: Any) -> Any:
+    if not isinstance(message, dict):
+        return message
+    if message.get("role") != "developer":
+        return message
+    # Ark/DeepSeek/GLM OpenAI-compatible chat endpoints reject the newer
+    # OpenAI `developer` role. Treat it as a system instruction so Pi can use
+    # stable router aliases while route targets remain configurable.
+    return {**message, "role": "system"}
 
 
 async def call_upstream(
@@ -314,8 +334,8 @@ async def stream_upstream_route(
     last_error: bytes | None = None
     for base_alias in aliases:
         alias = state.alias_with_runtime_weights(base_alias)
-        upstream_payload = dict(payload)
-        upstream_payload["model"] = alias.upstream_model
+        upstream_payload = prepare_upstream_payload(payload, alias.upstream_model)
+
         stream = stream_upstream(alias, session_id, upstream_payload, settings, state)
         first_chunk = await anext(stream, None)
         if first_chunk is None:

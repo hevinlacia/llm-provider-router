@@ -1,0 +1,24 @@
+[Unit]
+Description=LLM provider router backend (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/hevin/Developer/tools/llm-provider-router
+EnvironmentFile=/home/hevin/.config/opencode/opencode-secrets.env
+EnvironmentFile=/home/hevin/.config/opencode/opencode-internal.env
+EnvironmentFile=/home/hevin/.config/opencode/opencode-config.env
+Environment=LLM_PROVIDER_ROUTER_HOST=127.0.0.1
+Environment=SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+Environment=SSL_CERT_DIR=/etc/ssl/certs
+ExecSearchPath=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+ExecStart=/bin/sh -lc 'case "%i" in blue) export LLM_PROVIDER_ROUTER_PORT=8790 ;; green) export LLM_PROVIDER_ROUTER_PORT=8791 ;; *) echo "unknown slot: %i" >&2; exit 2 ;; esac; exec /usr/bin/uv run llm-provider-router'
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=60
+KillSignal=SIGTERM
+SuccessExitStatus=143
+
+[Install]
+WantedBy=default.target

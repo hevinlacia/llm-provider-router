@@ -167,6 +167,13 @@ ALIASES: dict[str, ModelAlias] = {
         keys=ARK_KEYS,
         retry_policy=ARK_RETRY_POLICY,
     ),
+    "medium-model-auto": ModelAlias(
+        alias="medium-model-auto",
+        litellm_model="openai/glm-5.2",
+        base_url=DEFAULT_ARK_BASE_URL,
+        keys=ARK_KEYS,
+        retry_policy=ARK_RETRY_POLICY,
+    ),
     "picture-model-auto": ModelAlias(
         alias="picture-model-auto",
         litellm_model="openai/minimax-m3",
@@ -233,6 +240,9 @@ ALIASES: dict[str, ModelAlias] = {
 DEFAULT_MODEL_ROUTES: dict[str, dict[str, object]] = {
     "high-auto": {"target": "glm-latest-auto", "fallbacks": []},
     "low-auto": {"target": "deepseek-v4-flash-auto", "fallbacks": []},
+    "high-model-auto": {"target": "openai-gpt-5.5-hevin", "fallbacks": ["glm-latest-auto"]},
+    "medium-model-auto": {"target": "glm-latest-auto", "fallbacks": ["deepseek-v4-pro-auto"]},
+    "low-model-auto": {"target": "deepseek-v4-flash-auto", "fallbacks": ["glm-latest-auto"]},
 }
 
 

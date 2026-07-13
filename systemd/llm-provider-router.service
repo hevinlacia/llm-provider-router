@@ -1,0 +1,23 @@
+[Unit]
+Description=LLM provider router hot-deploy front proxy
+After=network-online.target llm-provider-router-backend@blue.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/hevin/Developer/tools/llm-provider-router
+Environment=LLM_PROVIDER_ROUTER_PROXY_HOST=127.0.0.1
+Environment=LLM_PROVIDER_ROUTER_PROXY_PORT=8789
+Environment=LLM_PROVIDER_ROUTER_BLUE_URL=http://127.0.0.1:8790
+Environment=LLM_PROVIDER_ROUTER_GREEN_URL=http://127.0.0.1:8791
+Environment=LLM_PROVIDER_ROUTER_ACTIVE_BACKEND_FILE=/home/hevin/.local/state/llm-provider-router/active-backend.json
+Environment=SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+Environment=SSL_CERT_DIR=/etc/ssl/certs
+ExecSearchPath=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+ExecStart=/usr/bin/uv run llm-provider-router-front-proxy
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=60
+
+[Install]
+WantedBy=default.target

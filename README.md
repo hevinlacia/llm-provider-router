@@ -18,24 +18,42 @@ This project is a small replacement path for LiteLLM's key-pool routing. It keep
 Recommended path:
 
 ```text
-OpenCode / headroom-proxy -> llm-provider-router -> Ark OpenAI-compatible API
+OpenCode / headroom-proxy -> llm-provider-router front proxy :8789 -> blue/green router backend :8790/:8791 -> Ark OpenAI-compatible API
 ```
 
-LiteLLM can stay online for non-Ark providers while Ark `*-auto` aliases move here first.
+The stable client endpoint remains `http://127.0.0.1:8789`. The front proxy reads
+`~/.local/state/llm-provider-router/active-backend.json` and forwards new requests to the
+active backend slot. Backends run on `127.0.0.1:8790` (`blue`) and `127.0.0.1:8791`
+(`green`), so a deploy can start the inactive slot, health-check it, switch new traffic,
+and let existing streaming requests drain on the old slot before stopping it.
 
 ## Quick Start
 
 ```bash
-cd /home/hevin/Developer/playground/llm-provider-router
+cd /home/hevin/Developer/tools/llm-provider-router
 uv sync
-uv run llm-provider-router
+bin/install-service.sh
 ```
 
 Health check:
 
 ```bash
 curl http://127.0.0.1:8789/health
+curl http://127.0.0.1:8789/_proxy/health
 ```
+
+Hot deploy after updating code:
+
+```bash
+cd /home/hevin/Developer/tools/llm-provider-router
+uv sync
+bin/hot-deploy-router.py deploy
+```
+
+The deploy command starts the inactive backend slot, waits for `/health`, atomically
+switches the active backend file, waits for the drain window, and then stops the old slot.
+Use `--drain-seconds <n>` to tune the drain period or `bin/hot-deploy-router.py status`
+to inspect the current active slot.
 
 Dashboard:
 

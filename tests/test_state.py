@@ -575,6 +575,27 @@ def test_custom_key_weight_can_be_saved() -> None:
     assert shell.weight == 7
 
 
+def test_prepare_upstream_payload_normalizes_developer_role() -> None:
+    payload = {
+        "model": "low-model-auto",
+        "messages": [
+            {"role": "developer", "content": "follow system-level instructions"},
+            {"role": "user", "content": "hello"},
+        ],
+    }
+
+    from llm_provider_router.proxy import prepare_upstream_payload
+
+    result = prepare_upstream_payload(payload, "deepseek-v4-flash")
+
+    assert result["model"] == "deepseek-v4-flash"
+    assert result["messages"][0]["role"] == "system"
+    assert result["messages"][0]["content"] == "follow system-level instructions"
+    assert result["messages"][1] == {"role": "user", "content": "hello"}
+    # Keep caller payload immutable so retry/fallback routes can reuse it safely.
+    assert payload["messages"][0]["role"] == "developer"
+
+
 def _ark_alias() -> ModelAlias:
     return ModelAlias(
         alias="glm-latest-auto",
