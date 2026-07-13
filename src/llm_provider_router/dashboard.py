@@ -39,6 +39,18 @@ DASHBOARD_HTML = """
     .api-key-table { min-width: 1060px; }
     .api-key-table td:nth-child(3) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: nowrap; }
     .api-key-table .key-input { width: 300px; }
+    .route-list { display: grid; gap: 12px; margin-top: 14px; }
+    .route-row { background: #0b1220; border: 1px solid #243047; border-radius: 14px; padding: 14px; }
+    .route-row-header { align-items: end; display: grid; gap: 12px; grid-template-columns: minmax(180px, 0.8fr) minmax(260px, 1.2fr) auto; }
+    .route-row .field { min-width: 0; }
+    .route-row input.route-name, .route-row select { box-sizing: border-box; width: 100%; }
+    .route-row-actions { display: flex; justify-content: flex-end; }
+    .route-fallbacks { border-top: 1px solid #1f2937; display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; }
+    .route-fallbacks-title { color: #94a3b8; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+    .route-fallback-line { align-items: center; display: grid; gap: 8px; grid-template-columns: minmax(240px, 1fr) auto; }
+    .route-fallback-line button { padding: 7px 10px; }
+    .route-actions { align-items: end; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+    @media (max-width: 980px) { .route-row-header { grid-template-columns: 1fr; } .route-row-actions { justify-content: flex-start; } .route-fallback-line { grid-template-columns: 1fr; } }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 22px 0; }
     .card { background: linear-gradient(180deg, #111827, #0f172a); border: 1px solid #1f2937; border-radius: 16px; padding: 16px; box-shadow: 0 18px 60px rgb(0 0 0 / 22%); }
     .section-title { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
@@ -123,6 +135,7 @@ DASHBOARD_HTML = """
         </div>
         <button class="secondary" onclick="loadSettings()">Refresh</button>
       </header>
+      <section class="card"><div class="section-title"><h2>Model Routes</h2><span class="muted" id="routes-note">Loading model routes...</span></div><p class="muted">Configure virtual auto model names such as high-model-auto, medium-model-auto, low-model-auto, or any custom *-auto route. Routes point to concrete base aliases and optional fallbacks.</p><div id="model-routes"></div></section>
       <section class="card"><div class="section-title"><h2>Provider URLs</h2><span class="muted" id="providers-note">Loading providers...</span></div><div id="provider-urls"></div></section>
       <section class="card"><div class="section-title"><h2>Key Weights</h2><span class="muted" id="weights-note">Loading weights...</span></div><div id="key-weights"></div></section>
       <section class="card"><div class="section-title"><h2>API Keys</h2><span class="muted" id="keys-note">Loading key config...</span></div><p class="muted">Values are saved to an encrypted SOPS file. Existing values are never displayed.</p><div id="api-keys"></div></section>
@@ -177,6 +190,49 @@ function providersTable(config) {
   if (!providers.length) return '<p class="muted">No configurable providers.</p>';
   const rows = providers.map((item) => `<tr><td>${item.name}</td><td><input class="provider-input" data-provider="${item.name}" type="url" value="${item.base_url}"></td><td>${item.default_base_url}</td></tr>`).join('');
   return `<table><thead><tr><th>Provider</th><th>Base URL</th><th>Default</th></tr></thead><tbody>${rows}</tbody></table><div class="toolbar"><button onclick="saveProviders()">Save Providers</button><button class="secondary" onclick="loadProviders()">Reload Providers</button><span id="providers-status" class="muted"></span></div>`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+}
+
+function optionList(baseAliases, selected) {
+  return baseAliases.map((alias) => {
+    const label = `${alias.name} → ${alias.upstream_model}`;
+    return `<option value="${escapeHtml(alias.name)}" ${alias.name === selected ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+  }).join('');
+}
+
+function fallbackSelectOptions(baseAliases, selected) {
+  return `<option value="">No fallback</option>${optionList(baseAliases, selected)}`;
+}
+
+function fallbackSelectLine(baseAliases, selected = '') {
+  return `<div class="route-fallback-line"><select class="route-fallback">${fallbackSelectOptions(baseAliases, selected)}</select><button class="secondary" onclick="removeFallbackSelect(this)">Remove</button></div>`;
+}
+
+function fallbackSelects(baseAliases, selectedFallbacks) {
+  const lines = (selectedFallbacks && selectedFallbacks.length ? selectedFallbacks : [''])
+    .map((fallback) => fallbackSelectLine(baseAliases, fallback))
+    .join('');
+  return `<div class="route-fallbacks"><div class="route-fallbacks-title">Fallbacks</div>${lines}<div><button class="secondary" onclick="addFallbackSelect(this)">Add Fallback</button></div></div>`;
+}
+
+function routeCard(baseAliases, name, route) {
+  return `<div class="route-row"><div class="route-row-header"><div class="field"><label>Virtual Model</label><input class="route-name" value="${escapeHtml(name)}" placeholder="my-model-auto"></div><div class="field"><label>Primary Target</label><select class="route-target">${optionList(baseAliases, route.target)}</select></div><div class="route-row-actions"><button class="secondary" onclick="removeRouteRow(this)">Remove Route</button></div></div>${fallbackSelects(baseAliases, route.fallbacks)}</div>`;
+}
+
+function modelRoutesTable(config) {
+  const routes = config.routes || {};
+  const baseAliases = config.base_aliases || [];
+  if (!baseAliases.length) return '<p class="muted">No concrete base aliases are available.</p>';
+  const preferred = ['high-model-auto', 'medium-model-auto', 'low-model-auto'];
+  const routeNames = [...new Set([...preferred.filter((name) => routes[name]), ...Object.keys(routes).sort()])];
+  const rows = routeNames.map((name) => {
+    const route = routes[name] || { target: baseAliases[0].name, fallbacks: [] };
+    return routeCard(baseAliases, name, route);
+  }).join('');
+  return `<div id="model-route-rows" class="route-list">${rows}</div><div class="route-actions"><div class="field"><label for="new-route-name">New Virtual Route</label><input id="new-route-name" placeholder="my-model-auto"></div><button class="secondary" onclick="addRouteRow()">Add Route</button><button onclick="saveModelRoutes()">Save Routes</button><button class="secondary" onclick="loadModelRoutes()">Reload Routes</button><span id="routes-status" class="muted"></span></div>`;
 }
 
 function keysTable(config) {
@@ -274,7 +330,15 @@ async function loadProviders() {
 }
 
 async function loadSettings() {
-  await Promise.all([loadProviders(), loadWeights(), loadKeys()]);
+  await Promise.all([loadModelRoutes(), loadProviders(), loadWeights(), loadKeys()]);
+}
+
+async function loadModelRoutes() {
+  const response = await fetch('/api/config/model-routes');
+  const config = await response.json();
+  window.__MODEL_ROUTE_CONFIG__ = config;
+  document.getElementById('model-routes').innerHTML = modelRoutesTable(config);
+  document.getElementById('routes-note').textContent = config.config_path || '';
 }
 
 async function loadKeys() {
@@ -282,6 +346,67 @@ async function loadKeys() {
   const config = await response.json();
   document.getElementById('api-keys').innerHTML = keysTable(config);
   document.getElementById('keys-note').textContent = config.config_path || '';
+}
+
+function addRouteRow() {
+  const input = document.getElementById('new-route-name');
+  const name = (input.value || '').trim();
+  if (!name) return;
+  const config = window.__MODEL_ROUTE_CONFIG__ || { base_aliases: [] };
+  const baseAliases = config.base_aliases || [];
+  const first = baseAliases[0]?.name || '';
+  const list = document.getElementById('model-route-rows');
+  list.insertAdjacentHTML('beforeend', routeCard(baseAliases, name, { target: first, fallbacks: [] }));
+  input.value = '';
+}
+
+function removeRouteRow(button) {
+  button.closest('.route-row').remove();
+}
+
+function addFallbackSelect(button) {
+  const config = window.__MODEL_ROUTE_CONFIG__ || { base_aliases: [] };
+  const baseAliases = config.base_aliases || [];
+  button.insertAdjacentHTML('beforebegin', fallbackSelectLine(baseAliases, ''));
+}
+
+function removeFallbackSelect(button) {
+  const container = button.closest('.route-fallbacks');
+  button.closest('.route-fallback-line').remove();
+  if (!container.querySelector('.route-fallback-line')) {
+    const config = window.__MODEL_ROUTE_CONFIG__ || { base_aliases: [] };
+    container.insertAdjacentHTML('afterbegin', fallbackSelectLine(config.base_aliases || [], ''));
+  }
+}
+
+async function saveModelRoutes() {
+  const routes = {};
+  for (const row of document.querySelectorAll('.route-row')) {
+    const name = row.querySelector('.route-name').value.trim();
+    const target = row.querySelector('.route-target').value;
+    if (!name || !target) continue;
+    const seenFallbacks = new Set();
+    const fallbacks = Array.from(row.querySelectorAll('.route-fallback'))
+      .map((input) => input.value)
+      .filter((value) => value && value !== target && !seenFallbacks.has(value) && seenFallbacks.add(value));
+    routes[name] = { target, fallbacks };
+  }
+  const response = await fetch('/api/config/model-routes', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ routes }),
+  });
+  const result = await response.json();
+  const status = document.getElementById('routes-status');
+  if (!response.ok) {
+    status.className = 'error';
+    status.textContent = result.detail || 'Failed to save model routes';
+    return;
+  }
+  status.className = 'ok';
+  status.textContent = 'Saved. New requests use these model routes immediately.';
+  window.__MODEL_ROUTE_CONFIG__ = result;
+  document.getElementById('model-routes').innerHTML = modelRoutesTable(result);
 }
 
 async function saveWeights() {

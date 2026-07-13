@@ -387,6 +387,27 @@ class RouterState:
     def model_routes(self) -> dict[str, dict[str, object]]:
         return self.model_route_config.get(set(self.base_aliases()))
 
+    def set_model_routes(self, routes: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
+        known_aliases = set(self.base_aliases())
+        return self.model_route_config.set(routes, known_aliases)
+
+    def route_config_snapshot(self) -> dict:
+        aliases = self.base_aliases()
+        routes = self.model_routes()
+        return {
+            "routes": routes,
+            "base_aliases": [
+                {
+                    "name": name,
+                    "upstream_model": alias.upstream_model,
+                    "provider": alias.provider,
+                    "base_url": alias.base_url,
+                }
+                for name, alias in sorted(aliases.items())
+            ],
+            "config_path": str(self.model_route_config.path),
+        }
+
     def route_aliases(self, model_name: str) -> list[ModelAlias]:
         aliases = self.base_aliases()
         route = self.model_routes().get(model_name)

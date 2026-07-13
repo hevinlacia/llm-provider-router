@@ -95,6 +95,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"ok": True, **state.key_config_snapshot()}
 
+    @app.get("/api/config/model-routes")
+    async def api_config_model_routes() -> dict[str, Any]:
+        return {"ok": True, **state.route_config_snapshot()}
+
+    @app.put("/api/config/model-routes")
+    async def api_config_model_routes_update(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        routes = payload.get("routes") if isinstance(payload, dict) else None
+        if not isinstance(routes, dict):
+            raise HTTPException(status_code=400, detail="routes must be an object")
+        try:
+            parsed_routes = {
+                str(route_name): {
+                    "target": str(route.get("target") or ""),
+                    "fallbacks": [str(item) for item in route.get("fallbacks", [])]
+                    if isinstance(route, dict) and isinstance(route.get("fallbacks", []), list)
+                    else [],
+                }
+                for route_name, route in routes.items()
+                if isinstance(route, dict)
+            }
+            state.set_model_routes(parsed_routes)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, **state.route_config_snapshot()}
+
     @app.get("/api/config/providers")
     async def api_config_providers() -> dict[str, Any]:
         return {"ok": True, **state.provider_config_snapshot()}

@@ -331,33 +331,38 @@ def test_models_endpoint_returns_openai_compatible_list() -> None:
     assert {item["id"] for item in body["data"]} >= {
         "glm-latest-auto",
         "minimax-latest-auto",
-        "high-auto",
-        "low-auto",
+        "high-model-auto",
+        "medium-model-auto",
+        "low-model-auto",
         "picture-model-auto",
     }
+    assert "high-auto" not in {item["id"] for item in body["data"]}
+    assert "medium-auto" not in {item["id"] for item in body["data"]}
+    assert "low-auto" not in {item["id"] for item in body["data"]}
 
 
 def test_model_tier_aliases_route_to_expected_upstreams() -> None:
     state = RouterState(settings())
 
-    assert state.settings_aliases()["high-auto"].upstream_model == "glm-5.2"
-    assert state.settings_aliases()["high-auto"].keys[0].provider == "ark"
-    assert state.settings_aliases()["low-auto"].upstream_model == "deepseek-v4-flash"
+    assert state.settings_aliases()["high-model-auto"].upstream_model == "gpt-5.5"
+    assert state.settings_aliases()["high-model-auto"].keys[0].provider == "openai-relay"
+    assert state.settings_aliases()["medium-model-auto"].upstream_model == "glm-5.2"
+    assert state.settings_aliases()["low-model-auto"].upstream_model == "deepseek-v4-flash"
     assert ALIASES["picture-model-auto"].upstream_model == "minimax-m3"
 
 
-def test_model_route_config_can_override_high_and_low_targets(tmp_path) -> None:
+def test_model_route_config_can_override_model_auto_targets(tmp_path) -> None:
     import json
 
     route_path = tmp_path / "model-routes.json"
     route_path.write_text(
         json.dumps(
             {
-                "high-auto": {
+                "high-model-auto": {
                     "target": "deepseek-v4-pro-auto",
                     "fallbacks": ["glm-latest-auto"],
                 },
-                "low-auto": {"target": "minimax-latest-auto", "fallbacks": []},
+                "low-model-auto": {"target": "minimax-latest-auto", "fallbacks": []},
             }
         ),
         encoding="utf-8",
@@ -365,10 +370,65 @@ def test_model_route_config_can_override_high_and_low_targets(tmp_path) -> None:
     state = RouterState(settings())
     state.model_route_config = ModelRouteConfig(str(route_path), DEFAULT_MODEL_ROUTES)
 
-    high_route = state.route_aliases("high-auto")
+    high_route = state.route_aliases("high-model-auto")
 
     assert [alias.upstream_model for alias in high_route] == ["deepseek-v4-pro", "glm-5.2"]
-    assert state.settings_aliases()["low-auto"].upstream_model == "minimax-m3"
+    assert state.settings_aliases()["low-model-auto"].upstream_model == "minimax-m3"
+
+
+def test_model_routes_api_can_update_virtual_auto_route(tmp_path) -> None:
+    route_path = tmp_path / "model-routes.json"
+    client = TestClient(
+        create_app(
+            Settings(
+                host="127.0.0.1",
+                port=8789,
+                session_ttl_seconds=3600,
+                monthly_quota_fallback_seconds=86400,
+                five_hour_quota_fallback_seconds=5400,
+                request_timeout_seconds=60,
+                local_bearer_token=None,
+                usage_db_path=":memory:",
+                weight_config_path=":memory:",
+                provider_config_path=":memory:",
+                custom_key_config_path=":memory:",
+                model_route_config_path=str(route_path),
+                router_auth_config_path=":memory:",
+                key_config_path=":memory:",
+                sops_age_key_file="~/.config/sops/age/keys.txt",
+                sops_age_recipient="age1test",
+            )
+        )
+    )
+
+    response = client.put(
+        "/api/config/model-routes",
+        json={
+            "routes": {
+                "high-model-auto": {
+                    "target": "openai-gpt-5.5-hevin",
+                    "fallbacks": ["glm-latest-auto"],
+                },
+                "cheap-auto": {
+                    "target": "deepseek-v4-flash-auto",
+                    "fallbacks": ["glm-latest-auto"],
+                },
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["routes"]["cheap-auto"] == {
+        "target": "deepseek-v4-flash-auto",
+        "fallbacks": ["glm-latest-auto"],
+    }
+    assert any(item["name"] == "glm-latest-auto" for item in body["base_aliases"])
+    assert route_path.exists()
+
+    reloaded = client.get("/api/config/model-routes").json()
+    assert reloaded["routes"]["high-model-auto"]["target"] == "openai-gpt-5.5-hevin"
+    assert "cheap-auto" in reloaded["routes"]
 
 
 def test_models_endpoint_validates_local_token() -> None:

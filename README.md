@@ -133,14 +133,16 @@ types are `subscription` for Ark/OpenAI relay keys and `payg` for the official D
 Provider base URLs are stored in `config/providers.json` and can be edited from Settings.
 New requests pick up provider URL changes immediately without restarting the router.
 
-Model tier routes are stored in `config/model-routes.json`. The router exposes `high-auto`
-and `low-auto` as stable model names; each route points to an existing model alias and can
-optionally list fallback aliases. Defaults are:
+Model tier routes are stored in `config/model-routes.json`. The router exposes
+`high-model-auto`, `medium-model-auto`, and `low-model-auto` as stable virtual model
+names; each route points to an existing concrete model alias and can optionally list
+fallback aliases. Defaults are:
 
 ```json
 {
-  "high-auto": {"target": "glm-latest-auto", "fallbacks": []},
-  "low-auto": {"target": "deepseek-v4-flash-auto", "fallbacks": []}
+  "high-model-auto": {"target": "openai-gpt-5.5-hevin", "fallbacks": ["glm-latest-auto"]},
+  "medium-model-auto": {"target": "glm-latest-auto", "fallbacks": ["deepseek-v4-pro-auto"]},
+  "low-model-auto": {"target": "deepseek-v4-flash-auto", "fallbacks": ["glm-latest-auto"]}
 }
 ```
 
@@ -177,8 +179,9 @@ necessary.
 
 ## Current Model Aliases
 
-- `high-auto` -> configurable route, default `glm-latest-auto`
-- `low-auto` -> configurable route, default `deepseek-v4-flash-auto`
+- `high-model-auto` -> configurable route, default `openai/gpt-5.5`, fallback `glm-latest-auto`
+- `medium-model-auto` -> configurable route, default `glm-latest-auto`, fallback `deepseek-v4-pro-auto`
+- `low-model-auto` -> configurable route, default `deepseek-v4-flash-auto`, fallback `glm-latest-auto`
 - `glm-latest-auto` -> `openai/glm-5.2`
 - `deepseek-v4-pro-auto` -> `openai/deepseek-v4-pro`
 - `deepseek-v4-flash-auto` -> `openai/deepseek-v4-flash`

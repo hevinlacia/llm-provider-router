@@ -238,8 +238,6 @@ ALIASES: dict[str, ModelAlias] = {
 }
 
 DEFAULT_MODEL_ROUTES: dict[str, dict[str, object]] = {
-    "high-auto": {"target": "glm-latest-auto", "fallbacks": []},
-    "low-auto": {"target": "deepseek-v4-flash-auto", "fallbacks": []},
     "high-model-auto": {"target": "openai-gpt-5.5-hevin", "fallbacks": ["glm-latest-auto"]},
     "medium-model-auto": {"target": "glm-latest-auto", "fallbacks": ["deepseek-v4-pro-auto"]},
     "low-model-auto": {"target": "deepseek-v4-flash-auto", "fallbacks": ["glm-latest-auto"]},

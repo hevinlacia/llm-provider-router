@@ -443,6 +443,15 @@ class ModelRouteConfig:
                 routes.update(normalize_model_routes(data, known_aliases))
             return routes
 
+    def set(self, routes: dict[str, dict[str, object]], known_aliases: set[str]) -> dict[str, dict[str, object]]:
+        with self._lock:
+            normalized = normalize_model_routes(routes, known_aliases)
+            if str(self.path) == ":memory:":
+                self._memory = dict(normalized)
+                return normalized
+            self._write(normalized)
+            return normalized
+
     def _write(self, routes: dict[str, dict[str, object]]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         content = json.dumps(dict(sorted(routes.items())), indent=2) + "\n"
