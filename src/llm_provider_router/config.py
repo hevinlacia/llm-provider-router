@@ -216,9 +216,9 @@ ALIASES: dict[str, ModelAlias] = {
         keys=OAI_HEVIN_KEYS,
         retry_policy=OAI_RELAY_RETRY_POLICY,
     ),
-    "openai-gpt-5.4-hevin": ModelAlias(
-        alias="openai-gpt-5.4-hevin",
-        litellm_model="openai/gpt-5.4",
+    "openai-gpt-5.6-sol-hevin": ModelAlias(
+        alias="openai-gpt-5.6-sol-hevin",
+        litellm_model="openai/gpt-5.6-sol",
         base_url="https://api.aixhan.com/v1",
         keys=OAI_HEVIN_KEYS,
         retry_policy=OAI_RELAY_RETRY_POLICY,
