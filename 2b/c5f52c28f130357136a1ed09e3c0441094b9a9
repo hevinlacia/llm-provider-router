@@ -1,0 +1,23 @@
+src/llm_provider_router/config.py
+  3726b7050e7f43a6 219-221
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "2bc5f52c28f130357136a1ed09e3c0441094b9a9",
+  "prompts": {
+    "3726b7050e7f43a6": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f5e6f-ad12-72ba-92ca-07e84e64ac61",
+        "model": "glm-latest-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 3,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
