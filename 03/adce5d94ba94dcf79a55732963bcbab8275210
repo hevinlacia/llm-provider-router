@@ -1,0 +1,35 @@
+src/llm_provider_router/state_store.py
+  d6950ddfb0950ba2 1-144
+README.md
+  d6950ddfb0950ba2 14-15,116,182-185
+src/llm_provider_router/state.py
+  d6950ddfb0950ba2 14,42-50,71-72,75-78,86,94-104,107,110,112,390
+tests/test_state.py
+  d6950ddfb0950ba2 38,393,448,826-942
+src/llm_provider_router/config.py
+  d6950ddfb0950ba2 16-17,108,271-275
+src/llm_provider_router/proxy.py
+  d6950ddfb0950ba2 81-85
+src/llm_provider_router/dashboard.py
+  d6950ddfb0950ba2 127,514-515
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "03adce5d94ba94dcf79a55732963bcbab8275210",
+  "prompts": {
+    "d6950ddfb0950ba2": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f6ea5-f31a-7ca9-8168-12829fe4a058",
+        "model": "glm-latest-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 329,
+      "total_deletions": 12,
+      "accepted_lines": 323,
+      "overriden_lines": 0
+    }
+  }
+}
