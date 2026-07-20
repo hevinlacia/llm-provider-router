@@ -1,6 +1,10 @@
 {
   "high-model-auto": {
-    "target": "openai-gpt-5.5-hevin",
+    "target": "glm-latest-auto",
+    "fallbacks": []
+  },
+  "low-model-auto": {
+    "target": "deepseek-v4-flash-auto",
     "fallbacks": [
       "glm-latest-auto"
     ]
@@ -9,12 +13,6 @@
     "target": "glm-latest-auto",
     "fallbacks": [
       "deepseek-v4-pro-auto"
-    ]
-  },
-  "low-model-auto": {
-    "target": "deepseek-v4-flash-auto",
-    "fallbacks": [
-      "glm-latest-auto"
     ]
   }
 }
