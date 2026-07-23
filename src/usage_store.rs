@@ -244,7 +244,7 @@ impl UsageStore {
         let query = format!(
             r#"
             SELECT
-                {column} AS name,
+                CAST({column} AS TEXT) AS name,
                 COUNT(*) AS requests,
                 COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS errors,
                 COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
@@ -445,5 +445,22 @@ fn time_filter_sql(start: Option<f64>, end: Option<f64>) -> (String, Vec<SqlValu
         (String::new(), args)
     } else {
         (format!("WHERE {}", clauses.join(" AND ")), args)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usage_snapshot_casts_status_codes_to_string_keys() {
+        let store = UsageStore::new(":memory:").unwrap();
+        store.record("glm-latest-auto", "hevin", 200, None).unwrap();
+        store.record("glm-latest-auto", "hevin", 599, None).unwrap();
+
+        let snapshot = store.snapshot("all", None, None).unwrap();
+
+        assert!(snapshot["by_status"].get("200").is_some());
+        assert!(snapshot["by_status"].get("599").is_some());
     }
 }
