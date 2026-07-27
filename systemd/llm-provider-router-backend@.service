@@ -6,9 +6,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/home/hevin/Developer/tools/llm-provider-router
-EnvironmentFile=/home/hevin/.config/opencode/opencode-secrets.env
-EnvironmentFile=/home/hevin/.config/opencode/opencode-internal.env
-EnvironmentFile=/home/hevin/.config/opencode/opencode-config.env
+EnvironmentFile=/home/hevin/.config/opencode/agent-secrets.env
+EnvironmentFile=/home/hevin/.config/opencode/agent-internal.env
+EnvironmentFile=/home/hevin/.config/opencode/agent-config.env
 Environment=LLM_PROVIDER_ROUTER_HOST=127.0.0.1
 Environment=SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 Environment=SSL_CERT_DIR=/etc/ssl/certs
