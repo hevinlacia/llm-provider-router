@@ -1,7 +1,6 @@
 mod config;
 mod front_proxy;
 mod json_config;
-mod key_store;
 mod proxy;
 mod router_state;
 mod state_store;

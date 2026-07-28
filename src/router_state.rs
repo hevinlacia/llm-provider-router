@@ -5,7 +5,6 @@ use crate::config::{
 use crate::json_config::{
     CustomKeyEntry, CustomKeyPoolConfig, KeyWeightConfig, ModelRouteConfig, ProviderConfig,
 };
-use crate::key_store::EncryptedKeyConfig;
 use crate::state_store::{now_seconds, StateStore};
 use crate::usage_store::UsageStore;
 use anyhow::Context;
@@ -56,7 +55,6 @@ pub struct RouterState {
     provider_config: ProviderConfig,
     custom_key_config: CustomKeyPoolConfig,
     model_route_config: ModelRouteConfig,
-    key_config: EncryptedKeyConfig,
 }
 
 impl RouterState {
@@ -88,13 +86,7 @@ impl RouterState {
         let custom_key_config = CustomKeyPoolConfig::new(&settings.custom_key_config_path);
         let model_route_config =
             ModelRouteConfig::new(&settings.model_route_config_path, default_model_routes());
-        let mut state = Self {
-            key_config: EncryptedKeyConfig::new(
-                &settings.key_config_path,
-                &settings.sops_age_recipient,
-                &settings.sops_age_key_file,
-                HashSet::new(),
-            ),
+        let state = Self {
             settings,
             state_store,
             frozen,
@@ -105,8 +97,6 @@ impl RouterState {
             custom_key_config,
             model_route_config,
         };
-        let known = state.known_key_names();
-        state.key_config.set_known_names(known);
         Ok(state)
     }
 
@@ -448,31 +438,19 @@ impl RouterState {
     }
 
     pub fn key_secret_snapshot(&mut self) -> anyhow::Result<Value> {
-        let configured = self.key_config.safe_snapshot().unwrap_or_default();
         let mut keys = Vec::new();
         for key in self.all_key_refs() {
-            let encrypted_configured = configured
-                .get(&key.name)
-                .and_then(|value| value.get("configured"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
             let env_configured = env::var(&key.env_var)
                 .ok()
                 .filter(|value| !value.is_empty())
                 .is_some();
-            let source = match (encrypted_configured, env_configured) {
-                (true, true) => "encrypted_file+runtime_env",
-                (true, false) => "encrypted_file",
-                (false, true) => "environment",
-                (false, false) => "missing",
-            };
+            let source = if env_configured { "environment" } else { "missing" };
             keys.push(json!({
                 "name": key.name,
                 "provider": key.provider,
                 "billing_type": key.billing_type,
                 "env_var": key.env_var,
-                "configured": encrypted_configured || env_configured,
-                "encrypted_configured": encrypted_configured,
+                "configured": env_configured,
                 "env_configured": env_configured,
                 "source": source,
             }));
@@ -480,7 +458,7 @@ impl RouterState {
         Ok(json!({
             "keys": keys,
             "auto_aliases": self.auto_alias_names(),
-            "config_path": self.key_config.path.to_string_lossy(),
+            "note": "key values are read from environment variables only; persist via vault (~/.config/opencode/agent-secrets.env) and restart",
             "custom_key_config_path": self.custom_key_config.path.to_string_lossy(),
         }))
     }
@@ -522,16 +500,9 @@ impl RouterState {
             anyhow::bail!("weight must be zero or greater");
         }
         let env_var = format!(
-            "OPENCODE_AI_ARK_{}_API_KEY",
+            "AGENT_AI_ARK_{}_API_KEY",
             name.replace('-', "_").to_uppercase()
         );
-        let mut known = self.known_key_names();
-        known.insert(name.clone());
-        self.key_config.set_known_names(known);
-        self.key_config.set_values(
-            HashMap::from([(name.clone(), value.to_string())]),
-            HashSet::new(),
-        )?;
         env::set_var(&env_var, value);
         self.custom_key_config.add_key(
             name.clone(),
@@ -543,8 +514,6 @@ impl RouterState {
                 aliases: alias_names,
             },
         )?;
-        let known = self.known_key_names();
-        self.key_config.set_known_names(known);
         self.key_secret_snapshot()
     }
 
@@ -554,17 +523,41 @@ impl RouterState {
         delete_names: HashSet<String>,
     ) -> anyhow::Result<Value> {
         let known = self.known_key_names();
-        self.key_config.set_known_names(known);
-        self.key_config.set_values(values, delete_names)?;
+        let env_vars: HashMap<String, String> = self
+            .all_key_refs()
+            .into_iter()
+            .map(|k| (k.name, k.env_var))
+            .collect();
+        let unknown: Vec<String> = values
+            .keys()
+            .chain(delete_names.iter())
+            .filter(|name| !known.contains(*name))
+            .cloned()
+            .collect();
+        if !unknown.is_empty() {
+            anyhow::bail!("unknown key name(s): {}", sorted_join(unknown));
+        }
+        for (name, value) in &values {
+            if let Some(env_var) = env_vars.get(name) {
+                if value.is_empty() {
+                    env::remove_var(env_var);
+                } else {
+                    env::set_var(env_var, value);
+                }
+            }
+        }
+        for name in &delete_names {
+            if let Some(env_var) = env_vars.get(name) {
+                env::remove_var(env_var);
+            }
+        }
         self.key_secret_snapshot()
     }
 
     pub fn upstream_key_value(&mut self, key: &KeyRef) -> anyhow::Result<Option<String>> {
-        let env_value = env::var(&key.env_var)
+        Ok(env::var(&key.env_var)
             .ok()
-            .filter(|value| !value.is_empty());
-        let values = self.key_config.get_all().unwrap_or_default();
-        Ok(values.get(&key.name).cloned().or(env_value))
+            .filter(|value| !value.is_empty()))
     }
 
     pub fn alias_with_runtime_weights(&mut self, alias: &ModelAlias) -> ModelAlias {
@@ -665,7 +658,7 @@ impl RouterState {
         for (name, item) in self.custom_key_config.get().keys {
             refs.push(KeyRef {
                 env_var: if item.env_var.is_empty() {
-                    format!("OPENCODE_AI_ARK_{}_API_KEY", name.to_uppercase())
+                    format!("AGENT_AI_ARK_{}_API_KEY", name.to_uppercase())
                 } else {
                     item.env_var
                 },
@@ -771,7 +764,7 @@ pub fn weighted_pick(keys: &[KeyRef], session_id: Option<&str>, alias: &str) -> 
 pub fn normalize_custom_key_name(value: &str) -> String {
     let mut name = value.trim().to_string();
     let upper = name.to_uppercase();
-    for prefix in ["OPENCODE_AI_ARK_", "AI_ARK_"] {
+    for prefix in ["AGENT_AI_ARK_", "AI_ARK_"] {
         if upper.starts_with(prefix) {
             name = name[prefix.len()..].to_string();
             break;
@@ -912,9 +905,6 @@ mod tests {
             provider_config_path: ":memory:".to_string(),
             custom_key_config_path: ":memory:".to_string(),
             model_route_config_path: ":memory:".to_string(),
-            key_config_path: ":memory:".to_string(),
-            sops_age_key_file: "~/.config/sops/age/keys.txt".to_string(),
-            sops_age_recipient: "age1test".to_string(),
             auth_invalid_freeze_seconds: 86400.0,
         }
     }
@@ -922,7 +912,7 @@ mod tests {
     #[test]
     fn normalizes_custom_key_names() {
         assert_eq!(
-            normalize_custom_key_name("OPENCODE_AI_ARK_SHELL_API_KEY"),
+            normalize_custom_key_name("AGENT_AI_ARK_SHELL_API_KEY"),
             "shell"
         );
         assert_eq!(

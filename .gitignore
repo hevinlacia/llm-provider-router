@@ -10,3 +10,7 @@ target/
 frontend/node_modules/
 frontend/dist/
 frontend/tsconfig.tsbuildinfo
+
+# key files: secrets now live in ~/Developer/vault; router reads env vars only
+config/api-keys.json
+config/api-keys.sops.json

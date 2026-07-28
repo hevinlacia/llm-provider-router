@@ -11,12 +11,8 @@ pub const DEFAULT_PROVIDER_CONFIG_PATH: &str = "config/providers.json";
 pub const DEFAULT_CUSTOM_KEY_CONFIG_PATH: &str = "config/custom-keys.json";
 pub const DEFAULT_MODEL_ROUTE_CONFIG_PATH: &str = "config/model-routes.json";
 pub const DEFAULT_ROUTER_AUTH_CONFIG_PATH: &str = "config/router-auth.json";
-pub const DEFAULT_KEY_CONFIG_PATH: &str = "config/api-keys.sops.json";
 pub const DEFAULT_USAGE_DB_PATH: &str = "~/.local/state/llm-provider-router/usage.sqlite3";
 pub const DEFAULT_STATE_DB_PATH: &str = "~/.local/state/llm-provider-router/state.sqlite3";
-pub const DEFAULT_SOPS_AGE_KEY_FILE: &str = "~/.config/sops/age/keys.txt";
-pub const DEFAULT_SOPS_AGE_RECIPIENT: &str =
-    "age1n4kxrm8969pqaax2u63akszmdgvu5dr2tfnwpt2d957ewtwx4sescvvz7d";
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct KeyRef {
@@ -157,9 +153,6 @@ pub struct Settings {
     pub provider_config_path: String,
     pub custom_key_config_path: String,
     pub model_route_config_path: String,
-    pub key_config_path: String,
-    pub sops_age_key_file: String,
-    pub sops_age_recipient: String,
     pub auth_invalid_freeze_seconds: f64,
 }
 
@@ -213,15 +206,6 @@ pub fn load_settings() -> anyhow::Result<Settings> {
             "LLM_PROVIDER_ROUTER_MODEL_ROUTE_CONFIG_PATH",
             DEFAULT_MODEL_ROUTE_CONFIG_PATH,
         ),
-        key_config_path: env_or(
-            "LLM_PROVIDER_ROUTER_KEY_CONFIG_PATH",
-            DEFAULT_KEY_CONFIG_PATH,
-        ),
-        sops_age_key_file: env_or("SOPS_AGE_KEY_FILE", DEFAULT_SOPS_AGE_KEY_FILE),
-        sops_age_recipient: env_or(
-            "LLM_PROVIDER_ROUTER_SOPS_AGE_RECIPIENT",
-            DEFAULT_SOPS_AGE_RECIPIENT,
-        ),
         auth_invalid_freeze_seconds: env_or(
             "LLM_PROVIDER_ROUTER_AUTH_INVALID_FREEZE_SECONDS",
             "86400",
@@ -232,23 +216,24 @@ pub fn load_settings() -> anyhow::Result<Settings> {
 
 pub fn aliases() -> HashMap<String, ModelAlias> {
     let ark_keys = vec![
-        KeyRef::new("garvin", "OPENCODE_AI_ARK_GARVIN_API_KEY", 6),
-        KeyRef::new("wilford", "OPENCODE_AI_ARK_WILFORD_API_KEY", 3),
-        KeyRef::new("hevin", "OPENCODE_AI_ARK_HEVIN_API_KEY", 5),
-        KeyRef::new("khaine", "OPENCODE_AI_ARK_KHAINE_API_KEY", 6),
-        KeyRef::new("cyril", "OPENCODE_AI_ARK_CYRIL_API_KEY", 4),
-        KeyRef::new("moss", "OPENCODE_AI_ARK_MOSS_API_KEY", 4),
+        KeyRef::new("garvin", "AGENT_AI_ARK_GARVIN_API_KEY", 6),
+        KeyRef::new("wilford", "AGENT_AI_ARK_WILFORD_API_KEY", 3),
+        KeyRef::new("hevin", "AGENT_AI_ARK_HEVIN_API_KEY", 5),
+        KeyRef::new("khaine", "AGENT_AI_ARK_KHAINE_API_KEY", 6),
+        KeyRef::new("cyril", "AGENT_AI_ARK_CYRIL_API_KEY", 4),
+        KeyRef::new("moss", "AGENT_AI_ARK_MOSS_API_KEY", 4),
+        KeyRef::new("ronnie", "AGENT_AI_ARK_RONNIE_API_KEY", 4),
     ];
     let oai_hevin_keys = vec![KeyRef::with_provider(
         "oai-hevin",
-        "OPENCODE_AI_OPENAI_HEVIN_API_KEY",
+        "AGENT_AI_OPENAI_HEVIN_API_KEY",
         1,
         "openai-relay",
         "subscription",
     )];
     let deepseek_keys = vec![KeyRef::with_provider(
         "deepseek-official",
-        "OPENCODE_AI_DEEPSEEK_API_KEY",
+        "AGENT_AI_DEEPSEEK_API_KEY",
         1,
         "deepseek-official",
         "payg",

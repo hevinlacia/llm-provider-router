@@ -123,9 +123,6 @@ LLM_PROVIDER_ROUTER_PROVIDER_CONFIG_PATH=config/providers.json
 LLM_PROVIDER_ROUTER_CUSTOM_KEY_CONFIG_PATH=config/custom-keys.json
 LLM_PROVIDER_ROUTER_MODEL_ROUTE_CONFIG_PATH=config/model-routes.json
 LLM_PROVIDER_ROUTER_AUTH_CONFIG_PATH=config/router-auth.json
-LLM_PROVIDER_ROUTER_KEY_CONFIG_PATH=config/api-keys.sops.json
-LLM_PROVIDER_ROUTER_SOPS_AGE_RECIPIENT=age1n4kxrm8969pqaax2u63akszmdgvu5dr2tfnwpt2d957ewtwx4sescvvz7d
-SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt
 ```
 
 Front proxy settings:
@@ -139,7 +136,7 @@ LLM_PROVIDER_ROUTER_ACTIVE_BACKEND_FILE=~/.local/state/llm-provider-router/activ
 LLM_PROVIDER_ROUTER_DEFAULT_SLOT=blue
 ```
 
-API keys are managed through the dashboard and stored in `config/api-keys.sops.json` encrypted by SOPS. The API/dashboard only expose whether a key is configured, never plaintext values.
+API key values are read from environment variables loaded from `~/.config/opencode/agent-secrets.env`. The encrypted source of truth is now `~/Developer/vault`; restore it with `python3 ~/Developer/vault/scripts/vault.py restore`. The dashboard can still show whether keys are configured and can update runtime env values, but persistent key changes should be made through the vault/env file flow.
 
 ## Persistence
 

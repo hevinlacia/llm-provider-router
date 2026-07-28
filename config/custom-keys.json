@@ -1,7 +1,7 @@
 {
   "keys": {
     "shell": {
-      "env_var": "OPENCODE_AI_ARK_SHELL_API_KEY",
+      "env_var": "AGENT_AI_ARK_SHELL_API_KEY",
       "provider": "ark",
       "billing_type": "subscription",
       "weight": 1,
