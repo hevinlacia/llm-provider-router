@@ -1,11 +1,12 @@
 {
-  "cyril": 1,
-  "deepseek-official": 1,
+  "cyril": 0,
+  "deepseek-official": 0,
   "garvin": 8,
   "hevin": 3,
   "khaine": 8,
-  "moss": 2,
-  "oai-hevin": 1,
+  "moss": 0,
+  "oai-hevin": 0,
+  "ronnie": 0,
   "shell": 6,
   "wilford": 7
 }
