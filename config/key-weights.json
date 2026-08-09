@@ -1,12 +1,16 @@
 {
-  "cyril": 0,
-  "deepseek-official": 0,
-  "garvin": 8,
-  "hevin": 3,
-  "khaine": 8,
-  "moss": 0,
-  "oai-hevin": 0,
-  "ronnie": 0,
-  "shell": 6,
-  "wilford": 7
+  "global": {
+    "cyril": 1,
+    "deepseek-official": 1,
+    "garvin": 7,
+    "hevin": 8,
+    "hevin-private": 6,
+    "khaine": 7,
+    "moss": 1,
+    "oai-hevin": 1,
+    "ronnie": 1,
+    "shell": 6,
+    "wilford": 0
+  },
+  "pools": {}
 }

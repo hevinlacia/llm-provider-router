@@ -1,4 +1,4 @@
-import type { FilterState, KeyConfig, ModelRoutesConfig, ProviderConfig, StateResponse, UsageSnapshot, WeightConfig } from './types';
+import type { FilterState, KeyConfig, ModelAliasConfig, ModelRoutesConfig, ProviderConfig, StateResponse, TokenPriceConfig, UsageSnapshot, V2Status, WeightConfig } from './types';
 
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
@@ -18,7 +18,37 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function normalizeWeightConfig(raw: Partial<WeightConfig>): WeightConfig {
+  const aliases = (raw.aliases ?? {}) as WeightConfig['aliases'];
+  const weights = raw.weights ?? raw.global_weights ?? {};
+  const pools = raw.pools ?? Object.entries(aliases)
+    .filter(([, alias]) => Array.isArray(alias.keys) && alias.keys.length > 0)
+    .map(([name]) => name)
+    .sort();
+  return {
+    ok: raw.ok ?? true,
+    weights,
+    global_weights: raw.global_weights ?? weights,
+    pool_weights: raw.pool_weights ?? {},
+    pools,
+    supports_pool_weights: Boolean(raw.global_weights && raw.pool_weights && raw.pools),
+    aliases,
+    model_routes: raw.model_routes ?? {},
+    config_path: raw.config_path ?? '',
+  };
+}
+
 export const api = {
+  async modelAliases() {
+    return request<ModelAliasConfig>('/api/config/model-aliases');
+  },
+  saveModelAliases(custom_aliases: ModelAliasConfig['custom_aliases']) {
+    return request<ModelAliasConfig>('/api/config/model-aliases', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ custom_aliases }),
+    });
+  },
   state(filters: FilterState) {
     return request<StateResponse>(`/api/state${queryFromFilters(filters)}`);
   },
@@ -31,14 +61,14 @@ export const api = {
   clearFrozen() {
     return request<StateResponse>('/api/frozen/clear', { method: 'POST' });
   },
-  weights() {
-    return request<WeightConfig>('/api/config/weights');
+  async weights() {
+    return normalizeWeightConfig(await request<Partial<WeightConfig>>('/api/config/weights'));
   },
-  saveWeights(weights: Record<string, number>) {
+  saveWeights(weights: Record<string, number>, pool?: string) {
     return request<WeightConfig>('/api/config/weights', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ weights }),
+      body: JSON.stringify({ weights, pool: pool ?? '__global__' }),
     });
   },
   providers() {
@@ -61,8 +91,39 @@ export const api = {
       body: JSON.stringify({ routes }),
     });
   },
+  async tokenPrices() {
+    try {
+      return await request<TokenPriceConfig>('/api/config/token-prices');
+    } catch {
+      return { ok: false, models: [], config_path: 'restart router backend to enable token price settings' };
+    }
+  },
+  saveTokenPrices(models: TokenPriceConfig['models']) {
+    return request<TokenPriceConfig>('/api/config/token-prices', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ models }),
+    });
+  },
   keys() {
     return request<KeyConfig>('/api/config/keys');
+  },
+  v2Status() {
+    return request<V2Status>('/api/config/v2');
+  },
+  updateV2Provider(oldName: string, provider: { name: string; base_url: string; keys: Record<string, { env_var: string; weight: number; billing_type: string; enabled: boolean }> }) {
+    return request<V2Status>('/api/config/v2/providers', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ old_name: oldName, provider }),
+    });
+  },
+  updateV2LogicalModel(name: string, body: { strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null }> }) {
+    return request<V2Status>('/api/config/v2/logical-models', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, ...body }),
+    });
   },
   saveKeys(keys: Record<string, string>, deleteNames: string[]) {
     return request<KeyConfig>('/api/config/keys', {

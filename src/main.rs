@@ -1,4 +1,5 @@
 mod config;
+mod config_v2;
 mod front_proxy;
 mod json_config;
 mod proxy;

@@ -1,0 +1,128 @@
+{
+  "logical_models": {
+    "openai-gpt-5.5-hevin": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "openai-relay/gpt-5.5",
+            "weight": null
+          }
+        ]
+      }
+    },
+    "ark-code-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "ark/ark-code-latest",
+            "weight": null
+          }
+        ]
+      }
+    },
+    "deepseek-v4-pro-official": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "deepseek-official/deepseek-v4-pro",
+            "weight": null
+          }
+        ]
+      }
+    },
+    "deepseek-v4-flash-260801": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "ark/deepseek-v4-flash-260801",
+            "weight": null
+          }
+        ]
+      }
+    },
+    "deepseek-v4-pro-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "ark/deepseek-v4-pro",
+            "weight": null
+          }
+        ]
+      }
+    },
+    "minimax-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "ark/minimax-m3",
+            "weight": null
+          }
+        ]
+      }
+    },
+    "deepseek-v4-flash-auto": {
+      "params": {},
+      "route": {
+        "strategy": "weighted",
+        "targets": [
+          {
+            "model": "ark/deepseek-v4-flash-260801",
+            "weight": 10
+          },
+          {
+            "model": "deepseek-official/deepseek-v4-flash",
+            "weight": 1
+          }
+        ]
+      }
+    },
+    "glm-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "ark/glm-5.2",
+            "weight": null
+          }
+        ]
+      }
+    },
+    "deepseek-v4-flash-official": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "deepseek-official/deepseek-v4-flash",
+            "weight": null
+          }
+        ]
+      }
+    },
+    "openai-gpt-5.6-sol-hevin": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "openai-relay/gpt-5.6-sol",
+            "weight": null
+          }
+        ]
+      }
+    }
+  }
+}

@@ -5,7 +5,7 @@ use axum::extract::{Query, State};
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use futures_util::StreamExt;
 use serde::Deserialize;
@@ -62,8 +62,25 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
             get(api_config_model_routes).put(api_config_model_routes_update),
         )
         .route(
+            "/api/config/model-aliases",
+            get(api_config_model_aliases).put(api_config_model_aliases_update),
+        )
+        .route("/api/config/v2", get(api_config_v2))
+        .route(
+            "/api/config/v2/providers",
+            put(api_config_v2_providers_update),
+        )
+        .route(
+            "/api/config/v2/logical-models",
+            put(api_config_v2_logical_models_update),
+        )
+        .route(
             "/api/config/providers",
             get(api_config_providers).put(api_config_providers_update),
+        )
+        .route(
+            "/api/config/token-prices",
+            get(api_config_token_prices).put(api_config_token_prices_update),
         )
         .route(
             "/api/config/keys",
@@ -111,7 +128,7 @@ async fn api_usage(State(app): State<AppState>, Query(query): Query<UsageQuery>)
 }
 
 async fn models(State(app): State<AppState>, headers: HeaderMap) -> Response {
-    if let Err(response) = validate_auth(&app.settings, &headers) {
+    if let Some(response) = validate_auth(&app.settings, &headers) {
         return response;
     }
     with_state_json(&app, |state| {
@@ -160,8 +177,17 @@ async fn api_config_weights_update(
         .iter()
         .map(|(name, value)| (name.clone(), value.as_i64().unwrap_or(0)))
         .collect::<HashMap<_, _>>();
+    let pool = payload
+        .get("pool")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty() && *value != "__global__")
+        .map(str::to_string);
     with_state_json(&app, |state| {
-        state.set_key_weights(weights)?;
+        if let Some(pool) = pool.as_deref() {
+            state.set_pool_key_weights(pool, weights)?;
+        } else {
+            state.set_key_weights(weights)?;
+        }
         Ok(merge_ok(state.key_config_snapshot()?))
     })
 }
@@ -207,6 +233,144 @@ async fn api_config_model_routes_update(
     })
 }
 
+async fn api_config_model_aliases(State(app): State<AppState>) -> Response {
+    with_state_json(&app, |state| Ok(merge_ok(state.model_alias_config_snapshot())))
+}
+
+async fn api_config_v2(State(app): State<AppState>) -> Response {
+    with_state_json(&app, |state| Ok(state.v2_status()))
+}
+
+async fn api_config_v2_providers_update(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let Some(old_name) = payload.get("old_name").and_then(Value::as_str) else {
+        return bad_request("old_name (string) is required");
+    };
+    let Some(provider) = payload.get("provider").and_then(Value::as_object) else {
+        return bad_request("provider (object) is required");
+    };
+    let Some(new_name) = provider.get("name").and_then(Value::as_str) else {
+        return bad_request("provider.name (string) is required");
+    };
+    let Some(base_url) = provider.get("base_url").and_then(Value::as_str) else {
+        return bad_request("provider.base_url (string) is required");
+    };
+    let mut keys = HashMap::new();
+    if let Some(key_objs) = provider.get("keys").and_then(Value::as_object) {
+        for (name, value) in key_objs {
+            keys.insert(
+                name.clone(),
+                crate::config_v2::V2Key {
+                    env_var: value
+                        .get("env_var")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    weight: value.get("weight").and_then(Value::as_i64).unwrap_or(1),
+                    billing_type: value
+                        .get("billing_type")
+                        .and_then(Value::as_str)
+                        .unwrap_or("subscription")
+                        .to_string(),
+                    enabled: value.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+                    persist: value.get("persist").and_then(Value::as_bool).unwrap_or(true),
+                },
+            );
+        }
+    }
+    match app.state.lock() {
+        Ok(mut state) => match state.update_v2_provider(old_name, new_name, base_url, keys) {
+            Ok(value) => json_status(StatusCode::OK, value),
+            Err(err) => bad_request(&err.to_string()),
+        },
+        Err(_) => internal_error("router state lock poisoned"),
+    }
+}
+
+async fn api_config_v2_logical_models_update(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let Some(name) = payload.get("name").and_then(Value::as_str) else {
+        return bad_request("name (string) is required");
+    };
+    let Some(strategy) = payload
+        .get("strategy")
+        .and_then(Value::as_str)
+        .and_then(|s| match s {
+            "priority" => Some(crate::config_v2::V2Strategy::Priority),
+            "weighted" => Some(crate::config_v2::V2Strategy::Weighted),
+            "usage-aware" => Some(crate::config_v2::V2Strategy::UsageAware),
+            _ => None,
+        })
+    else {
+        return bad_request("strategy must be one of: priority, weighted, usage-aware");
+    };
+    let Some(targets_json) = payload.get("targets").and_then(Value::as_array) else {
+        return bad_request("targets (array) is required");
+    };
+    let mut targets = Vec::new();
+    for item in targets_json {
+        let Some(model) = item.get("model").and_then(Value::as_str) else {
+            return bad_request("each target needs a model (string)");
+        };
+        targets.push(crate::config_v2::V2Target {
+            model: model.trim().to_string(),
+            weight: item.get("weight").and_then(Value::as_i64),
+        });
+    }
+    let params = payload
+        .get("params")
+        .and_then(Value::as_object)
+        .map(|obj| {
+            obj.iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<HashMap<_, _>>()
+        })
+        .unwrap_or_default();
+    match app.state.lock() {
+        Ok(mut state) => match state.update_v2_logical_model(name, strategy, params, targets) {
+            Ok(value) => json_status(StatusCode::OK, value),
+            Err(err) => bad_request(&err.to_string()),
+        },
+        Err(_) => internal_error("router state lock poisoned"),
+    }
+}
+
+async fn api_config_model_aliases_update(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let Some(aliases) = payload.get("custom_aliases").and_then(Value::as_array) else {
+        return bad_request("custom_aliases must be a list");
+    };
+    let custom_aliases = aliases
+        .iter()
+        .filter_map(|item| {
+            Some(crate::json_config::CustomModelAlias {
+                alias: item.get("alias")?.as_str()?.trim().to_string(),
+                upstream_model: item
+                    .get("upstream_model")?
+                    .as_str()?
+                    .trim()
+                    .to_string(),
+                provider: item.get("provider")?.as_str()?.trim().to_string(),
+                max_retry_seconds: item
+                    .get("max_retry_seconds")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(300),
+                retry_delay_seconds: item
+                    .get("retry_delay_seconds")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(5.0),
+            })
+        })
+        .collect::<Vec<_>>();
+    with_state_json(&app, |state| Ok(merge_ok(state.set_model_aliases(custom_aliases)?)))
+}
+
 async fn api_config_providers(State(app): State<AppState>) -> Response {
     with_state_json(&app, |state| Ok(merge_ok(state.provider_config_snapshot())))
 }
@@ -225,6 +389,43 @@ async fn api_config_providers_update(
     with_state_json(&app, |state| {
         Ok(merge_ok(state.set_provider_base_urls(providers)?))
     })
+}
+
+async fn api_config_token_prices(State(app): State<AppState>) -> Response {
+    with_state_json(&app, |state| Ok(merge_ok(state.token_price_snapshot())))
+}
+
+async fn api_config_token_prices_update(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let Some(models) = payload.get("models").and_then(Value::as_array) else {
+        return bad_request("models must be a list");
+    };
+    let prices = models
+        .iter()
+        .filter_map(|item| {
+            let model = item.get("model")?.as_str()?.to_string();
+            Some((
+                model,
+                crate::json_config::TokenPrice {
+                    input_uncached_per_million: item
+                        .get("input_uncached_per_million")
+                        .and_then(Value::as_f64)
+                        .unwrap_or(0.0),
+                    input_cached_per_million: item
+                        .get("input_cached_per_million")
+                        .and_then(Value::as_f64)
+                        .unwrap_or(0.0),
+                    output_per_million: item
+                        .get("output_per_million")
+                        .and_then(Value::as_f64)
+                        .unwrap_or(0.0),
+                },
+            ))
+        })
+        .collect::<HashMap<_, _>>();
+    with_state_json(&app, |state| Ok(merge_ok(state.set_token_prices(prices)?)))
 }
 
 async fn api_config_keys(State(app): State<AppState>) -> Response {
@@ -295,14 +496,15 @@ async fn chat_completions(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Response {
-    if let Err(response) = validate_auth(&app.settings, &headers) {
+    if let Some(response) = validate_auth(&app.settings, &headers) {
         return response;
     }
     let Some(model_name) = payload.get("model").and_then(Value::as_str) else {
         return bad_request("model must be a string");
     };
+    let session_id = extract_session_id(&payload, &headers);
     let route_aliases = match app.state.lock() {
-        Ok(mut state) => state.route_aliases(model_name),
+        Ok(mut state) => state.route_aliases(model_name, session_id.as_deref()),
         Err(_) => return internal_error("router state lock poisoned"),
     };
     if route_aliases.is_empty() {
@@ -311,7 +513,6 @@ async fn chat_completions(
             json!({ "detail": format!("unsupported model alias: {model_name}") }),
         );
     }
-    let session_id = extract_session_id(&payload, &headers);
     let stream = payload
         .get("stream")
         .and_then(Value::as_bool)
@@ -325,7 +526,7 @@ async fn chat_completions(
                 Ok(mut state) => state.alias_with_runtime_weights(&base_alias),
                 Err(_) => return internal_error("router state lock poisoned"),
             };
-            let upstream_payload = prepare_upstream_payload(&payload, &alias.upstream_model());
+            let upstream_payload = prepare_upstream_payload(&payload, &alias);
             match call_upstream(&app, alias, session_id.clone(), upstream_payload).await {
                 Ok(response) => return response,
                 Err(CallError::NoAvailable(exc)) => last_frozen = Some(exc),
@@ -342,18 +543,16 @@ async fn chat_completions(
     }
 }
 
-fn validate_auth(settings: &Settings, headers: &HeaderMap) -> Result<(), Response> {
-    let Some(expected_token) = settings.local_bearer_token.as_ref() else {
-        return Ok(());
-    };
+fn validate_auth(settings: &Settings, headers: &HeaderMap) -> Option<Response> {
+    let expected_token = settings.local_bearer_token.as_ref()?;
     let expected = format!("Bearer {expected_token}");
     let actual = headers
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok());
     if actual == Some(expected.as_str()) {
-        Ok(())
+        None
     } else {
-        Err(json_status(
+        Some(json_status(
             StatusCode::UNAUTHORIZED,
             json!({ "detail": "invalid local bearer token" }),
         ))
@@ -397,9 +596,16 @@ fn header_str(headers: &HeaderMap, name: &'static str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn prepare_upstream_payload(payload: &Value, upstream_model: &str) -> Value {
+fn prepare_upstream_payload(payload: &Value, alias: &ModelAlias) -> Value {
     let mut next = payload.clone();
-    next["model"] = Value::String(upstream_model.to_string());
+    next["model"] = Value::String(alias.upstream_model().to_string());
+    // 服务器侧默认/覆写参数（v2 逻辑模型默认 + 物理模型覆写的合并结果）：
+    // 只填充客户端未提供的字段，不覆盖客户端显式参数。
+    for (key, value) in &alias.params {
+        if next.get(key).is_none() {
+            next[key] = value.clone();
+        }
+    }
     if let Some(messages) = next.get_mut("messages").and_then(Value::as_array_mut) {
         for message in messages {
             if message.get("role").and_then(Value::as_str) == Some("developer") {
@@ -576,7 +782,7 @@ async fn stream_upstream_route(
                     return;
                 }
             };
-            let upstream_payload = prepare_upstream_payload(&payload, &alias.upstream_model());
+            let upstream_payload = prepare_upstream_payload(&payload, &alias);
             let mut tried = HashSet::new();
             let retry_policy = alias.retry_policy.clone();
             let deadline = retry_policy.as_ref().map(|policy| Instant::now() + Duration::from_secs(policy.max_retry_seconds));
@@ -656,7 +862,7 @@ async fn stream_upstream_route(
                     match item {
                         Ok(chunk) => {
                             body_text.extend_from_slice(&chunk);
-                            yield Ok(Bytes::from(chunk));
+                            yield Ok(chunk);
                         }
                         Err(exc) => {
                             yield Ok(Bytes::from(stream_error_event(&alias.alias, tried.len(), &exc.to_string())));

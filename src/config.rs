@@ -9,7 +9,10 @@ pub const DEFAULT_ARK_BASE_URL: &str = "https://ark.cn-beijing.volces.com/api/co
 pub const DEFAULT_WEIGHT_CONFIG_PATH: &str = "config/key-weights.json";
 pub const DEFAULT_PROVIDER_CONFIG_PATH: &str = "config/providers.json";
 pub const DEFAULT_CUSTOM_KEY_CONFIG_PATH: &str = "config/custom-keys.json";
+pub const DEFAULT_API_KEYS_PATH: &str = "config/api-keys.json";
+pub const DEFAULT_TOKEN_PRICE_CONFIG_PATH: &str = "config/token-prices.json";
 pub const DEFAULT_MODEL_ROUTE_CONFIG_PATH: &str = "config/model-routes.json";
+pub const DEFAULT_MODEL_ALIAS_CONFIG_PATH: &str = "config/custom-model-aliases.json";
 pub const DEFAULT_ROUTER_AUTH_CONFIG_PATH: &str = "config/router-auth.json";
 pub const DEFAULT_USAGE_DB_PATH: &str = "~/.local/state/llm-provider-router/usage.sqlite3";
 pub const DEFAULT_STATE_DB_PATH: &str = "~/.local/state/llm-provider-router/state.sqlite3";
@@ -21,6 +24,14 @@ pub struct KeyRef {
     pub weight: i64,
     pub provider: String,
     pub billing_type: String,
+    /// Whether the key value may be persisted to config/api-keys.json.
+    /// Env-only keys (persist=false) are read strictly from the environment.
+    #[serde(default = "default_persist")]
+    pub persist: bool,
+}
+
+fn default_persist() -> bool {
+    true
 }
 
 impl KeyRef {
@@ -41,6 +52,26 @@ impl KeyRef {
             weight,
             provider: provider.to_string(),
             billing_type: billing_type.to_string(),
+            persist: true,
+        }
+    }
+
+    /// Key that must come from the environment only; its value is never
+    /// persisted to config/api-keys.json (vault restores it into the env file).
+    pub fn env_only(
+        name: &str,
+        env_var: &str,
+        weight: i64,
+        provider: &str,
+        billing_type: &str,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            env_var: env_var.to_string(),
+            weight,
+            provider: provider.to_string(),
+            billing_type: billing_type.to_string(),
+            persist: false,
         }
     }
 
@@ -76,6 +107,9 @@ pub struct ModelAlias {
     pub base_url: String,
     pub keys: Vec<KeyRef>,
     pub retry_policy: Option<RetryPolicy>,
+    /// 服务器侧默认/覆写参数（v2：逻辑模型默认 params 与物理模型覆写 params 的合并结果）。
+    /// 应用时只填充客户端未提供的字段，不覆盖客户端显式参数。
+    pub params: HashMap<String, serde_json::Value>,
 }
 
 impl ModelAlias {
@@ -92,7 +126,14 @@ impl ModelAlias {
             base_url: base_url.to_string(),
             keys,
             retry_policy,
+            params: HashMap::new(),
         }
+    }
+
+    /// 追加服务器侧参数（v2 路由展开时用于携带逻辑模型默认 + 物理模型覆写）。
+    pub fn with_params(mut self, params: HashMap<String, serde_json::Value>) -> Self {
+        self.params = params;
+        self
     }
 
     pub fn upstream_model(&self) -> String {
@@ -152,8 +193,13 @@ pub struct Settings {
     pub weight_config_path: String,
     pub provider_config_path: String,
     pub custom_key_config_path: String,
+    pub api_keys_path: String,
+    pub token_price_config_path: String,
     pub model_route_config_path: String,
+    pub model_alias_config_path: String,
     pub auth_invalid_freeze_seconds: f64,
+    /// v2 分层配置开关（默认启用；设 0 回退旧硬编码 aliases 逻辑）。
+    pub v2_config_enabled: bool,
 }
 
 pub fn load_settings() -> anyhow::Result<Settings> {
@@ -202,15 +248,25 @@ pub fn load_settings() -> anyhow::Result<Settings> {
             "LLM_PROVIDER_ROUTER_CUSTOM_KEY_CONFIG_PATH",
             DEFAULT_CUSTOM_KEY_CONFIG_PATH,
         ),
+        api_keys_path: env_or("LLM_PROVIDER_ROUTER_API_KEYS_PATH", DEFAULT_API_KEYS_PATH),
+        token_price_config_path: env_or(
+            "LLM_PROVIDER_ROUTER_TOKEN_PRICE_CONFIG_PATH",
+            DEFAULT_TOKEN_PRICE_CONFIG_PATH,
+        ),
         model_route_config_path: env_or(
             "LLM_PROVIDER_ROUTER_MODEL_ROUTE_CONFIG_PATH",
             DEFAULT_MODEL_ROUTE_CONFIG_PATH,
+        ),
+        model_alias_config_path: env_or(
+            "LLM_PROVIDER_ROUTER_MODEL_ALIAS_CONFIG_PATH",
+            DEFAULT_MODEL_ALIAS_CONFIG_PATH,
         ),
         auth_invalid_freeze_seconds: env_or(
             "LLM_PROVIDER_ROUTER_AUTH_INVALID_FREEZE_SECONDS",
             "86400",
         )
         .parse()?,
+        v2_config_enabled: env_or("LLM_PROVIDER_ROUTER_V2", "1") != "0",
     })
 }
 
@@ -231,7 +287,7 @@ pub fn aliases() -> HashMap<String, ModelAlias> {
         "openai-relay",
         "subscription",
     )];
-    let deepseek_keys = vec![KeyRef::with_provider(
+    let deepseek_keys = vec![KeyRef::env_only(
         "deepseek-official",
         "AGENT_AI_DEEPSEEK_API_KEY",
         1,
@@ -248,8 +304,10 @@ pub fn aliases() -> HashMap<String, ModelAlias> {
         ("picture-model-auto", "openai/minimax-m3"),
         ("glm-latest-auto", "openai/glm-5.2"),
         ("deepseek-v4-pro-auto", "openai/deepseek-v4-pro"),
-        ("deepseek-v4-flash-auto", "openai/deepseek-v4-flash"),
+        ("deepseek-v4-flash-auto", "openai/deepseek-v4-flash-260801"),
+        ("deepseek-v4-flash-260801", "openai/deepseek-v4-flash-260801"),
         ("minimax-latest-auto", "openai/minimax-m3"),
+        ("ark-code-latest-auto", "openai/ark-code-latest"),
     ] {
         map.insert(
             name.to_string(),

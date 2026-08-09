@@ -1,11 +1,19 @@
 {
   "keys": {
+    "hevin-private": {
+      "env_var": "AGENT_AI_ARK_HEVIN_PRIVATE_API_KEY",
+      "provider": "ark",
+      "billing_type": "subscription",
+      "weight": 1,
+      "aliases": ["ark-code-latest-auto", "deepseek-v4-flash-auto", "deepseek-v4-pro-auto", "glm-latest-auto", "minimax-latest-auto"]
+    },
     "shell": {
       "env_var": "AGENT_AI_ARK_SHELL_API_KEY",
       "provider": "ark",
       "billing_type": "subscription",
       "weight": 1,
       "aliases": [
+        "ark-code-latest-auto",
         "deepseek-v4-flash-auto",
         "deepseek-v4-pro-auto",
         "glm-latest-auto",

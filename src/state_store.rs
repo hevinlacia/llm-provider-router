@@ -1,6 +1,6 @@
 use crate::config::expand_path;
 use rusqlite::{params, Connection};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -139,16 +139,6 @@ impl StateStore {
             self.conn.execute(
                 "DELETE FROM session_bindings WHERE alias = ? AND session_id = ?",
                 params![alias, session_id],
-            )?;
-        }
-        Ok(())
-    }
-
-    pub fn delete_bindings_for_keys(&self, key_names: &HashSet<String>) -> anyhow::Result<()> {
-        for key_name in key_names {
-            self.conn.execute(
-                "DELETE FROM session_bindings WHERE key_name = ?",
-                params![key_name],
             )?;
         }
         Ok(())

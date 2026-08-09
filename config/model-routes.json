@@ -8,11 +8,5 @@
     "fallbacks": [
       "glm-latest-auto"
     ]
-  },
-  "medium-model-auto": {
-    "target": "glm-latest-auto",
-    "fallbacks": [
-      "deepseek-v4-pro-auto"
-    ]
   }
 }

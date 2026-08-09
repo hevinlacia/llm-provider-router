@@ -13,6 +13,7 @@ pub struct Bucket {
     pub errors: i64,
     pub prompt_tokens: i64,
     pub cached_tokens: i64,
+    pub prompt_uncached_tokens: i64,
     pub completion_tokens: i64,
     pub total_tokens: i64,
     pub cache_hit_rate: f64,
@@ -225,10 +226,12 @@ impl UsageStore {
                 errors: row.get::<_, i64>("errors")?,
                 prompt_tokens: row.get::<_, i64>("prompt_tokens")?,
                 cached_tokens: row.get::<_, i64>("cached_tokens")?,
+                prompt_uncached_tokens: 0,
                 completion_tokens: row.get::<_, i64>("completion_tokens")?,
                 total_tokens: row.get::<_, i64>("total_tokens")?,
                 cache_hit_rate: 0.0,
             };
+            bucket.prompt_uncached_tokens = prompt_uncached_tokens(&bucket);
             bucket.cache_hit_rate = cache_hit_rate(&bucket);
             Ok(bucket)
         })?;
@@ -264,10 +267,12 @@ impl UsageStore {
                 errors: row.get::<_, i64>("errors")?,
                 prompt_tokens: row.get::<_, i64>("prompt_tokens")?,
                 cached_tokens: row.get::<_, i64>("cached_tokens")?,
+                prompt_uncached_tokens: 0,
                 completion_tokens: row.get::<_, i64>("completion_tokens")?,
                 total_tokens: row.get::<_, i64>("total_tokens")?,
                 cache_hit_rate: 0.0,
             };
+            bucket.prompt_uncached_tokens = prompt_uncached_tokens(&bucket);
             bucket.cache_hit_rate = cache_hit_rate(&bucket);
             Ok((row.get::<_, String>("name")?, bucket))
         })?;
@@ -318,10 +323,12 @@ impl UsageStore {
                 errors: row.get::<_, i64>("errors")?,
                 prompt_tokens: row.get::<_, i64>("prompt_tokens")?,
                 cached_tokens: row.get::<_, i64>("cached_tokens")?,
+                prompt_uncached_tokens: 0,
                 completion_tokens: row.get::<_, i64>("completion_tokens")?,
                 total_tokens: row.get::<_, i64>("total_tokens")?,
                 cache_hit_rate: 0.0,
             };
+            bucket.prompt_uncached_tokens = prompt_uncached_tokens(&bucket);
             bucket.cache_hit_rate = cache_hit_rate(&bucket);
             Ok((row.get::<_, String>("name")?, bucket))
         })?;
@@ -365,6 +372,10 @@ fn extract_cached_tokens(usage: Option<&Value>) -> i64 {
                 .and_then(Value::as_i64)
         })
         .unwrap_or(0)
+}
+
+fn prompt_uncached_tokens(bucket: &Bucket) -> i64 {
+    (bucket.prompt_tokens - bucket.cached_tokens).max(0)
 }
 
 fn cache_hit_rate(bucket: &Bucket) -> f64 {
@@ -462,5 +473,25 @@ mod tests {
 
         assert!(snapshot["by_status"].get("200").is_some());
         assert!(snapshot["by_status"].get("599").is_some());
+    }
+
+    #[test]
+    fn usage_snapshot_splits_cached_and_uncached_prompt_tokens() {
+        let store = UsageStore::new(":memory:").unwrap();
+        let usage = json!({
+            "prompt_tokens": 100,
+            "prompt_tokens_details": { "cached_tokens": 40 },
+            "completion_tokens": 25,
+            "total_tokens": 125
+        });
+        store
+            .record("glm-latest-auto", "hevin", 200, Some(&usage))
+            .unwrap();
+
+        let snapshot = store.snapshot("all", None, None).unwrap();
+
+        assert_eq!(snapshot["total"]["cached_tokens"], 40);
+        assert_eq!(snapshot["total"]["prompt_uncached_tokens"], 60);
+        assert_eq!(snapshot["total"]["completion_tokens"], 25);
     }
 }

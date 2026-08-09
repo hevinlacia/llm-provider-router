@@ -1,0 +1,67 @@
+{
+  "deepseek-v4-flash-auto": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "deepseek-v4-flash-260801": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "deepseek-v4-flash-official": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "deepseek-v4-pro-auto": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "deepseek-v4-pro-official": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "glm-latest-auto": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "high-model-auto": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "low-model-auto": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "medium-model-auto": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "minimax-latest-auto": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "openai-gpt-5.5-hevin": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "openai-gpt-5.6-sol-hevin": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "picture-model-auto": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  }
+}
