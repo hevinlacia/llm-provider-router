@@ -1,0 +1,72 @@
+config/providers.json
+  30a1cccdea015200 1-5
+src/ark_key_router/usage_store.py
+  b662ace2e54ef0ea 156-177
+  30a1cccdea015200 366-410
+tests/test_state.py
+  b662ace2e54ef0ea 74-114
+  30a1cccdea015200 24-27,308-355
+bin/install-service.sh
+  b00927596ac5ee20 9,27
+config/api-keys.sops.json
+  30a1cccdea015200 1-14
+src/ark_key_router/dashboard.py
+  30a1cccdea015200 14-20,31,44-52,56-121,125-132,165-196,257-274,299-346,359
+src/ark_key_router/proxy.py
+  30a1cccdea015200 77-118,221,299,343-344,346
+src/ark_key_router/config.py
+  30a1cccdea015200 9-12,20-21,24,57-71,84-87,99-101,110-116,196-210
+src/ark_key_router/state.py
+  b662ace2e54ef0ea 100,105-126
+  30a1cccdea015200 11-12,34-43,174,177,182-183,187-188,204-230,242-275,277-279,326-342
+src/ark_key_router/key_store.py
+  30a1cccdea015200 1-133
+README.md
+  30a1cccdea015200 96-99,104-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "c8327ec7ba315a0d5a43d7802517dce48ad9f7de",
+  "prompts": {
+    "30a1cccdea015200": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0caa97e72ffebk0Aia3pufwy9I",
+        "model": "cch/gpt-5.5"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 667,
+      "total_deletions": 68,
+      "accepted_lines": 655,
+      "overriden_lines": 0
+    },
+    "b00927596ac5ee20": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0cb214394ffeOX18adovXzucTt",
+        "model": "cch/gpt-5.5"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "b662ace2e54ef0ea": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0c9a4981fffePtabRojTse8jSc",
+        "model": "cch/gpt-5.5"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 87,
+      "total_deletions": 1,
+      "accepted_lines": 87,
+      "overriden_lines": 0
+    }
+  }
+}

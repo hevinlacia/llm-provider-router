@@ -1,0 +1,21 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "8ff23fa8aa593a33a65549e9a3ed90fa1abdb4c3",
+  "prompts": {
+    "26d4474b58593dd3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0bfb3f319ffest01EqR2qeeo3r",
+        "model": "MiniMax/MiniMax-M3"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 21,
+      "total_deletions": 21,
+      "accepted_lines": 21,
+      "overriden_lines": 0
+    }
+  }
+}
