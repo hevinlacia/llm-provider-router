@@ -11,7 +11,6 @@ pub const DEFAULT_PROVIDER_CONFIG_PATH: &str = "config/providers.json";
 pub const DEFAULT_CUSTOM_KEY_CONFIG_PATH: &str = "config/custom-keys.json";
 pub const DEFAULT_API_KEYS_PATH: &str = "config/api-keys.json";
 pub const DEFAULT_TOKEN_PRICE_CONFIG_PATH: &str = "config/token-prices.json";
-pub const DEFAULT_MODEL_ROUTE_CONFIG_PATH: &str = "config/model-routes.json";
 pub const DEFAULT_MODEL_ALIAS_CONFIG_PATH: &str = "config/custom-model-aliases.json";
 pub const DEFAULT_ROUTER_AUTH_CONFIG_PATH: &str = "config/router-auth.json";
 pub const DEFAULT_USAGE_DB_PATH: &str = "~/.local/state/llm-provider-router/usage.sqlite3";
@@ -172,13 +171,6 @@ impl ModelAlias {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ModelRoute {
-    pub target: String,
-    #[serde(default)]
-    pub fallbacks: Vec<String>,
-}
-
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub host: String,
@@ -195,7 +187,6 @@ pub struct Settings {
     pub custom_key_config_path: String,
     pub api_keys_path: String,
     pub token_price_config_path: String,
-    pub model_route_config_path: String,
     pub model_alias_config_path: String,
     pub auth_invalid_freeze_seconds: f64,
     /// v2 分层配置开关（默认启用；设 0 回退旧硬编码 aliases 逻辑）。
@@ -252,10 +243,6 @@ pub fn load_settings() -> anyhow::Result<Settings> {
         token_price_config_path: env_or(
             "LLM_PROVIDER_ROUTER_TOKEN_PRICE_CONFIG_PATH",
             DEFAULT_TOKEN_PRICE_CONFIG_PATH,
-        ),
-        model_route_config_path: env_or(
-            "LLM_PROVIDER_ROUTER_MODEL_ROUTE_CONFIG_PATH",
-            DEFAULT_MODEL_ROUTE_CONFIG_PATH,
         ),
         model_alias_config_path: env_or(
             "LLM_PROVIDER_ROUTER_MODEL_ALIAS_CONFIG_PATH",
@@ -371,32 +358,6 @@ pub fn aliases() -> HashMap<String, ModelAlias> {
         ),
     );
     map
-}
-
-pub fn default_model_routes() -> HashMap<String, ModelRoute> {
-    HashMap::from([
-        (
-            "high-model-auto".to_string(),
-            ModelRoute {
-                target: "openai-gpt-5.5-hevin".to_string(),
-                fallbacks: vec!["glm-latest-auto".to_string()],
-            },
-        ),
-        (
-            "medium-model-auto".to_string(),
-            ModelRoute {
-                target: "glm-latest-auto".to_string(),
-                fallbacks: vec!["deepseek-v4-pro-auto".to_string()],
-            },
-        ),
-        (
-            "low-model-auto".to_string(),
-            ModelRoute {
-                target: "deepseek-v4-flash-auto".to_string(),
-                fallbacks: vec!["glm-latest-auto".to_string()],
-            },
-        ),
-    ])
 }
 
 pub fn default_key_weights() -> HashMap<String, i64> {

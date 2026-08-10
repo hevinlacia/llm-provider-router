@@ -93,7 +93,6 @@ npm run build
 - `POST /api/usage/reset` — clear usage events.
 - `POST /api/frozen/clear` — clear frozen keys.
 - `GET/PUT /api/config/weights` — key routing weights.
-- `GET/PUT /api/config/model-routes` — virtual model route targets/fallbacks.
 - `GET/PUT /api/config/providers` — provider base URLs.
 - `GET/PUT/POST /api/config/keys` — encrypted key metadata/update/add.
 - `GET /v1/models` — OpenAI-compatible model list.
@@ -121,7 +120,6 @@ LLM_PROVIDER_ROUTER_STATE_DB_PATH=~/.local/state/llm-provider-router/state.sqlit
 LLM_PROVIDER_ROUTER_WEIGHT_CONFIG_PATH=config/key-weights.json
 LLM_PROVIDER_ROUTER_PROVIDER_CONFIG_PATH=config/providers.json
 LLM_PROVIDER_ROUTER_CUSTOM_KEY_CONFIG_PATH=config/custom-keys.json
-LLM_PROVIDER_ROUTER_MODEL_ROUTE_CONFIG_PATH=config/model-routes.json
 LLM_PROVIDER_ROUTER_AUTH_CONFIG_PATH=config/router-auth.json
 ```
 

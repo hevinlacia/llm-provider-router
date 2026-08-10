@@ -1,5 +1,18 @@
 {
   "providers": {
+    "deepseek-official": {
+      "base_url": "https://api.deepseek.com",
+      "retry": null,
+      "keys": {
+        "deepseek-official": {
+          "env_var": "AGENT_AI_DEEPSEEK_API_KEY",
+          "weight": 1,
+          "billing_type": "payg",
+          "enabled": true,
+          "persist": false
+        }
+      }
+    },
     "ark": {
       "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
       "retry": {
@@ -16,29 +29,15 @@
         ]
       },
       "keys": {
-        "ronnie": {
-          "env_var": "AGENT_AI_ARK_RONNIE_API_KEY",
-          "weight": 4,
+        "hevin": {
+          "env_var": "AGENT_AI_ARK_HEVIN_API_KEY",
+          "weight": 5,
           "billing_type": "subscription",
           "enabled": true,
           "persist": true
         },
         "shell": {
           "env_var": "AGENT_AI_ARK_SHELL_API_KEY",
-          "weight": 6,
-          "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
-        },
-        "hevin-private": {
-          "env_var": "AGENT_AI_ARK_HEVIN_PRIVATE_API_KEY",
-          "weight": 6,
-          "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
-        },
-        "garvin": {
-          "env_var": "AGENT_AI_ARK_GARVIN_API_KEY",
           "weight": 6,
           "billing_type": "subscription",
           "enabled": true,
@@ -51,25 +50,18 @@
           "enabled": false,
           "persist": true
         },
+        "hevin-private": {
+          "env_var": "AGENT_AI_ARK_HEVIN_PRIVATE_API_KEY",
+          "weight": 6,
+          "billing_type": "subscription",
+          "enabled": true,
+          "persist": true
+        },
         "cyril": {
           "env_var": "AGENT_AI_ARK_CYRIL_API_KEY",
           "weight": 4,
           "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
-        },
-        "moss": {
-          "env_var": "AGENT_AI_ARK_MOSS_API_KEY",
-          "weight": 4,
-          "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
-        },
-        "hevin": {
-          "env_var": "AGENT_AI_ARK_HEVIN_API_KEY",
-          "weight": 5,
-          "billing_type": "subscription",
-          "enabled": true,
+          "enabled": false,
           "persist": true
         },
         "khaine": {
@@ -78,19 +70,27 @@
           "billing_type": "subscription",
           "enabled": false,
           "persist": true
-        }
-      }
-    },
-    "deepseek-official": {
-      "base_url": "https://api.deepseek.com",
-      "retry": null,
-      "keys": {
-        "deepseek-official": {
-          "env_var": "AGENT_AI_DEEPSEEK_API_KEY",
-          "weight": 1,
-          "billing_type": "payg",
+        },
+        "ronnie": {
+          "env_var": "AGENT_AI_ARK_RONNIE_API_KEY",
+          "weight": 4,
+          "billing_type": "subscription",
+          "enabled": false,
+          "persist": true
+        },
+        "garvin": {
+          "env_var": "AGENT_AI_ARK_GARVIN_API_KEY",
+          "weight": 6,
+          "billing_type": "subscription",
           "enabled": true,
-          "persist": false
+          "persist": true
+        },
+        "moss": {
+          "env_var": "AGENT_AI_ARK_MOSS_API_KEY",
+          "weight": 4,
+          "billing_type": "subscription",
+          "enabled": false,
+          "persist": true
         }
       }
     },

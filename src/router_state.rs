@@ -1,11 +1,11 @@
 use crate::config::{
-    aliases, default_key_weights, default_model_routes, default_provider_base_urls, KeyRef,
-    ModelAlias, ModelRoute, Settings, DEFAULT_ARK_BASE_URL,
+    aliases, default_key_weights, default_provider_base_urls, KeyRef, ModelAlias, Settings,
+    DEFAULT_ARK_BASE_URL,
 };
 use crate::config_v2::{self, TargetCandidate, V2Strategy};
 use crate::json_config::{
     ApiKeysStore, CustomKeyEntry, CustomKeyPoolConfig, KeyWeightConfig, KeyWeightsConfigData,
-    ModelAliasConfig, ModelRouteConfig, ProviderConfig, TokenPrice, TokenPriceConfig,
+    ModelAliasConfig, ProviderConfig, TokenPrice, TokenPriceConfig,
 };
 use crate::state_store::{now_seconds, StateStore};
 use crate::usage_store::UsageStore;
@@ -56,7 +56,6 @@ pub struct RouterState {
     weight_config: KeyWeightConfig,
     provider_config: ProviderConfig,
     custom_key_config: CustomKeyPoolConfig,
-    model_route_config: ModelRouteConfig,
     token_price_config: TokenPriceConfig,
     model_alias_config: ModelAliasConfig,
     api_keys_store: ApiKeysStore,
@@ -92,11 +91,9 @@ impl RouterState {
             ProviderConfig::new(&settings.provider_config_path, default_provider_base_urls());
         let mut custom_key_config = CustomKeyPoolConfig::new(&settings.custom_key_config_path);
         let model_alias_config = ModelAliasConfig::new(&settings.model_alias_config_path);
-        let model_route_config =
-            ModelRouteConfig::new(&settings.model_route_config_path, default_model_routes());
         let token_price_config = TokenPriceConfig::new(
             &settings.token_price_config_path,
-            default_token_prices(&default_model_routes()),
+            default_token_prices(),
         );
         let api_keys_store = ApiKeysStore::new(&settings.api_keys_path);
         // First run (file missing): seed from environment so existing keys are
@@ -178,7 +175,6 @@ impl RouterState {
             weight_config,
             provider_config,
             custom_key_config,
-            model_route_config,
             token_price_config,
             model_alias_config,
             api_keys_store,
@@ -481,13 +477,11 @@ impl RouterState {
         pool_names.sort();
         Ok(json!({
             "aliases": aliases_payload,
-            "model_routes": self.model_routes(),
             "weights": weights_config.global.clone(),
             "global_weights": weights_config.global,
             "pool_weights": weights_config.pools,
             "pools": pool_names,
             "config_path": self.weight_config.path.to_string_lossy(),
-            "model_route_config_path": self.model_route_config.path.to_string_lossy(),
         }))
     }
 
@@ -885,18 +879,7 @@ impl RouterState {
     }
 
     pub fn settings_aliases(&mut self) -> HashMap<String, ModelAlias> {
-        let mut aliases = self.base_aliases();
-        for (route_name, route) in self.model_routes() {
-            if let Some(target) = aliases.get(&route.target).cloned() {
-                aliases.insert(route_name.clone(), request_alias(&route_name, &target));
-            }
-        }
-        aliases
-    }
-
-    pub fn model_routes(&mut self) -> HashMap<String, ModelRoute> {
-        let known = self.base_aliases().keys().cloned().collect::<HashSet<_>>();
-        self.model_route_config.get(&known)
+        self.base_aliases()
     }
 
     /// v2 架构完整状态视图：供应商（含 key enabled/frozen/可用性聚合）、
@@ -1082,14 +1065,6 @@ impl RouterState {
         }
     }
 
-    pub fn set_model_routes(
-        &mut self,
-        routes: HashMap<String, ModelRoute>,
-    ) -> anyhow::Result<HashMap<String, ModelRoute>> {
-        let known = self.base_aliases().keys().cloned().collect::<HashSet<_>>();
-        self.model_route_config.set(routes, &known)
-    }
-
     pub fn model_alias_config_snapshot(&mut self) -> Value {
         let custom_aliases = self.model_alias_config.get();
         let mut aliases = custom_aliases
@@ -1137,52 +1112,14 @@ impl RouterState {
         Ok(self.model_alias_config_snapshot())
     }
 
-    pub fn route_config_snapshot(&mut self) -> Value {
-        let aliases = self.base_aliases();
-        let routes = self.model_routes();
-        let mut base_aliases = aliases
-            .iter()
-            .map(|(name, alias)| {
-                json!({
-                    "name": name,
-                    "upstream_model": alias.upstream_model(),
-                    "provider": alias.provider(),
-                    "base_url": alias.base_url,
-                })
-            })
-            .collect::<Vec<_>>();
-        base_aliases.sort_by_key(|item| {
-            item.get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string()
-        });
-        json!({
-            "routes": routes,
-            "base_aliases": base_aliases,
-            "config_path": self.model_route_config.path.to_string_lossy(),
-        })
-    }
-
     pub fn route_aliases(&mut self, model_name: &str, session_id: Option<&str>) -> Vec<ModelAlias> {
-        let routes = self.model_routes();
         if self.v2.is_some() {
-            let names: Vec<String> = if let Some(route) = routes.get(model_name) {
-                let mut names = vec![route.target.clone()];
-                names.extend(route.fallbacks.iter().cloned());
-                names
-            } else {
-                vec![model_name.to_string()]
-            };
-            // 在借用作用域内解析候选，出作用域释放 self.v2 借用，以便后面访问 usage_store
+            // 请求名即逻辑模型名（或 custom alias），resolve_targets 会嵌套展开到物理候选。
             let expanded: Vec<(String, Vec<TargetCandidate>)> = {
                 let cfg = self.v2.as_ref().expect("v2 enabled checked");
-                names
-                    .iter()
-                    .filter_map(|name| {
-                        config_v2::resolve_targets(cfg, name).map(|c| (name.clone(), c))
-                    })
-                    .collect()
+                config_v2::resolve_targets(cfg, model_name)
+                    .map(|c| vec![(model_name.to_string(), c)])
+                    .unwrap_or_default()
             };
             // custom model aliases（运行时 API 手动新增的扁平逻辑模型）
             let customs = self.custom_alias_models();
@@ -1198,23 +1135,12 @@ impl RouterState {
                 };
                 out.extend(order_targets(candidates, session_id, preferred));
             }
-            for name in &names {
-                if let Some(model) = customs.get(name) {
-                    out.push(model.clone());
-                }
+            if let Some(model) = customs.get(model_name) {
+                out.push(model.clone());
             }
             return out;
         }
         let aliases = self.base_aliases();
-        if let Some(route) = routes.get(model_name) {
-            let mut names = vec![route.target.clone()];
-            names.extend(route.fallbacks.iter().cloned());
-            return names
-                .into_iter()
-                .filter_map(|name| aliases.get(&name).cloned())
-                .map(|alias| request_alias(model_name, &alias))
-                .collect();
-        }
         aliases.get(model_name).cloned().into_iter().collect()
     }
 
@@ -1301,8 +1227,7 @@ impl RouterState {
     }
 
     fn sync_token_price_defaults(&mut self) {
-        let routes = self.model_routes();
-        let defaults = default_token_prices(&routes);
+        let defaults = default_token_prices();
         self.token_price_config.add_defaults(defaults);
     }
 
@@ -1341,12 +1266,9 @@ impl RouterState {
     }
 }
 
-fn default_token_prices(model_routes: &HashMap<String, ModelRoute>) -> HashMap<String, TokenPrice> {
+fn default_token_prices() -> HashMap<String, TokenPrice> {
     let mut prices = HashMap::new();
     for model in aliases().keys() {
-        prices.insert(model.clone(), TokenPrice::default());
-    }
-    for model in model_routes.keys() {
         prices.insert(model.clone(), TokenPrice::default());
     }
     prices
@@ -1434,16 +1356,6 @@ fn round_money(value: f64) -> f64 {
     (value * 1_000_000.0).round() / 1_000_000.0
 }
 
-pub fn request_alias(alias_name: &str, target: &ModelAlias) -> ModelAlias {
-    ModelAlias {
-        alias: alias_name.to_string(),
-        litellm_model: target.litellm_model.clone(),
-        base_url: target.base_url.clone(),
-        keys: target.keys.clone(),
-        retry_policy: target.retry_policy.clone(),
-        params: target.params.clone(),
-    }
-}
 
 /// 第 1 层路由排序：把物理模型候选排成"首选在前，其余作为回退"。
 /// - priority：按 route.targets 原序；
@@ -1738,7 +1650,6 @@ mod tests {
             custom_key_config_path: ":memory:".to_string(),
             api_keys_path: ":memory:".to_string(),
             token_price_config_path: ":memory:".to_string(),
-            model_route_config_path: ":memory:".to_string(),
             model_alias_config_path: ":memory:".to_string(),
             auth_invalid_freeze_seconds: 86400.0,
             // router_state 测试覆盖旧逻辑；v2 行为由 config_v2 模块测试覆盖。

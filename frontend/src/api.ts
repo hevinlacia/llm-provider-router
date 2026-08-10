@@ -1,4 +1,4 @@
-import type { FilterState, KeyConfig, ModelAliasConfig, ModelRoutesConfig, ProviderConfig, StateResponse, TokenPriceConfig, UsageSnapshot, V2Status, WeightConfig } from './types';
+import type { FilterState, KeyConfig, ModelAliasConfig, ProviderConfig, StateResponse, TokenPriceConfig, UsageSnapshot, V2Status, WeightConfig } from './types';
 
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
@@ -33,7 +33,6 @@ function normalizeWeightConfig(raw: Partial<WeightConfig>): WeightConfig {
     pools,
     supports_pool_weights: Boolean(raw.global_weights && raw.pool_weights && raw.pools),
     aliases,
-    model_routes: raw.model_routes ?? {},
     config_path: raw.config_path ?? '',
   };
 }
@@ -79,16 +78,6 @@ export const api = {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ providers }),
-    });
-  },
-  modelRoutes() {
-    return request<ModelRoutesConfig>('/api/config/model-routes');
-  },
-  saveModelRoutes(routes: ModelRoutesConfig['routes']) {
-    return request<ModelRoutesConfig>('/api/config/model-routes', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ routes }),
     });
   },
   async tokenPrices() {

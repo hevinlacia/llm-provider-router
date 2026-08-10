@@ -158,7 +158,7 @@
 
 | 文件 | 处理 |
 |---|---|
-| `config/model-routes.json` | 保留：`low/high/medium-model-auto` 是**路由档位**（意图层），`target`/`fallbacks` 改为指向逻辑模型名 |
+| `config/model-routes.json` | **已退役**：`low/high/medium-model-auto` 等意图档位迁为逻辑模型（指向逻辑模型的逻辑模型），由 `logical-models.json` 表达，`fold_to_aliases` 支持首 target 嵌套展开；`/api/config/model-routes` 已移除 |
 | `config/token-prices.json` | 保留，双口径统计：支持"按逻辑模型"和"按实际模型（物理模型）"两种统计视图，通过开关切换或分两个页面展示（用户决策 #3） |
 | `config/key-weights.json` | 并入 `providers.json` 的 keys[].weight；文件可退役或保留为运行时覆盖层 |
 | `config/custom-keys.json` | 并入 `providers.json`；退役 |
@@ -230,7 +230,7 @@ fn resolve(alias, session):
 | deepseek-official 系 | 2 个 LogicalModel + deepseek-official 物理模型 |
 | `custom-keys.json`（hevin-private/shell + aliases 白名单） | 并入 `providers.ark.keys`；aliases 白名单语义取消（key 只与供应商关联） |
 | `key-weights.json` | 并入 `providers.*.keys[].weight` |
-| `model-routes.json`（档位） | 保留，target/fallback 指逻辑模型名 |
+| `model-routes.json`（档位） | **退役**：意图档位迁为逻辑模型，`target`/`fallbacks` 等价于 priority 策略的 `targets` 顺序（目标为逻辑模型名，嵌套展开） |
 | `token-prices.json`（按 alias） | 保留，按逻辑模型名 |
 | `custom-model-aliases.json` | 保留（运行时逻辑模型） |
 | frozen（per-key） | 保持 per-key 冻结；供应商冻结 = 全部 key 冻结的聚合判定 |
@@ -241,7 +241,7 @@ fn resolve(alias, session):
 ## 6. 对外契约
 
 - 客户端访问的 alias 名（`deepseek-v4-flash-auto`、`low-model-auto`、`high-model-auto` 等）**保持不变**，逻辑模型名即对外 alias。
-- HTTP API（`/v1/chat/completions`、`/api/config/model-aliases`、`/api/config/model-routes` 等）路径不变，内部实现替换。
+- HTTP API（`/v1/chat/completions`、`/api/config/model-aliases` 等）路径不变，内部实现替换；`/api/config/model-routes` 已移除（档位并入逻辑模型）。
 - 前端页面需要新增加：供应商管理、物理模型管理、逻辑模型路由配置视图（Phase 4）。
 
 ## 7. 实施计划

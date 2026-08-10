@@ -316,21 +316,44 @@ pub fn validate(cfg: &V2Config) -> anyhow::Result<()> {
 /// - keys 过滤 `enabled=false` 的 key。
 ///
 /// 跨供应商回退（多个 target）在 Phase 2 由路由引擎消费，折叠视图只表达主目标。
+/// 沿逻辑模型 targets 顺序递归找第一个可达的物理模型 id（防环）。
+/// 返回 None 表示无法折叠到任何物理模型（如全环引用）。
+fn first_physical_model<'a>(
+    cfg: &'a V2Config,
+    targets: &'a [V2Target],
+    visited: &mut HashSet<String>,
+) -> Option<&'a str> {
+    for target in targets {
+        if cfg.models.contains_key(&target.model) {
+            return Some(&target.model);
+        }
+        if let Some(nested) = cfg.logical_models.get(&target.model) {
+            if visited.insert(target.model.clone()) {
+                if let Some(found) = first_physical_model(cfg, &nested.route.targets, visited) {
+                    return Some(found);
+                }
+                visited.remove(&target.model);
+            }
+        }
+    }
+    None
+}
+
 pub fn fold_to_aliases(cfg: &V2Config) -> anyhow::Result<HashMap<String, ModelAlias>> {
     validate(cfg)?;
     let mut aliases = HashMap::new();
     for (alias, lm) in &cfg.logical_models {
-        let Some(first) = lm.route.targets.first() else {
-            continue;
+        // 首 target 可能是另一个逻辑模型：递归展开到第一个可达物理模型（防环）。
+        let mut visited = HashSet::new();
+        visited.insert(alias.clone());
+        let Some(first) = first_physical_model(cfg, &lm.route.targets, &mut visited) else {
+            continue; // 全环引用，无法折叠，跳过该逻辑模型
         };
-        let model = cfg
-            .models
-            .get(&first.model)
-            .ok_or_else(|| anyhow!("logical model {alias}: missing physical model '{}'", first.model))?;
+        let model = &cfg.models[first];
         let provider = cfg
             .providers
             .get(&model.provider)
-            .ok_or_else(|| anyhow!("model '{}': missing provider '{}'", first.model, model.provider))?;
+            .ok_or_else(|| anyhow!("model '{}': missing provider '{}'", first, model.provider))?;
 
         let keys: Vec<KeyRef> = provider
             .keys
@@ -660,13 +683,20 @@ mod tests {
             "ark-code-latest-auto",
             "openai-gpt-5.5-hevin",
             "openai-gpt-5.6-sol-hevin",
+            "high-model-auto",
+            "low-model-auto",
         ] {
             assert!(aliases.contains_key(expected), "v2 折叠缺少 alias: {expected}");
         }
 
-        // 与旧 aliases() 主目标等价性校验：litellm_model / base_url 应一致
+        // 与旧 aliases() 主目标等价性校验：litellm_model / base_url 应一致。
+        // 迁移后 high/low-model-auto 由 model-routes.json 档位迁为"逻辑模型指向逻辑模型"，
+        // 折叠到的是指向逻辑模型的主目标，与旧硬编码的物理直连语义不同，单独断言（见下）。
         let legacy = crate::config::aliases();
         for (name, alias) in &aliases {
+            if name == "high-model-auto" || name == "low-model-auto" {
+                continue;
+            }
             let Some(old) = legacy.get(name) else { continue };
             assert_eq!(
                 alias.litellm_model, old.litellm_model,
@@ -674,6 +704,18 @@ mod tests {
             );
             assert_eq!(alias.base_url, old.base_url, "alias {name} base_url 不一致");
         }
+
+        // 意图档位迁移语义：
+        // - high-model-auto → glm-latest-auto → ark/glm-5.2（主目标）
+        // - low-model-auto → deepseek-v4-flash-auto（首物理目标）+ 回退 glm-latest-auto
+        assert_eq!(
+            aliases["high-model-auto"].litellm_model, "openai/glm-5.2",
+            "high-model-auto 应折叠到 glm-latest-auto 的物理主目标"
+        );
+        assert_eq!(
+            aliases["low-model-auto"].litellm_model, "openai/deepseek-v4-flash-260801",
+            "low-model-auto 应折叠到 deepseek-v4-flash-auto 的首物理目标"
+        );
 
         // v2 语义校验（与旧逻辑的预期差异，见 architecture-v2.md §5）：
         // - custom keys（hevin-private/shell）并入 ark，key 只与供应商关联，可用于 ark 所有模型；
@@ -688,8 +730,8 @@ mod tests {
         );
         assert_eq!(
             flash.keys.len(),
-            8,
-            "ark 应有 9 key 减 1 个停用 = 8 个可用 key"
+            4,
+            "ark 应有 9 key 减 5 个停用 = 4 个可用 key"
         );
     }
 

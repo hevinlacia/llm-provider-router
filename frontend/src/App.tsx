@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
-import type { Bucket, CostBucket, CustomModelAlias, FilterState, KeyConfig, ModelAliasConfig, ModelRoute, ModelRoutesConfig, ProviderConfig, StateResponse, TokenPriceConfig, UsageSnapshot, V2LogicalModel, V2ProviderStatus, V2Status, WeightConfig } from './types';
+import type { Bucket, CostBucket, CustomModelAlias, FilterState, KeyConfig, ModelAliasConfig, ProviderConfig, StateResponse, TokenPriceConfig, UsageSnapshot, V2LogicalModel, V2ProviderStatus, V2Status, WeightConfig } from './types';
 import './styles.css';
 
 const number = new Intl.NumberFormat();
@@ -249,39 +249,6 @@ function SettingsPage() {
     <V2Panel config={v2} onSaved={setV2} onError={setError} />
     <TokenPricesPanel config={tokenPrices} onChange={setTokenPrices} onSaved={(next) => { setTokenPrices(next); setStatus('Token prices saved.'); }} onError={setError} />
   </section>;
-}
-
-function ModelRoutesPanel({ config, onChange, onSaved, onError }: { config: ModelRoutesConfig | null; onChange: (value: ModelRoutesConfig) => void; onSaved: (value: ModelRoutesConfig) => void; onError: (value: string) => void }) {
-  const baseAliases = config?.base_aliases ?? [];
-  const routeEntries = Object.entries(config?.routes ?? {});
-
-  function updateRouteName(oldName: string, newName: string) {
-    if (!config) return;
-    const next = { ...config.routes };
-    const route = next[oldName];
-    delete next[oldName];
-    next[newName] = route;
-    onChange({ ...config, routes: next });
-  }
-
-  function updateRoute(name: string, route: ModelRoute) {
-    if (!config) return;
-    onChange({ ...config, routes: { ...config.routes, [name]: route } });
-  }
-
-  async function save() {
-    if (!config) return;
-    try { onSaved(await api.saveModelRoutes(config.routes)); } catch (err) { onError(err instanceof Error ? err.message : String(err)); }
-  }
-
-  function addRoute() {
-    if (!config || !baseAliases[0]) return;
-    const name = `custom-model-auto-${Object.keys(config.routes).length + 1}`;
-    onChange({ ...config, routes: { ...config.routes, [name]: { target: baseAliases[0].name, fallbacks: [] } } });
-  }
-
-  if (!config) return <section className="card"><h2>Model Routes</h2><p className="muted">Loading model routes...</p></section>;
-  return <section className="card"><div className="section-title"><h2>Model Routes</h2><span className="muted">{config.config_path}</span></div><p className="muted">Configure virtual auto model names and ordered fallbacks.</p><div className="route-list">{routeEntries.map(([name, route]) => <div className="route-row" key={name}><div className="route-row-header"><div className="field"><label>Virtual Model</label><input value={name} onChange={(event) => updateRouteName(name, event.target.value)} /></div><div className="field"><label>Primary Target</label><select value={route.target} onChange={(event) => updateRoute(name, { ...route, target: event.target.value })}>{baseAliases.map((alias) => <option key={alias.name} value={alias.name}>{alias.name} → {alias.upstream_model}</option>)}</select></div><div className="route-row-actions"><button className="secondary" onClick={() => { const next = { ...config.routes }; delete next[name]; onChange({ ...config, routes: next }); }}>Remove Route</button></div></div><div className="route-fallbacks"><div className="route-fallbacks-title">Fallbacks</div>{[...route.fallbacks, ''].map((fallback, index) => <div className="route-fallback-line" key={`${name}-${index}`}><select value={fallback} onChange={(event) => { const nextFallbacks = [...route.fallbacks]; if (event.target.value) nextFallbacks[index] = event.target.value; else nextFallbacks.splice(index, 1); updateRoute(name, { ...route, fallbacks: nextFallbacks.filter(Boolean) }); }}><option value="">No fallback</option>{baseAliases.map((alias) => <option key={alias.name} value={alias.name}>{alias.name} → {alias.upstream_model}</option>)}</select>{fallback && <button className="secondary" onClick={() => updateRoute(name, { ...route, fallbacks: route.fallbacks.filter((_, i) => i !== index) })}>Remove</button>}</div>)}</div></div>)}</div><div className="toolbar"><button className="secondary" onClick={addRoute}>Add Route</button><button onClick={() => void save()}>Save Routes</button></div></section>;
 }
 
 function ModelAliasesPanel({ config, onChange, onSaved, onError }: { config: ModelAliasConfig | null; onChange: (value: ModelAliasConfig) => void; onSaved: (value: ModelAliasConfig) => void; onError: (value: string) => void }) {

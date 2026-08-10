@@ -58,10 +58,6 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
             get(api_config_weights).put(api_config_weights_update),
         )
         .route(
-            "/api/config/model-routes",
-            get(api_config_model_routes).put(api_config_model_routes_update),
-        )
-        .route(
             "/api/config/model-aliases",
             get(api_config_model_aliases).put(api_config_model_aliases_update),
         )
@@ -189,47 +185,6 @@ async fn api_config_weights_update(
             state.set_key_weights(weights)?;
         }
         Ok(merge_ok(state.key_config_snapshot()?))
-    })
-}
-
-async fn api_config_model_routes(State(app): State<AppState>) -> Response {
-    with_state_json(&app, |state| Ok(merge_ok(state.route_config_snapshot())))
-}
-
-async fn api_config_model_routes_update(
-    State(app): State<AppState>,
-    Json(payload): Json<Value>,
-) -> Response {
-    let Some(routes_obj) = payload.get("routes").and_then(Value::as_object) else {
-        return bad_request("routes must be an object");
-    };
-    let mut routes = HashMap::new();
-    for (name, value) in routes_obj {
-        let Some(target) = value.get("target").and_then(Value::as_str) else {
-            continue;
-        };
-        let fallbacks = value
-            .get("fallbacks")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default();
-        routes.insert(
-            name.clone(),
-            crate::config::ModelRoute {
-                target: target.to_string(),
-                fallbacks,
-            },
-        );
-    }
-    with_state_json(&app, |state| {
-        state.set_model_routes(routes)?;
-        Ok(merge_ok(state.route_config_snapshot()))
     })
 }
 

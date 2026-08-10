@@ -1,4 +1,4 @@
-use crate::config::{expand_path, ModelRoute};
+use crate::config::expand_path;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -252,99 +252,6 @@ impl ProviderConfig {
     fn is_memory(&self) -> bool {
         self.path.to_string_lossy() == ":memory:"
     }
-}
-
-pub struct ModelRouteConfig {
-    pub path: PathBuf,
-    defaults: HashMap<String, ModelRoute>,
-    memory: HashMap<String, ModelRoute>,
-}
-
-impl ModelRouteConfig {
-    pub fn new(path: &str, defaults: HashMap<String, ModelRoute>) -> Self {
-        Self {
-            path: expand_path(path),
-            memory: defaults.clone(),
-            defaults,
-        }
-    }
-
-    pub fn get(&mut self, known_aliases: &HashSet<String>) -> HashMap<String, ModelRoute> {
-        if self.is_memory() {
-            return normalize_model_routes(&self.memory, known_aliases);
-        }
-        if !self.path.exists() {
-            let default_routes = normalize_model_routes(&self.defaults, known_aliases);
-            let _ = self.write(&default_routes);
-            return default_routes;
-        }
-        let Ok(raw) = fs::read_to_string(&self.path) else {
-            return normalize_model_routes(&self.defaults, known_aliases);
-        };
-        let Ok(data) = serde_json::from_str::<HashMap<String, ModelRoute>>(&raw) else {
-            return normalize_model_routes(&self.defaults, known_aliases);
-        };
-        normalize_model_routes(&data, known_aliases)
-    }
-
-    pub fn set(
-        &mut self,
-        routes: HashMap<String, ModelRoute>,
-        known_aliases: &HashSet<String>,
-    ) -> anyhow::Result<HashMap<String, ModelRoute>> {
-        let normalized = normalize_model_routes(&routes, known_aliases);
-        if self.is_memory() {
-            self.memory = normalized.clone();
-            return Ok(normalized);
-        }
-        self.write(&normalized)?;
-        Ok(normalized)
-    }
-
-    fn write(&self, routes: &HashMap<String, ModelRoute>) -> anyhow::Result<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let sorted: BTreeMap<_, _> = routes.iter().collect();
-        fs::write(
-            &self.path,
-            format!("{}\n", serde_json::to_string_pretty(&sorted)?),
-        )?;
-        Ok(())
-    }
-
-    fn is_memory(&self) -> bool {
-        self.path.to_string_lossy() == ":memory:"
-    }
-}
-
-fn normalize_model_routes(
-    routes: &HashMap<String, ModelRoute>,
-    known_aliases: &HashSet<String>,
-) -> HashMap<String, ModelRoute> {
-    let mut normalized = HashMap::new();
-    for (route_name, route) in routes {
-        if !known_aliases.contains(&route.target) {
-            continue;
-        }
-        let mut fallbacks = Vec::new();
-        for fallback in &route.fallbacks {
-            if known_aliases.contains(fallback)
-                && fallback != &route.target
-                && !fallbacks.contains(fallback)
-            {
-                fallbacks.push(fallback.clone());
-            }
-        }
-        normalized.insert(
-            route_name.clone(),
-            ModelRoute {
-                target: route.target.clone(),
-                fallbacks,
-            },
-        );
-    }
-    normalized
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

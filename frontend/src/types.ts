@@ -67,7 +67,6 @@ export type WeightConfig = {
   pools: string[];
   supports_pool_weights: boolean;
   aliases: Record<string, WeightAlias>;
-  model_routes: Record<string, ModelRoute>;
   config_path: string;
 };
 
@@ -75,11 +74,6 @@ export type ProviderConfig = {
   ok: boolean;
   providers: Array<{ name: string; base_url: string; default_base_url: string }>;
   config_path: string;
-};
-
-export type ModelRoute = {
-  target: string;
-  fallbacks: string[];
 };
 
 export type CustomModelAlias = {
@@ -93,13 +87,6 @@ export type CustomModelAlias = {
 export type ModelAliasConfig = {
   ok: boolean;
   custom_aliases: CustomModelAlias[];
-  config_path: string;
-};
-
-export type ModelRoutesConfig = {
-  ok: boolean;
-  routes: Record<string, ModelRoute>;
-  base_aliases: Array<{ name: string; upstream_model: string; provider: string; base_url: string }>;
   config_path: string;
 };
 
