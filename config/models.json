@@ -18,6 +18,10 @@
       "provider": "ark",
       "upstream_model": "glm-5.2"
     },
+    "ark/glm-5-3-260801": {
+      "provider": "ark",
+      "upstream_model": "glm-5-3-260801"
+    },
     "ark/minimax-m3": {
       "provider": "ark",
       "upstream_model": "minimax-m3"

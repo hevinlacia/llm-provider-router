@@ -568,7 +568,144 @@ fn prepare_upstream_payload(payload: &Value, alias: &ModelAlias) -> Value {
             }
         }
     }
+    // DeepSeek 官方对部分 OpenAI 兼容字段有额外严格校验（见 normalize_deepseek_official），
+    // 转发前做最小化兼容归一化，避免上游 400。
+    if is_deepseek_official(alias) {
+        normalize_deepseek_official(&mut next);
+    }
     next
+}
+
+fn is_deepseek_official(alias: &ModelAlias) -> bool {
+    alias.provider() == "deepseek-official" || alias.base_url.contains("deepseek.com")
+}
+
+/// DeepSeek 官方 API (api.deepseek.com) 比 ark 等供应商更严格的 OpenAI 兼容校验：
+/// - response_format=json_object 要求 prompt 中出现 "json" 字样，否则 400；
+/// - response_format=json_schema 不支持，直接 400；
+/// - n>1 不支持，仅支持 n=1；
+/// - thinking 模式下强制 tool_choice（required / function 对象）或 assistant 的
+///   tool_calls 未回传 reasoning_content 都会 400。
+/// 归一化原则：只在请求必然 400 时才改写，尽量保留客户端语义。
+fn normalize_deepseek_official(next: &mut Value) {
+    // 1) response_format: json_schema -> json_object（DeepSeek 不支持 json_schema）
+    let wants_json = matches!(
+        next.get("response_format")
+            .and_then(|v| v.get("type"))
+            .and_then(Value::as_str),
+        Some("json_object") | Some("json_schema")
+    );
+    if let Some(rf) = next.get_mut("response_format") {
+        if rf.get("type").and_then(Value::as_str) == Some("json_schema") {
+            rf["type"] = Value::String("json_object".to_string());
+        }
+    }
+    // 2) json_object 模式要求 prompt 含 "json" 字样；缺省时补 system 提示词
+    if wants_json && !prompt_mentions_json(next) {
+        ensure_json_hint(next);
+    }
+    // 3) DeepSeek 仅支持 n=1
+    if next.get("n").and_then(Value::as_i64).unwrap_or(1) > 1 {
+        next["n"] = json!(1);
+    }
+    // 4) thinking 模式下强制 tool_choice / 未回传 reasoning_content 必 400：
+    //    检测到这类请求时禁用 thinking（保留工具调用契约，绕开校验）。
+    if thinking_enabled(next)
+        && (forced_tool_choice(next) || assistant_tool_calls_missing_reasoning(next))
+    {
+        next["thinking"] = json!({ "type": "disabled" });
+    }
+}
+
+fn prompt_mentions_json(next: &Value) -> bool {
+    next.get("messages")
+        .and_then(Value::as_array)
+        .map(|msgs| {
+            msgs.iter().any(|m| {
+                m.get("content")
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_ascii_lowercase().contains("json"))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn ensure_json_hint(next: &mut Value) {
+    const HINT: &str = "Respond in JSON format.";
+    if let Some(messages) = next.get_mut("messages").and_then(Value::as_array_mut) {
+        if let Some(first) = messages.first_mut() {
+            if first.get("role").and_then(Value::as_str) == Some("system") {
+                if let Some(content) = first.get_mut("content").and_then(|v| v.as_str()) {
+                    first["content"] = Value::String(format!("{HINT}\n{content}"));
+                    return;
+                }
+            }
+        }
+        messages.insert(0, json!({ "role": "system", "content": HINT }));
+    }
+}
+
+/// DeepSeek 推理模型默认 thinking 开启；只有显式 disabled 才算关闭。
+fn thinking_enabled(next: &Value) -> bool {
+    next.get("thinking")
+        .and_then(|v| v.get("type"))
+        .and_then(Value::as_str)
+        .map(|t| t != "disabled")
+        .unwrap_or(true)
+}
+
+/// tool_choice 除 "auto" / "none" 外（required / function 对象）在 thinking 模式下都会被 DeepSeek 拒绝。
+fn forced_tool_choice(next: &Value) -> bool {
+    match next.get("tool_choice") {
+        Some(Value::String(s)) => !matches!(s.as_str(), "auto" | "none"),
+        Some(v) if v.is_object() => true,
+        _ => false,
+    }
+}
+
+/// assistant 消息带 tool_calls 但没回传 reasoning_content，thinking 模式下 DeepSeek 会 400。
+fn assistant_tool_calls_missing_reasoning(next: &Value) -> bool {
+    next.get("messages")
+        .and_then(Value::as_array)
+        .map(|msgs| {
+            msgs.iter().any(|m| {
+                m.get("role").and_then(Value::as_str) == Some("assistant")
+                    && m.get("tool_calls").is_some()
+                    && m.get("reasoning_content").is_none()
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// 记录上游 4xx/5xx 失败到 stderr（systemd 下进 journald），便于排查上游拒绝。
+/// 只记录 provider/model/status 和错误信息摘要，不输出请求正文。
+fn log_upstream_failure(alias: &ModelAlias, status: u16, body_text: &str) {
+    if status < 400 {
+        return;
+    }
+    let message = serde_json::from_str::<Value>(body_text)
+        .ok()
+        .and_then(|v| {
+            v.get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| {
+            let cleaned = body_text
+                .chars()
+                .filter(|c| !c.is_control())
+                .collect::<String>();
+            cleaned.chars().take(300).collect()
+        });
+    eprintln!(
+        "llm-provider-router upstream_failure provider={} model={} status={} error={}",
+        alias.provider(),
+        alias.upstream_model(),
+        status,
+        message
+    );
 }
 
 enum CallError {
@@ -692,6 +829,7 @@ async fn call_upstream(
                 status,
                 extract_usage(&content),
             );
+            log_upstream_failure(&alias, status, &body_text);
             last_retriable_status = Some(status);
             last_retriable_content = Some(content);
             last_retry_after = parse_retry_after(
@@ -717,6 +855,7 @@ async fn call_upstream(
             status,
             extract_usage(&content),
         );
+        log_upstream_failure(&alias, status, &body_text);
         return Ok(json_status(status_code(status), content));
     }
 }
@@ -807,6 +946,7 @@ async fn stream_upstream_route(
                     freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
                     let usage = extract_usage_from_stream(&body_text).or_else(|| serde_json::from_str::<Value>(&body_text).ok().and_then(|value| extract_usage(&value).cloned()));
                     record_usage(&app.state, &alias.alias, &key.name, status, usage.as_ref());
+                    log_upstream_failure(&alias, status, &body_text);
                     last_retry_after = parse_retry_after(headers.get("retry-after").and_then(|value| value.to_str().ok()));
                     continue;
                 }
@@ -829,6 +969,7 @@ async fn stream_upstream_route(
                 freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
                 let usage = extract_usage_from_stream(&body_text);
                 record_usage(&app.state, &alias.alias, &key.name, status, usage.as_ref());
+                log_upstream_failure(&alias, status, &body_text);
                 return;
             }
         }
@@ -1011,4 +1152,183 @@ fn json_status(status: StatusCode, value: Value) -> Response {
 
 fn status_code(status: u16) -> StatusCode {
     StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn deepseek_alias() -> ModelAlias {
+        ModelAlias::new(
+            "deepseek-v4-flash-auto",
+            "openai/deepseek-v4-flash",
+            "https://api.deepseek.com",
+            vec![KeyRef::env_only(
+                "deepseek-official",
+                "AGENT_AI_DEEPSEEK_API_KEY",
+                1,
+                "deepseek-official",
+                "payg",
+            )],
+            None,
+        )
+    }
+
+    fn ark_alias() -> ModelAlias {
+        ModelAlias::new(
+            "deepseek-v4-flash-auto",
+            "openai/deepseek-v4-flash-260801",
+            "https://ark.cn-beijing.volces.com/api/coding/v3",
+            vec![KeyRef::new("hevin", "AGENT_AI_ARK_HEVIN_API_KEY", 6)],
+            None,
+        )
+    }
+
+    fn base_payload() -> Value {
+        json!({
+            "model": "deepseek-v4-flash-auto",
+            "messages": [
+                { "role": "system", "content": "You are a terse assistant." },
+                { "role": "user", "content": "List 2 items." }
+            ],
+            "max_tokens": 256,
+            "stream": true
+        })
+    }
+
+    #[test]
+    fn json_object_without_json_word_gets_hint() {
+        let mut payload = base_payload();
+        payload["response_format"] = json!({ "type": "json_object" });
+        let out = prepare_upstream_payload(&payload, &deepseek_alias());
+        let sys = out["messages"][0].as_object().unwrap();
+        assert_eq!(sys["role"], "system");
+        let content = sys["content"].as_str().unwrap();
+        assert!(content.to_ascii_lowercase().contains("json"), "system 应包含 json 字样: {content}");
+        assert_eq!(out["response_format"]["type"], "json_object");
+    }
+
+    #[test]
+    fn json_object_with_json_word_unchanged() {
+        let mut payload = base_payload();
+        payload["messages"][1]["content"] = json!("List 2 items as json.");
+        payload["response_format"] = json!({ "type": "json_object" });
+        let out = prepare_upstream_payload(&payload, &deepseek_alias());
+        let first = out["messages"][0]["content"].as_str().unwrap();
+        assert!(!first.contains("Respond in JSON format"), "不应插入提示词: {first}");
+    }
+
+    #[test]
+    fn json_schema_converted_to_json_object_with_hint() {
+        let mut payload = base_payload();
+        payload["response_format"] = json!({
+            "type": "json_schema",
+            "json_schema": { "name": "items", "schema": {} }
+        });
+        let out = prepare_upstream_payload(&payload, &deepseek_alias());
+        assert_eq!(out["response_format"]["type"], "json_object");
+        let sys = out["messages"][0]["content"].as_str().unwrap();
+        assert!(sys.to_ascii_lowercase().contains("json"), "json_schema 转换后应补 json 提示词: {sys}");
+    }
+
+    #[test]
+    fn n_greater_than_one_clamped_to_one() {
+        let mut payload = base_payload();
+        payload["n"] = json!(3);
+        let out = prepare_upstream_payload(&payload, &deepseek_alias());
+        assert_eq!(out["n"], 1);
+    }
+
+    #[test]
+    fn forced_tool_choice_disables_thinking() {
+        let mut payload = base_payload();
+        payload["tools"] = json!([{ "type": "function", "function": { "name": "f", "parameters": { "type": "object", "properties": {} } } }]);
+        payload["tool_choice"] = json!({ "type": "function", "function": { "name": "f" } });
+        let out = prepare_upstream_payload(&payload, &deepseek_alias());
+        assert_eq!(out["thinking"]["type"], "disabled");
+    }
+
+    #[test]
+    fn tool_choice_required_disables_thinking() {
+        let mut payload = base_payload();
+        payload["tools"] = json!([{ "type": "function", "function": { "name": "f", "parameters": { "type": "object", "properties": {} } } }]);
+        payload["tool_choice"] = json!("required");
+        let out = prepare_upstream_payload(&payload, &deepseek_alias());
+        assert_eq!(out["thinking"]["type"], "disabled");
+    }
+
+    #[test]
+    fn tool_choice_auto_keeps_thinking() {
+        let mut payload = base_payload();
+        payload["tools"] = json!([{ "type": "function", "function": { "name": "f", "parameters": { "type": "object", "properties": {} } } }]);
+        payload["tool_choice"] = json!("auto");
+        let out = prepare_upstream_payload(&payload, &deepseek_alias());
+        assert!(out.get("thinking").is_none());
+    }
+
+    #[test]
+    fn assistant_tool_calls_missing_reasoning_disables_thinking() {
+        let mut payload = base_payload();
+        payload["messages"] = json!([
+            { "role": "system", "content": "t" },
+            { "role": "user", "content": "call f" },
+            { "role": "assistant", "content": null, "tool_calls": [
+                { "id": "c1", "type": "function", "function": { "name": "f", "arguments": "{}" } }
+            ]},
+            { "role": "tool", "tool_call_id": "c1", "content": "done" }
+        ]);
+        let out = prepare_upstream_payload(&payload, &deepseek_alias());
+        assert_eq!(out["thinking"]["type"], "disabled");
+    }
+
+    #[test]
+    fn assistant_tool_calls_with_reasoning_keeps_thinking() {
+        let mut payload = base_payload();
+        payload["messages"] = json!([
+            { "role": "system", "content": "t" },
+            { "role": "user", "content": "call f" },
+            { "role": "assistant", "content": null, "reasoning_content": "thinking...", "tool_calls": [
+                { "id": "c1", "type": "function", "function": { "name": "f", "arguments": "{}" } }
+            ]},
+            { "role": "tool", "tool_call_id": "c1", "content": "done" }
+        ]);
+        let out = prepare_upstream_payload(&payload, &deepseek_alias());
+        assert!(out.get("thinking").is_none());
+    }
+
+    #[test]
+    fn explicit_thinking_disabled_not_overridden() {
+        let mut payload = base_payload();
+        payload["thinking"] = json!({ "type": "disabled" });
+        payload["tool_choice"] = json!("required");
+        let out = prepare_upstream_payload(&payload, &deepseek_alias());
+        assert_eq!(out["thinking"]["type"], "disabled");
+    }
+
+    #[test]
+    fn ark_alias_not_normalized() {
+        let mut payload = base_payload();
+        payload["response_format"] = json!({ "type": "json_object" });
+        payload["n"] = json!(3);
+        payload["tool_choice"] = json!("required");
+        let out = prepare_upstream_payload(&payload, &ark_alias());
+        assert_eq!(out["response_format"]["type"], "json_object");
+        assert_eq!(out["n"], 3);
+        assert_eq!(out["tool_choice"], "required");
+        assert!(out.get("thinking").is_none());
+    }
+
+    #[test]
+    fn developer_role_converted_and_deepseek_normalized() {
+        let mut payload = base_payload();
+        payload["messages"][0]["role"] = json!("developer");
+        payload["response_format"] = json!({ "type": "json_object" });
+        let out = prepare_upstream_payload(&payload, &deepseek_alias());
+        assert_eq!(out["messages"][0]["role"], "system");
+        assert!(out["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .to_ascii_lowercase()
+            .contains("json"));
+    }
 }
