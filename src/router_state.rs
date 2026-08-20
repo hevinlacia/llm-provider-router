@@ -1651,6 +1651,7 @@ mod tests {
             api_keys_path: ":memory:".to_string(),
             token_price_config_path: ":memory:".to_string(),
             model_alias_config_path: ":memory:".to_string(),
+            search_providers_path: ":memory:".to_string(),
             auth_invalid_freeze_seconds: 86400.0,
             // router_state 测试覆盖旧逻辑；v2 行为由 config_v2 模块测试覆盖。
             v2_config_enabled: false,

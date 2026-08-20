@@ -13,6 +13,7 @@ pub const DEFAULT_API_KEYS_PATH: &str = "config/api-keys.json";
 pub const DEFAULT_TOKEN_PRICE_CONFIG_PATH: &str = "config/token-prices.json";
 pub const DEFAULT_MODEL_ALIAS_CONFIG_PATH: &str = "config/custom-model-aliases.json";
 pub const DEFAULT_ROUTER_AUTH_CONFIG_PATH: &str = "config/router-auth.json";
+pub const DEFAULT_SEARCH_PROVIDERS_PATH: &str = "config/search-providers.json";
 pub const DEFAULT_USAGE_DB_PATH: &str = "~/.local/state/llm-provider-router/usage.sqlite3";
 pub const DEFAULT_STATE_DB_PATH: &str = "~/.local/state/llm-provider-router/state.sqlite3";
 
@@ -188,6 +189,7 @@ pub struct Settings {
     pub api_keys_path: String,
     pub token_price_config_path: String,
     pub model_alias_config_path: String,
+    pub search_providers_path: String,
     pub auth_invalid_freeze_seconds: f64,
     /// v2 分层配置开关（默认启用；设 0 回退旧硬编码 aliases 逻辑）。
     pub v2_config_enabled: bool,
@@ -247,6 +249,10 @@ pub fn load_settings() -> anyhow::Result<Settings> {
         model_alias_config_path: env_or(
             "LLM_PROVIDER_ROUTER_MODEL_ALIAS_CONFIG_PATH",
             DEFAULT_MODEL_ALIAS_CONFIG_PATH,
+        ),
+        search_providers_path: env_or(
+            "LLM_PROVIDER_ROUTER_SEARCH_PROVIDERS_PATH",
+            DEFAULT_SEARCH_PROVIDERS_PATH,
         ),
         auth_invalid_freeze_seconds: env_or(
             "LLM_PROVIDER_ROUTER_AUTH_INVALID_FREEZE_SECONDS",

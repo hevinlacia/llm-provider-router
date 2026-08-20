@@ -4,6 +4,7 @@ mod front_proxy;
 mod json_config;
 mod proxy;
 mod router_state;
+mod search;
 mod state_store;
 mod usage_store;
 

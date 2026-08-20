@@ -97,6 +97,8 @@ npm run build
 - `GET/PUT/POST /api/config/keys` — encrypted key metadata/update/add.
 - `GET /v1/models` — OpenAI-compatible model list.
 - `POST /v1/chat/completions` — OpenAI-compatible chat completions, streaming and non-streaming.
+- `POST /v1/search` — unified web search proxy (search key pool): authenticated with the same local bearer token, routes to Tavily/Exa/Brave by key pool. See [Search Key Pool](#search-key-pool).
+- `GET/PUT /api/config/search-providers` — inspect/update the search key pool configuration.
 - `GET /_proxy/health` — front-proxy backend health.
 - `POST /_proxy/active/{slot}` — switch active blue/green slot.
 
@@ -121,6 +123,89 @@ LLM_PROVIDER_ROUTER_WEIGHT_CONFIG_PATH=config/key-weights.json
 LLM_PROVIDER_ROUTER_PROVIDER_CONFIG_PATH=config/providers.json
 LLM_PROVIDER_ROUTER_CUSTOM_KEY_CONFIG_PATH=config/custom-keys.json
 LLM_PROVIDER_ROUTER_AUTH_CONFIG_PATH=config/router-auth.json
+LLM_PROVIDER_ROUTER_SEARCH_PROVIDERS_PATH=config/search-providers.json
+```
+
+## Search Key Pool
+
+The router exposes a **unified web search endpoint** `POST /v1/search` that hides multiple search providers (Tavily / Exa / Brave) behind the router's single local bearer token — clients only need one key.
+
+### Configuration (`config/search-providers.json`)
+
+```jsonc
+{
+  "providers": {
+    "tavily": {
+      "base_url": "https://api.tavily.com",          // optional, defaults to official endpoint
+      "keys": {
+        "hevin":  { "env_var": "AGENT_SEARCH_TAVILY_HEVIN_API_KEY",  "weight": 5, "enabled": true },
+        "backup": { "env_var": "AGENT_SEARCH_TAVILY_BACKUP_API_KEY", "weight": 3, "enabled": true }
+      }
+    },
+    "exa":   { "keys": { "hevin": { "env_var": "AGENT_SEARCH_EXA_HEVIN_API_KEY",  "weight": 5 } } },
+    "brave": { "keys": { "hevin": { "env_var": "AGENT_SEARCH_BRAVE_HEVIN_API_KEY", "weight": 5 } } }
+  }
+}
+```
+
+- Provider names must be one of `tavily` / `exa` / `brave`; `base_url` is optional (official endpoint is the default).
+- `keys.<name>.env_var` reads the actual key value from the environment; `weight` controls weighted random selection inside the provider; `enabled: false` takes the key out of rotation.
+- Key values are never written to disk by the router — configure them in the environment (e.g. `~/.config/opencode/agent-secrets.env`).
+
+### Request
+
+```bash
+curl -X POST http://127.0.0.1:8789/v1/search \
+  -H "Authorization: Bearer <router-local-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Spring Boot 4 requirements",
+    "max_results": 5,
+    "provider": "auto",                 // auto | tavily | exa | brave
+    "search_depth": "basic",            // tavily: basic | advanced
+    "topic": "general",                 // tavily: general | news | finance
+    "time_range": "week",               // tavily: optional day|week|month|year
+    "include_answer": false,
+    "include_domains": ["docs.spring.io"],
+    "exclude_domains": ["reddit.com"]
+  }'
+```
+
+- `provider` defaults to `auto`: the router picks a provider weighted by the sum of its available key weights, then picks a key inside the provider.
+- With an explicit provider, only that provider's pool is used.
+
+### Response (unified)
+
+```json
+{
+  "provider": "tavily",
+  "query": "Spring Boot 4 requirements",
+  "results": [
+    { "title": "...", "url": "...", "snippet": "...", "published_date": "...", "score": 0.9 }
+  ],
+  "answer": "..."     // present only when include_answer=true and the provider supports it
+}
+```
+
+### Manage the pool
+
+```bash
+# Inspect (shows env_var/weight/enabled/configured for each key)
+curl http://127.0.0.1:8789/api/config/search-providers -H "Authorization: Bearer <token>"
+
+# Update (whole file, persisted back to config/search-providers.json)
+curl -X PUT http://127.0.0.1:8789/api/config/search-providers \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"providers":{...}}'
+```
+
+### Consume from pi
+
+Point the pi `web_search` extension at the router instead of a raw provider:
+
+```bash
+export TAVILY_API_KEY=<router-local-token>   # extension auth key
+# and point the extension base URL at http://127.0.0.1:8789 if you customize it
 ```
 
 Front proxy settings:

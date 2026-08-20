@@ -1,0 +1,34 @@
+{
+  "providers": {
+    "brave": {
+      "base_url": "https://api.search.brave.com",
+      "keys": {
+        "hevin": {
+          "enabled": true,
+          "env_var": "AGENT_SEARCH_BRAVE_HEVIN_API_KEY",
+          "weight": 5
+        }
+      }
+    },
+    "exa": {
+      "base_url": "https://api.exa.ai",
+      "keys": {
+        "hevin": {
+          "enabled": true,
+          "env_var": "AGENT_SEARCH_EXA_HEVIN_API_KEY",
+          "weight": 5
+        }
+      }
+    },
+    "tavily": {
+      "base_url": "https://api.tavily.com",
+      "keys": {
+        "hevin": {
+          "enabled": true,
+          "env_var": "AGENT_SEARCH_TAVILY_HEVIN_API_KEY",
+          "weight": 5
+        }
+      }
+    }
+  }
+}

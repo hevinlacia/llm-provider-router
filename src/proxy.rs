@@ -1,5 +1,6 @@
 use crate::config::{KeyRef, ModelAlias, Settings};
 use crate::router_state::{maybe_freeze_key, parse_retry_after, NoAvailableKeyError, RouterState};
+use crate::search::{SearchPool, SearchProvidersFile, UnifiedSearchRequest};
 use axum::body::{Body, Bytes};
 use axum::extract::{Query, State};
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -22,6 +23,7 @@ pub struct AppState {
     settings: Settings,
     state: Arc<Mutex<RouterState>>,
     client: reqwest::Client,
+    search_pool: Arc<Mutex<SearchPool>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,10 +42,14 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     let timeout = Duration::from_secs_f64(settings.request_timeout_seconds);
     let client = reqwest::Client::builder().timeout(timeout).build()?;
     let state = Arc::new(Mutex::new(RouterState::new(settings.clone())?));
+    let search_pool = Arc::new(Mutex::new(SearchPool::new(
+        &settings.search_providers_path,
+    )));
     let app_state = AppState {
         settings: settings.clone(),
         state,
         client,
+        search_pool,
     };
     let app = Router::new()
         .route("/health", get(health))
@@ -84,6 +90,11 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
                 .put(api_config_keys_update)
                 .post(api_config_keys_add),
         )
+        .route(
+            "/api/config/search-providers",
+            get(api_config_search_providers).put(api_config_search_providers_update),
+        )
+        .route("/v1/search", post(search_completions))
         .route("/v1/models", get(models))
         .route("/v1/chat/completions", post(chat_completions))
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
@@ -444,6 +455,117 @@ async fn api_config_keys_add(State(app): State<AppState>, Json(payload): Json<Va
             state.add_key_to_pools(name, value, aliases, weight)?,
         ))
     })
+}
+
+async fn search_completions(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Response {
+    if let Some(response) = validate_auth(&app.settings, &headers) {
+        return response;
+    }
+    let req: UnifiedSearchRequest = match serde_json::from_value(payload) {
+        Ok(req) => req,
+        Err(err) => return bad_request(&format!("invalid search request: {err}")),
+    };
+    let result = match app.search_pool.lock() {
+        Ok(mut pool) => pool.resolve(&req),
+        Err(_) => return internal_error("search pool lock poisoned"),
+    };
+    let resolved = match result {
+        Ok(resolved) => resolved,
+        Err(err) => {
+            return json_status(
+                StatusCode::SERVICE_UNAVAILABLE,
+                json!({ "detail": err.to_string() }),
+            )
+        }
+    };
+    match crate::search::SearchPool::execute(&resolved, &app.client, &req).await {
+        Ok(payload) => json_status(StatusCode::OK, payload),
+        Err(err) => json_status(
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({ "detail": err.to_string() }),
+        ),
+    }
+}
+
+async fn api_config_search_providers(State(app): State<AppState>) -> Response {
+    match app.search_pool.lock() {
+        Ok(mut pool) => {
+            let file = pool.get();
+            let mut view = serde_json::Map::new();
+            for (name, provider) in &file.providers {
+                let mut keys = serde_json::Map::new();
+                for (key_name, key) in &provider.keys {
+                    keys.insert(
+                        key_name.clone(),
+                        json!({
+                            "env_var": key.env_var,
+                            "weight": key.weight,
+                            "enabled": key.enabled,
+                            "configured": pool.key_value(&key.env_var).is_some(),
+                        }),
+                    );
+                }
+                view.insert(
+                    name.clone(),
+                    json!({
+                        "base_url": provider.base_url,
+                        "keys": keys,
+                    }),
+                );
+            }
+            json_status(StatusCode::OK, json!({ "ok": true, "providers": view }))
+        }
+        Err(_) => internal_error("search pool lock poisoned"),
+    }
+}
+
+async fn api_config_search_providers_update(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let file: SearchProvidersFile = match serde_json::from_value(payload) {
+        Ok(file) => file,
+        Err(err) => return bad_request(&format!("invalid search providers config: {err}")),
+    };
+    for name in file.providers.keys() {
+        if crate::search::SearchProviderKind::from_name(name).is_none() {
+            return bad_request(&format!(
+                "provider '{name}' is not a known search provider (tavily/exa/brave)"
+            ));
+        }
+    }
+    match app.search_pool.lock() {
+        Ok(mut pool) => match pool.set(file) {
+            Ok(file) => {
+                let mut view = serde_json::Map::new();
+                for (name, provider) in &file.providers {
+                    let mut keys = serde_json::Map::new();
+                    for (key_name, key) in &provider.keys {
+                        keys.insert(
+                            key_name.clone(),
+                            json!({
+                                "env_var": key.env_var,
+                                "weight": key.weight,
+                                "enabled": key.enabled,
+                                "configured": pool.key_value(&key.env_var).is_some(),
+                            }),
+                        );
+                    }
+                    view.insert(
+                        name.clone(),
+                        json!({ "base_url": provider.base_url, "keys": keys }),
+                    );
+                }
+                json_status(StatusCode::OK, json!({ "ok": true, "providers": view }))
+            }
+            Err(err) => bad_request(&err.to_string()),
+        },
+        Err(_) => internal_error("search pool lock poisoned"),
+    }
 }
 
 async fn chat_completions(
