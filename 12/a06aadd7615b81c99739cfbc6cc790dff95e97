@@ -1,0 +1,35 @@
+src/main.rs
+  e2c83f2c90a492e5 7
+config/search-providers.json
+  e2c83f2c90a492e5 1-2,5-6,10-18,20-22,25-26,30-34
+src/router_state.rs
+  e2c83f2c90a492e5 1654
+src/proxy.rs
+  e2c83f2c90a492e5 3,26,45-47,52,93-97,460-570
+src/search.rs
+  e2c83f2c90a492e5 1-752
+src/config.rs
+  e2c83f2c90a492e5 16,192,253-255
+README.md
+  e2c83f2c90a492e5 100-101,126-208
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "12a06aadd7615b81c99739cfbc6cc790dff95e97",
+  "prompts": {
+    "e2c83f2c90a492e5": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a01a0c-0b8b-73a8-8621-8b6584518685",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 1061,
+      "total_deletions": 60,
+      "accepted_lines": 989,
+      "overriden_lines": 9
+    }
+  }
+}
