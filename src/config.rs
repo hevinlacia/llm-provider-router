@@ -149,7 +149,11 @@ impl ModelAlias {
         self
     }
 
-    pub fn with_windows(mut self, context_window: Option<u32>, max_output_tokens: Option<u32>) -> Self {
+    pub fn with_windows(
+        mut self,
+        context_window: Option<u32>,
+        max_output_tokens: Option<u32>,
+    ) -> Self {
         self.context_window = context_window;
         self.max_output_tokens = max_output_tokens;
         self
@@ -344,7 +348,10 @@ pub fn aliases() -> HashMap<String, ModelAlias> {
         ("glm-latest-auto", "openai/glm-5.2"),
         ("deepseek-v4-pro-auto", "openai/deepseek-v4-pro"),
         ("deepseek-v4-flash-auto", "openai/deepseek-v4-flash-260801"),
-        ("deepseek-v4-flash-260801", "openai/deepseek-v4-flash-260801"),
+        (
+            "deepseek-v4-flash-260801",
+            "openai/deepseek-v4-flash-260801",
+        ),
         ("minimax-latest-auto", "openai/minimax-m3"),
         ("ark-code-latest-auto", "openai/ark-code-latest"),
     ] {
@@ -455,3 +462,5 @@ pub fn env_or(name: &str, default: &str) -> String {
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| default.to_string())
 }
+
+pub mod v2;

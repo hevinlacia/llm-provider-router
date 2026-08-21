@@ -1,10 +1,11 @@
+mod app;
 mod config;
 mod config_v2;
 mod diag;
+mod features;
 mod front_proxy;
 mod json_config;
-mod proxy;
-mod router_state;
+mod routes;
 mod search;
 mod state_store;
 mod usage_store;
@@ -18,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "backend".to_string());
     match mode.as_str() {
-        "backend" | "router" => proxy::serve(load_settings()?).await,
+        "backend" | "router" => routes::serve(load_settings()?).await,
         "front-proxy" | "proxy" => front_proxy::serve().await,
         "--help" | "-h" | "help" => {
             eprintln!("Usage: llm-provider-router [backend|front-proxy]");
