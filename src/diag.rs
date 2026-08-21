@@ -139,7 +139,10 @@ pub fn payload_summary(payload: &Value) -> Value {
         .and_then(Value::as_array)
         .map(|a| !a.is_empty())
         .unwrap_or(false);
-    let stream = payload.get("stream").and_then(Value::as_bool).unwrap_or(false);
+    let stream = payload
+        .get("stream")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let n = payload.get("n").and_then(Value::as_i64).unwrap_or(1);
     // thinking details: type field
     let thinking_type = thinking

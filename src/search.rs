@@ -173,7 +173,12 @@ pub struct UnifiedSearchResult {
     pub score: Option<f64>,
 }
 
-fn unified_response(provider: &str, query: &str, results: Vec<UnifiedSearchResult>, answer: Option<String>) -> Value {
+fn unified_response(
+    provider: &str,
+    query: &str,
+    results: Vec<UnifiedSearchResult>,
+    answer: Option<String>,
+) -> Value {
     let mut payload = json!({
         "provider": provider,
         "query": query,
@@ -269,13 +274,18 @@ impl SearchPool {
         provider
             .keys
             .iter()
-            .filter(|(_, key)| key.enabled && key.weight > 0 && self.key_value(&key.env_var).is_some())
+            .filter(|(_, key)| {
+                key.enabled && key.weight > 0 && self.key_value(&key.env_var).is_some()
+            })
             .map(|(name, key)| (name.clone(), key.clone()))
             .collect()
     }
 
     /// 加权随机选一个 key（无 session 语义，纯随机）。
-    fn weighted_pick_key(&self, keys: &[(String, SearchKeyEntry)]) -> Option<(String, SearchKeyEntry)> {
+    fn weighted_pick_key(
+        &self,
+        keys: &[(String, SearchKeyEntry)],
+    ) -> Option<(String, SearchKeyEntry)> {
         let total: i64 = keys.iter().map(|(_, key)| key.weight.max(0)).sum();
         if total <= 0 {
             return None;
@@ -301,15 +311,21 @@ impl SearchPool {
 
         let requested_kind = match requested.map(str::trim).filter(|s| !s.is_empty()) {
             None | Some("auto") => None,
-            Some(s) => Some(SearchProviderKind::from_name(s)
-                .ok_or_else(|| anyhow!("unknown search provider: {s}"))?),
+            Some(s) => Some(
+                SearchProviderKind::from_name(s)
+                    .ok_or_else(|| anyhow!("unknown search provider: {s}"))?,
+            ),
         };
 
         // 候选 provider：name + kind + 可用 key 列表
-        let mut candidates: Vec<(String, SearchProviderKind, Vec<(String, SearchKeyEntry)>)> = Vec::new();
+        let mut candidates: Vec<(String, SearchProviderKind, Vec<(String, SearchKeyEntry)>)> =
+            Vec::new();
         for (name, provider) in &file.providers {
-            let kind = SearchProviderKind::from_name(name)
-                .ok_or_else(|| anyhow!("config provider '{name}' is not a known search provider (tavily/exa/brave)"))?;
+            let kind = SearchProviderKind::from_name(name).ok_or_else(|| {
+                anyhow!(
+                    "config provider '{name}' is not a known search provider (tavily/exa/brave)"
+                )
+            })?;
             if let Some(requested_kind) = requested_kind {
                 if kind != requested_kind {
                     continue;
@@ -338,7 +354,8 @@ impl SearchPool {
                 .map(|(_, _, keys)| keys.iter().map(|(_, k)| k.weight.max(0)).sum::<i64>())
                 .sum();
             let mut target = rand::thread_rng().gen_range(0..provider_total.max(1));
-            let mut chosen: Option<&(String, SearchProviderKind, Vec<(String, SearchKeyEntry)>)> = None;
+            let mut chosen: Option<&(String, SearchProviderKind, Vec<(String, SearchKeyEntry)>)> =
+                None;
             for candidate in &candidates {
                 let weight: i64 = candidate.2.iter().map(|(_, k)| k.weight.max(0)).sum();
                 target -= weight;
@@ -355,9 +372,12 @@ impl SearchPool {
         let (key_name, key) = self
             .weighted_pick_key(&keys)
             .ok_or_else(|| anyhow!("provider {provider_name}: no weighted key candidate"))?;
-        let key_value = self
-            .key_value(&key.env_var)
-            .ok_or_else(|| anyhow!("provider {provider_name} key {key_name}: env var {} not set", key.env_var))?;
+        let key_value = self.key_value(&key.env_var).ok_or_else(|| {
+            anyhow!(
+                "provider {provider_name} key {key_name}: env var {} not set",
+                key.env_var
+            )
+        })?;
         Ok((provider_name, key_name, key_value))
     }
 
@@ -399,13 +419,34 @@ impl SearchPool {
     ) -> anyhow::Result<Value> {
         match resolved.kind {
             SearchProviderKind::Tavily => {
-                search_tavily(client, &resolved.base_url, &resolved.key_value, &resolved.provider, req).await
+                search_tavily(
+                    client,
+                    &resolved.base_url,
+                    &resolved.key_value,
+                    &resolved.provider,
+                    req,
+                )
+                .await
             }
             SearchProviderKind::Exa => {
-                search_exa(client, &resolved.base_url, &resolved.key_value, &resolved.provider, req).await
+                search_exa(
+                    client,
+                    &resolved.base_url,
+                    &resolved.key_value,
+                    &resolved.provider,
+                    req,
+                )
+                .await
             }
             SearchProviderKind::Brave => {
-                search_brave(client, &resolved.base_url, &resolved.key_value, &resolved.provider, req).await
+                search_brave(
+                    client,
+                    &resolved.base_url,
+                    &resolved.key_value,
+                    &resolved.provider,
+                    req,
+                )
+                .await
             }
         }
     }
@@ -452,9 +493,18 @@ async fn search_tavily(
     let mut body = serde_json::Map::new();
     body.insert("query".into(), json!(req.query));
     body.insert("max_results".into(), json!(req.normalized_max_results()));
-    body.insert("search_depth".into(), json!(req.search_depth.clone().unwrap_or_else(|| "basic".into())));
-    body.insert("topic".into(), json!(req.topic.clone().unwrap_or_else(|| "general".into())));
-    body.insert("include_answer".into(), json!(req.include_answer.unwrap_or(false)));
+    body.insert(
+        "search_depth".into(),
+        json!(req.search_depth.clone().unwrap_or_else(|| "basic".into())),
+    );
+    body.insert(
+        "topic".into(),
+        json!(req.topic.clone().unwrap_or_else(|| "general".into())),
+    );
+    body.insert(
+        "include_answer".into(),
+        json!(req.include_answer.unwrap_or(false)),
+    );
     body.insert("include_raw_content".into(), json!(false));
     if let Some(time_range) = req.time_range.clone() {
         body.insert("time_range".into(), json!(time_range));
@@ -477,7 +527,10 @@ async fn search_tavily(
     if !response.status().is_success() {
         return Err(anyhow!(read_upstream_error(response).await));
     }
-    let payload: Value = response.json().await.context("tavily response parse failed")?;
+    let payload: Value = response
+        .json()
+        .await
+        .context("tavily response parse failed")?;
 
     let mut results = Vec::new();
     if let Some(items) = payload.get("results").and_then(Value::as_array) {
@@ -516,7 +569,10 @@ async fn search_exa(
     let mut body = serde_json::Map::new();
     body.insert("query".into(), json!(req.query));
     body.insert("numResults".into(), json!(req.normalized_max_results()));
-    body.insert("contents".into(), json!({ "highlights": true, "summary": true }));
+    body.insert(
+        "contents".into(),
+        json!({ "highlights": true, "summary": true }),
+    );
     if let Some(domains) = req.include_domains.clone() {
         body.insert("includeDomains".into(), json!(domains));
     }
@@ -575,11 +631,18 @@ async fn search_brave(
 ) -> anyhow::Result<Value> {
     let mut query_params = vec![
         ("q".to_string(), req.query.clone()),
-        ("count".to_string(), req.normalized_max_results().to_string()),
+        (
+            "count".to_string(),
+            req.normalized_max_results().to_string(),
+        ),
     ];
     if let Some(domains) = &req.include_domains {
         if !domains.is_empty() {
-            let site = domains.iter().map(|d| format!("site:{}", d)).collect::<Vec<_>>().join(" OR ");
+            let site = domains
+                .iter()
+                .map(|d| format!("site:{}", d))
+                .collect::<Vec<_>>()
+                .join(" OR ");
             query_params.push(("q".to_string(), format!("({})", site)));
         }
     }
@@ -590,7 +653,10 @@ async fn search_brave(
     }
 
     let response = client
-        .get(format!("{}/res/v1/web/search", base_url.trim_end_matches('/')))
+        .get(format!(
+            "{}/res/v1/web/search",
+            base_url.trim_end_matches('/')
+        ))
         .header("X-Subscription-Token", api_key)
         .header("accept", "application/json")
         .query(&query_params)
@@ -600,7 +666,10 @@ async fn search_brave(
     if !response.status().is_success() {
         return Err(anyhow!(read_upstream_error(response).await));
     }
-    let payload: Value = response.json().await.context("brave response parse failed")?;
+    let payload: Value = response
+        .json()
+        .await
+        .context("brave response parse failed")?;
 
     let mut results = Vec::new();
     let web = payload.get("web").and_then(Value::as_object);
@@ -639,7 +708,8 @@ mod tests {
             static SEQ: AtomicU64 = AtomicU64::new(0);
             SEQ.fetch_add(1, Ordering::Relaxed)
         };
-        let dir = std::env::temp_dir().join(format!("lpr-search-test-{}-{seq}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("lpr-search-test-{}-{seq}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("search-providers.json");
         std::fs::write(&path, providers_json).unwrap();
@@ -674,13 +744,31 @@ mod tests {
 
     #[test]
     fn provider_kind_from_name() {
-        assert_eq!(SearchProviderKind::from_name("tavily"), Some(SearchProviderKind::Tavily));
-        assert_eq!(SearchProviderKind::from_name("EXA"), Some(SearchProviderKind::Exa));
-        assert_eq!(SearchProviderKind::from_name("brave"), Some(SearchProviderKind::Brave));
+        assert_eq!(
+            SearchProviderKind::from_name("tavily"),
+            Some(SearchProviderKind::Tavily)
+        );
+        assert_eq!(
+            SearchProviderKind::from_name("EXA"),
+            Some(SearchProviderKind::Exa)
+        );
+        assert_eq!(
+            SearchProviderKind::from_name("brave"),
+            Some(SearchProviderKind::Brave)
+        );
         assert_eq!(SearchProviderKind::from_name("google"), None);
-        assert_eq!(SearchProviderKind::Tavily.default_base_url(), "https://api.tavily.com");
-        assert_eq!(SearchProviderKind::Exa.default_base_url(), "https://api.exa.ai");
-        assert_eq!(SearchProviderKind::Brave.default_base_url(), "https://api.search.brave.com");
+        assert_eq!(
+            SearchProviderKind::Tavily.default_base_url(),
+            "https://api.tavily.com"
+        );
+        assert_eq!(
+            SearchProviderKind::Exa.default_base_url(),
+            "https://api.exa.ai"
+        );
+        assert_eq!(
+            SearchProviderKind::Brave.default_base_url(),
+            "https://api.search.brave.com"
+        );
     }
 
     #[test]
@@ -697,9 +785,15 @@ mod tests {
             exclude_domains: None,
         };
         assert_eq!(req.normalized_max_results(), MAX_RESULTS_CAP);
-        let req2 = UnifiedSearchRequest { max_results: Some(0), ..req.clone() };
+        let req2 = UnifiedSearchRequest {
+            max_results: Some(0),
+            ..req.clone()
+        };
         assert_eq!(req2.normalized_max_results(), 1);
-        let req3 = UnifiedSearchRequest { max_results: None, ..req };
+        let req3 = UnifiedSearchRequest {
+            max_results: None,
+            ..req
+        };
         assert_eq!(req3.normalized_max_results(), DEFAULT_MAX_RESULTS);
     }
 
@@ -715,7 +809,10 @@ mod tests {
         );
         let result = pool.pick_provider_key(Some("tavily"));
         assert!(result.is_err(), "无 env 值的 key 不应被选中");
-        assert!(result.unwrap_err().to_string().contains("no available search key"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("no available search key"));
     }
 
     #[test]
@@ -723,7 +820,10 @@ mod tests {
         let mut pool = test_pool(r#"{"providers":{}}"#);
         let result = pool.pick_provider_key(Some("google"));
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("unknown search provider"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("unknown search provider"));
     }
 
     #[test]
@@ -732,7 +832,10 @@ mod tests {
             static SEQ: AtomicU64 = AtomicU64::new(0);
             SEQ.fetch_add(1, Ordering::Relaxed)
         };
-        let dir = std::env::temp_dir().join(format!("lpr-search-test-write-{}-{seq}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "lpr-search-test-write-{}-{seq}",
+            std::process::id()
+        ));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("search-providers.json");
         let mut pool = SearchPool::new(path.to_str().unwrap());
@@ -740,13 +843,26 @@ mod tests {
         let mut keys = HashMap::new();
         keys.insert(
             "hevin".to_string(),
-            SearchKeyEntry { env_var: "AGENT_SEARCH_TAVILY_HEVIN_API_KEY".into(), weight: 5, enabled: true },
+            SearchKeyEntry {
+                env_var: "AGENT_SEARCH_TAVILY_HEVIN_API_KEY".into(),
+                weight: 5,
+                enabled: true,
+            },
         );
-        file.providers.insert("tavily".into(), SearchProviderConfig { base_url: None, keys });
+        file.providers.insert(
+            "tavily".into(),
+            SearchProviderConfig {
+                base_url: None,
+                keys,
+            },
+        );
         pool.set(file).unwrap();
 
         let reloaded = SearchPool::new(path.to_str().unwrap()).get();
         assert!(reloaded.providers.contains_key("tavily"));
-        assert_eq!(reloaded.providers["tavily"].keys["hevin"].env_var, "AGENT_SEARCH_TAVILY_HEVIN_API_KEY");
+        assert_eq!(
+            reloaded.providers["tavily"].keys["hevin"].env_var,
+            "AGENT_SEARCH_TAVILY_HEVIN_API_KEY"
+        );
     }
 }

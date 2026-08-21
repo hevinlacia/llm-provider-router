@@ -583,33 +583,58 @@ pub struct ModelEquivalencesConfig {
 
 impl ModelEquivalencesConfig {
     pub fn new(path: &str) -> Self {
-        Self { path: expand_path(path), memory: ModelEquivalencesFile::default() }
+        Self {
+            path: expand_path(path),
+            memory: ModelEquivalencesFile::default(),
+        }
     }
     pub fn get(&mut self) -> ModelEquivalencesFile {
-        if self.is_memory() { return self.memory.clone(); }
-        if !self.path.exists() { return ModelEquivalencesFile::default(); }
-        let Ok(raw) = fs::read_to_string(&self.path) else { return ModelEquivalencesFile::default(); };
+        if self.is_memory() {
+            return self.memory.clone();
+        }
+        if !self.path.exists() {
+            return ModelEquivalencesFile::default();
+        }
+        let Ok(raw) = fs::read_to_string(&self.path) else {
+            return ModelEquivalencesFile::default();
+        };
         serde_json::from_str::<ModelEquivalencesFile>(&raw).unwrap_or_default()
     }
     pub fn set(&mut self, file: ModelEquivalencesFile) -> anyhow::Result<ModelEquivalencesFile> {
-        if self.is_memory() { self.memory = file.clone(); return Ok(file); }
-        if let Some(parent) = self.path.parent() { fs::create_dir_all(parent)?; }
-        fs::write(&self.path, format!("{}\n", serde_json::to_string_pretty(&file)?))?;
+        if self.is_memory() {
+            self.memory = file.clone();
+            return Ok(file);
+        }
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(
+            &self.path,
+            format!("{}\n", serde_json::to_string_pretty(&file)?),
+        )?;
         Ok(file)
     }
     /// 返回 `model -> group.id` 映射
     pub fn model_to_group(&mut self) -> HashMap<String, String> {
         let mut m = HashMap::new();
-        for g in self.get().groups { for model in g.models { m.insert(model, g.id.clone()); } }
+        for g in self.get().groups {
+            for model in g.models {
+                m.insert(model, g.id.clone());
+            }
+        }
         m
     }
     /// 返回 `group.id -> models`
     pub fn group_to_models(&mut self) -> HashMap<String, Vec<String>> {
         let mut m = HashMap::new();
-        for g in self.get().groups { m.insert(g.id.clone(), g.models.clone()); }
+        for g in self.get().groups {
+            m.insert(g.id.clone(), g.models.clone());
+        }
         m
     }
-    fn is_memory(&self) -> bool { self.path.to_string_lossy() == ":memory:" }
+    fn is_memory(&self) -> bool {
+        self.path.to_string_lossy() == ":memory:"
+    }
 }
 
 /// Stores LLM provider key VALUES (env_var -> secret) in a gitignored JSON file.
