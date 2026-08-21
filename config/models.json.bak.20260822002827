@@ -1,0 +1,108 @@
+{
+  "families": {
+    "deepseek-v4-flash": {
+      "display_name": "DeepSeek V4 Flash"
+    },
+    "deepseek-v4-pro": {
+      "display_name": "DeepSeek V4 Pro"
+    }
+  },
+  "models": {
+    "ark/deepseek-v4-pro": {
+      "provider": "ark",
+      "upstream_model": "deepseek-v4-pro",
+      "family": "deepseek-v4-pro",
+      "params": {}
+    },
+    "opencode-go/muse-spark-1.2-contributor": {
+      "provider": "opencode-go",
+      "upstream_model": "muse-spark-1.2-contributor",
+      "family": null,
+      "params": {}
+    },
+    "openai-relay/gpt-5.6-luna": {
+      "provider": "openai-relay",
+      "upstream_model": "gpt-5.6-luna",
+      "family": null,
+      "params": {}
+    },
+    "openai-relay/gpt-5.6-terra": {
+      "provider": "openai-relay",
+      "upstream_model": "gpt-5.6-terra",
+      "family": null,
+      "params": {}
+    },
+    "ark/deepseek-v4-flash-260801": {
+      "provider": "ark",
+      "upstream_model": "deepseek-v4-flash-260801",
+      "family": "deepseek-v4-flash",
+      "params": {}
+    },
+    "deepseek-official/deepseek-v4-pro": {
+      "provider": "deepseek-official",
+      "upstream_model": "deepseek-v4-pro",
+      "family": "deepseek-v4-pro",
+      "params": {}
+    },
+    "openai-relay/gpt-5.6-sol": {
+      "provider": "openai-relay",
+      "upstream_model": "gpt-5.6-sol",
+      "family": null,
+      "params": {}
+    },
+    "ark/ark-code-latest": {
+      "provider": "ark",
+      "upstream_model": "ark-code-latest",
+      "family": null,
+      "params": {}
+    },
+    "opencode-go/glm-5.3": {
+      "provider": "opencode-go",
+      "upstream_model": "glm-5.3",
+      "family": null,
+      "params": {}
+    },
+    "deepseek-official/deepseek-v4-flash": {
+      "provider": "deepseek-official",
+      "upstream_model": "deepseek-v4-flash",
+      "family": "deepseek-v4-flash",
+      "params": {}
+    },
+    "ark/glm-5-3-260801": {
+      "provider": "ark",
+      "upstream_model": "glm-5-3-260801",
+      "family": null,
+      "params": {}
+    },
+    "ark/minimax-m3": {
+      "provider": "ark",
+      "upstream_model": "minimax-m3",
+      "family": null,
+      "params": {}
+    },
+    "ark/glm-5.2": {
+      "provider": "ark",
+      "upstream_model": "glm-5.2",
+      "family": null,
+      "params": {}
+    },
+    "openai-relay/gpt-5.5": {
+      "provider": "openai-relay",
+      "upstream_model": "gpt-5.5",
+      "family": null,
+      "params": {}
+    },
+    "openai-relay/grok-4.6": {
+      "provider": "openai-relay",
+      "upstream_model": "grok-4.6",
+      "family": null,
+      "params": {}
+    },
+    "opencode-go/deepseek-v4-flash": {
+      "provider": "opencode-go",
+      "upstream_model": "deepseek-v4-flash",
+      "family": "deepseek-v4-flash",
+      "params": {}
+    }
+  }
+}

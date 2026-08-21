@@ -953,10 +953,20 @@ impl RouterState {
             let enabled: Vec<_> = prov.keys.iter().filter(|(_, k)| k.enabled).collect();
             let frozen_count = enabled
                 .iter()
-                .filter(|(kname, _)| self.frozen.contains_key(*kname))
+                .filter(|(kname, _)| {
+                    let kid = format!("{}/{}", name, kname);
+                    self.frozen.contains_key(&kid) || self.frozen.contains_key(*kname)
+                })
                 .count();
             let mut keys = serde_json::Map::new();
             for (kname, key) in &prov.keys {
+                let kid = format!("{}/{}", name, kname);
+                let frozen = self.frozen.contains_key(&kid) || self.frozen.contains_key(kname);
+                let reason = self
+                    .frozen
+                    .get(&kid)
+                    .or_else(|| self.frozen.get(kname))
+                    .map(|f| f.reason.clone());
                 keys.insert(
                     kname.clone(),
                     json!({
@@ -964,8 +974,8 @@ impl RouterState {
                         "weight": key.weight,
                         "billing_type": key.billing_type,
                         "enabled": key.enabled,
-                        "frozen": self.frozen.contains_key(kname),
-                        "frozen_reason": self.frozen.get(kname).map(|f| f.reason.clone()),
+                        "frozen": frozen,
+                        "frozen_reason": reason,
                     }),
                 );
             }
@@ -994,6 +1004,8 @@ impl RouterState {
                 "upstream_model": pm.upstream_model,
                 "family": pm.family,
                 "params": pm.params,
+                "context_window": pm.context_window,
+                "max_output_tokens": pm.max_output_tokens,
             }));
         }
         models.sort_by(|a, b| {
@@ -1046,6 +1058,115 @@ impl RouterState {
             "models": models,
             "logical_models": logical,
             "virtual_models": virtual_models,
+        })
+    }
+
+    /// 动态上下文协商：聚合各逻辑模型的有效窗口（保守 min）及每物理目标窗口。
+    /// `effective` 取“可用目标”的最小窗口（跨供应商取 min，available=false 的目标不计入）；
+    /// 全部不可用时回退到全部目标的 min；未声明窗口的目标按 0 处理（不拉大 min）。
+    pub fn router_capabilities(&mut self) -> Value {
+        let Some(cfg) = self.v2.as_ref().cloned() else {
+            return json!({ "v2_enabled": false, "models": [] });
+        };
+        // 为了读 frozen 需要 &mut，但 cfg 已克隆，避免借用冲突
+        let mut models_out: Vec<Value> = Vec::new();
+        let mut aliases: Vec<String> = cfg.logical_models.keys().cloned().collect();
+        aliases.sort();
+        for alias in aliases {
+            let lm = match cfg.logical_models.get(&alias) {
+                Some(v) => v,
+                None => continue,
+            };
+            let strategy = match lm.route.strategy {
+                V2Strategy::Priority => "priority",
+                V2Strategy::Weighted => "weighted",
+                V2Strategy::UsageAware => "usage-aware",
+            };
+            let candidates = match config_v2::resolve_targets(&cfg, &alias) {
+                Some(c) => c,
+                None => continue,
+            };
+            let mut targets_json: Vec<Value> = Vec::new();
+            let mut available_cw: Vec<u32> = Vec::new();
+            let mut available_mo: Vec<u32> = Vec::new();
+            let mut all_cw: Vec<u32> = Vec::new();
+            let mut all_mo: Vec<u32> = Vec::new();
+            for cand in &candidates {
+                let cw = cand.model.context_window;
+                let mo = cand.model.max_output_tokens;
+                // 可用：至少一个 key 未冻结且权重>0
+                let available = cand
+                    .model
+                    .keys
+                    .iter()
+                    .any(|k| {
+                        let kid = format!("{}/{}", k.provider, k.name);
+                        !(self.frozen.contains_key(&kid) || self.frozen.contains_key(&k.name))
+                            && k.weight > 0
+                    });
+                if let Some(v) = cw {
+                    all_cw.push(v);
+                    if available {
+                        available_cw.push(v);
+                    }
+                }
+                if let Some(v) = mo {
+                    all_mo.push(v);
+                    if available {
+                        available_mo.push(v);
+                    }
+                }
+                // 物理 id：尝试从 cfg.models 反查，否则用 upstream
+                let physical_id = cfg
+                    .models
+                    .iter()
+                    .find(|(_, pm)| {
+                        pm.provider == cand.model.provider()
+                            && cand.model.upstream_model() == pm.upstream_model
+                    })
+                    .map(|(id, _)| id.clone())
+                    .unwrap_or_else(|| format!("{}/{}", cand.model.provider(), cand.model.upstream_model()));
+                targets_json.push(json!({
+                    "id": physical_id,
+                    "provider": cand.model.provider(),
+                    "upstream_model": cand.model.upstream_model(),
+                    "context_window": cw,
+                    "max_output_tokens": mo,
+                    "available": available,
+                    "weight": cand.weight,
+                }));
+            }
+            let eff_cw = if !available_cw.is_empty() {
+                available_cw.into_iter().min()
+            } else {
+                all_cw.into_iter().min()
+            };
+            let eff_mo = if !available_mo.is_empty() {
+                available_mo.into_iter().min()
+            } else {
+                all_mo.into_iter().min()
+            };
+            models_out.push(json!({
+                "id": alias,
+                "name": lm.display_name.clone().unwrap_or_else(|| alias.clone()),
+                "display_name": lm.display_name.clone(),
+                "reasoning": lm.reasoning,
+                "input": lm.input.clone(),
+                "thinking_level_map": lm.thinking_level_map.clone(),
+                "thinking_format": lm.thinking_format.clone(),
+                "strategy": strategy,
+                "effective": {
+                    "contextWindow": eff_cw,
+                    "maxTokens": eff_mo,
+                },
+                "targets": targets_json,
+            }));
+        }
+        json!({
+            "ok": true,
+            "v2_enabled": true,
+            "generated_at": now_seconds(),
+            "models": models_out,
         })
     }
 
@@ -1218,6 +1339,11 @@ impl RouterState {
             config_v2::V2LogicalModel {
                 params,
                 route: config_v2::V2Route { strategy, targets },
+                reasoning: None,
+                input: None,
+                thinking_level_map: None,
+                thinking_format: None,
+                display_name: None,
             },
         );
         config_v2::write_logical_models_file(

@@ -263,6 +263,14 @@ fn resolve(alias, session):
   - 后端：`custom_alias_models()` 把运行时 API 手动新增的 custom alias 作为扁平逻辑模型接入 v2（base_url/keys 取自声明 provider 的 v2 供应商，retry 用 custom 自身配置）；`v2_aliases` / `route_aliases` 均合并。
   - 前端：新增 `Architecture (v2)` 面板（Settings 页顶部），展示供应商（base_url / keys / available + 每 key enabled/frozen badge）、逻辑模型（strategy + targets）；`types.ts`/`api.ts` 增加 `V2Status` 与 `v2Status()`。
   - 验证：21 单测 + 前端 `npm run build` + 部署后：前端页面正常、v2 API 正常、临时 custom alias `my-test-model` 出现在 base_aliases 并端到端路由成功（已清理恢复）。
+- **Phase 5** ✅（本分支 `feat/dynamic-context-negotiation`）：动态上下文协商（跨供应商 `contextWindow` / `maxOutput` 差异，对齐 Pi 的 `compaction` / `isContextOverflow` 阈值）。
+  - `V2PhysicalModel` + `ModelAlias` 新增 `context_window` / `max_output_tokens`（`config/models.json` 每物理模型可声明，见架构覆盖，缺省取保守值）。
+  - `RouterState::router_capabilities()` 聚合 `GET /api/router/capabilities`：每逻辑模型输出 `effective: {contextWindow,maxTokens}`（可用目标的保守 min；不可用时回退全部目标 min）+ 每 `targets[]` 的精确窗口与 `available/weight`，`generated_at` 时间戳。
+  - `GET /v1/models` 富化：基于 capabilities 的 effective 值（fallback 到物理模型声明）透传 `context_window` / `contextWindow` / `max_output_tokens` / `maxTokens`，OpenAI 未知字段忽略，Pi 及其他兼容客户端可直接消费。
+  - 网关活链路校正：非流式 `chat/completions` 响应头 `x-llm-router-{model,upstream-model,provider,context-window,max-output}` 为本次精确命中；流式为首选候选的保守提示（连接建立前无法确定最终命中）。
+  - Pi 侧：`pi-extensions/router-context-sync.ts` 拉取式热补（`capabilities` 优先、`v1/models` 回退，`modelOverrides` 滑动最小）+ `after_provider_response` 响应头精细校正，定时 `POLL_MS` 与 `model_select` 刷新，无需改 Pi 内核。
+  - 前端：`CapabilitiesPanel`（Settings 顶部）展示每逻辑模型 effective 窗口及 targets 明细；`types.ts` 新增 `RouterCapabilities`，`api.ts` 新增 `routerCapabilities()` / `models()`。
+  - 验证：`cargo test` 44 passed / `cargo build` / `frontend npm run build` 均通过。
 
 ## 8. 已确认决策
 

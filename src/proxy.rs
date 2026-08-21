@@ -121,6 +121,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         )
         .route("/v1/search", post(search_completions))
         .route("/v1/models", get(models))
+        .route("/api/router/capabilities", get(router_capabilities))
         .route("/v1/chat/completions", post(chat_completions))
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
         .fallback(get(dashboard))
@@ -165,20 +166,48 @@ async fn models(State(app): State<AppState>, headers: HeaderMap) -> Response {
         return response;
     }
     with_state_json(&app, |state| {
+        let caps = state.router_capabilities();
+        let cap_map: std::collections::HashMap<String, (Option<u32>, Option<u32>)> = caps
+            .get("models")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| {
+                        let id = m.get("id")?.as_str()?.to_string();
+                        let cw = m.get("effective")?.get("contextWindow")?.as_u64().map(|v| v as u32);
+                        let mo = m.get("effective")?.get("maxTokens")?.as_u64().map(|v| v as u32);
+                        Some((id, (cw, mo)))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let data = state
             .settings_aliases()
             .values()
             .map(|alias| {
-                json!({
+                let (cw, mo) = cap_map.get(&alias.alias).copied().unwrap_or((None, None));
+                let cw = cw.or(alias.context_window);
+                let mo = mo.or(alias.max_output_tokens);
+                let mut obj = serde_json::json!({
                     "id": alias.alias,
                     "object": "model",
                     "created": 0,
                     "owned_by": "llm-provider-router",
-                })
+                });
+                if let Some(v) = cw { obj["context_window"] = json!(v); obj["contextWindow"] = json!(v); }
+                if let Some(v) = mo { obj["max_output_tokens"] = json!(v); obj["maxTokens"] = json!(v); }
+                obj
             })
             .collect::<Vec<_>>();
         Ok(json!({ "object": "list", "data": data }))
     })
+}
+
+async fn router_capabilities(State(app): State<AppState>, headers: HeaderMap) -> Response {
+    if let Some(response) = validate_auth(&app.settings, &headers) {
+        return response;
+    }
+    with_state_json(&app, |state| Ok(state.router_capabilities()))
 }
 
 async fn api_usage_reset(State(app): State<AppState>) -> Response {
@@ -1338,7 +1367,34 @@ async fn call_upstream(
             extract_usage(&content),
         );
         log_upstream_failure(&alias, status, &body_text);
-        return Ok(json_status(status_code(status), content));
+        let mut resp = json_status(status_code(status), content);
+        inject_router_headers(resp.headers_mut(), &alias);
+        return Ok(resp);
+    }
+}
+
+fn inject_router_headers(headers: &mut HeaderMap, alias: &ModelAlias) {
+    headers.insert(
+        "x-llm-router-model",
+        HeaderValue::from_str(&alias.alias).unwrap_or_else(|_| HeaderValue::from_static("unknown")),
+    );
+    headers.insert(
+        "x-llm-router-upstream-model",
+        HeaderValue::from_str(&alias.upstream_model()).unwrap_or_else(|_| HeaderValue::from_static("unknown")),
+    );
+    headers.insert(
+        "x-llm-router-provider",
+        HeaderValue::from_str(&alias.provider()).unwrap_or_else(|_| HeaderValue::from_static("unknown")),
+    );
+    if let Some(v) = alias.context_window {
+        if let Ok(hv) = HeaderValue::from_str(&v.to_string()) {
+            headers.insert("x-llm-router-context-window", hv);
+        }
+    }
+    if let Some(v) = alias.max_output_tokens {
+        if let Ok(hv) = HeaderValue::from_str(&v.to_string()) {
+            headers.insert("x-llm-router-max-output", hv);
+        }
     }
 }
 
@@ -1348,6 +1404,17 @@ async fn stream_upstream_route(
     session_id: Option<String>,
     payload: Value,
 ) -> Response {
+    // 流式响应头需在 stream 被 move 前从首选候选取保守窗口提示
+    let stream_headers: Option<(String, String, String, Option<u32>, Option<u32>)> =
+        aliases.first().map(|first| {
+            (
+                first.alias.clone(),
+                first.provider(),
+                first.upstream_model(),
+                first.context_window,
+                first.max_output_tokens,
+            )
+        });
     let stream = async_stream::stream! {
         let mut last_error: Option<String> = None;
         for base_alias in aliases {
@@ -1487,9 +1554,32 @@ async fn stream_upstream_route(
             yield Ok(Bytes::from(stream_error_event("router", 0, &error)));
         }
     };
-    Response::builder()
+    // 流式响应头：取首选候选的窗口作为保守提示（精确命中窗口由非流式头提供；流式下在连接建立前无法确定最终命中）
+    let mut builder = Response::builder()
         .status(StatusCode::OK)
-        .header(CONTENT_TYPE, "text/event-stream")
+        .header(CONTENT_TYPE, "text/event-stream");
+    if let Some((alias, provider, upstream, context_window, max_output)) = stream_headers {
+        if let Ok(hv) = HeaderValue::from_str(&alias) {
+            builder = builder.header("x-llm-router-model", hv);
+        }
+        if let Ok(hv) = HeaderValue::from_str(&provider) {
+            builder = builder.header("x-llm-router-provider", hv);
+        }
+        if let Ok(hv) = HeaderValue::from_str(&upstream) {
+            builder = builder.header("x-llm-router-upstream-model", hv);
+        }
+        if let Some(v) = context_window {
+            if let Ok(hv) = HeaderValue::from_str(&v.to_string()) {
+                builder = builder.header("x-llm-router-context-window", hv);
+            }
+        }
+        if let Some(v) = max_output {
+            if let Ok(hv) = HeaderValue::from_str(&v.to_string()) {
+                builder = builder.header("x-llm-router-max-output", hv);
+            }
+        }
+    }
+    builder
         .body(Body::from_stream(stream))
         .unwrap_or_else(|_| internal_error("failed to create streaming response"))
 }
