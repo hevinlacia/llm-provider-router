@@ -102,6 +102,12 @@ export type TokenPriceConfig = {
   config_path: string;
 };
 
+export type ModelEquivalencesConfig = {
+  ok: boolean;
+  groups: Array<{ id: string; display_name: string; models: string[] }>;
+  config_path: string;
+};
+
 export type KeyConfig = {
   ok: boolean;
   keys: Array<{
@@ -143,6 +149,8 @@ export type V2ProviderStatus = {
   key_frozen: number;
   available: boolean;
   keys: Record<string, V2KeyStatus>;
+  /** 供应商详情（上游探测）模型列表 */
+  models?: string[];
 };
 
 export type V2PhysicalModel = {
@@ -175,4 +183,10 @@ export type ProviderModelsResponse = {
   models?: string[];
   fetched_at?: number | null;
   error?: string;
+};
+
+/** Model Pool target 候选分组：物理模型 / 模型池 / 虚拟模型 */
+export type TargetCandidateGroup = {
+  group: string;
+  items: string[];
 };

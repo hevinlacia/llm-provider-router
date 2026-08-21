@@ -277,6 +277,48 @@ pub fn write_provider_models_file(path: &str, file: &ProviderModelsFile) -> anyh
     Ok(())
 }
 
+pub fn write_models_file(path: &str, file: &V2ModelsFile) -> anyhow::Result<()> {
+    let raw = serde_json::to_string_pretty(file)?;
+    fs::write(Path::new(path), format!("{raw}\n"))?;
+    Ok(())
+}
+
+/// 注册未在 models.json 中的物理模型（`provider/upstream` 且 provider 已知）。
+/// 幂等：已存在跳过；返回本次新增的 id 列表。
+pub fn register_physical_models(
+    models_path: &str,
+    ids: &[String],
+    known_providers: &HashSet<&str>,
+) -> anyhow::Result<Vec<String>> {
+    let mut file: V2ModelsFile = read_json(models_path)?;
+    let mut registered = Vec::new();
+    for id in ids {
+        let Some((provider, upstream)) = id.split_once('/') else {
+            continue;
+        };
+        if !known_providers.contains(provider) {
+            continue;
+        }
+        if file.models.contains_key(id) {
+            continue;
+        }
+        file.models.insert(
+            id.clone(),
+            V2PhysicalModel {
+                provider: provider.to_string(),
+                upstream_model: upstream.to_string(),
+                family: None,
+                params: HashMap::new(),
+            },
+        );
+        registered.push(id.clone());
+    }
+    if !registered.is_empty() {
+        write_models_file(models_path, &file)?;
+    }
+    Ok(registered)
+}
+
 /// 供应商改名时同步 `models.json`：把引用旧 provider 的物理模型改指新 provider，
 /// 并重写模型 id 前缀 `<old>/` → `<new>/`。
 pub fn rename_provider_in_models(

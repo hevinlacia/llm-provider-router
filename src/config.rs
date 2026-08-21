@@ -2,8 +2,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub const DEFAULT_ARK_BASE_URL: &str = "https://ark.cn-beijing.volces.com/api/coding/v3";
 pub const DEFAULT_WEIGHT_CONFIG_PATH: &str = "config/key-weights.json";
@@ -12,10 +11,14 @@ pub const DEFAULT_CUSTOM_KEY_CONFIG_PATH: &str = "config/custom-keys.json";
 pub const DEFAULT_API_KEYS_PATH: &str = "config/api-keys.json";
 pub const DEFAULT_TOKEN_PRICE_CONFIG_PATH: &str = "config/token-prices.json";
 pub const DEFAULT_MODEL_ALIAS_CONFIG_PATH: &str = "config/custom-model-aliases.json";
-pub const DEFAULT_ROUTER_AUTH_CONFIG_PATH: &str = "config/router-auth.json";
 pub const DEFAULT_SEARCH_PROVIDERS_PATH: &str = "config/search-providers.json";
+pub const DEFAULT_MODEL_EQUIVALENCES_PATH: &str = "config/model-equivalences.json";
 pub const DEFAULT_USAGE_DB_PATH: &str = "~/.local/state/llm-provider-router/usage.sqlite3";
 pub const DEFAULT_STATE_DB_PATH: &str = "~/.local/state/llm-provider-router/state.sqlite3";
+pub const DEFAULT_DIAG_DIR: &str = "~/.local/state/llm-provider-router/logs";
+pub const DEFAULT_DIAG_MAX_BYTES: &str = "10485760";
+pub const DEFAULT_DIAG_MAX_FILES: &str = "50";
+pub const DEFAULT_DIAG_SAMPLE_EVERY: &str = "1";
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct KeyRef {
@@ -194,18 +197,23 @@ pub struct Settings {
     pub token_price_config_path: String,
     pub model_alias_config_path: String,
     pub search_providers_path: String,
+    pub model_equivalences_path: String,
     /// 供应商模型列表持久化路径（设置界面“查看供应商详情”缓存）。
     pub provider_models_path: String,
     pub auth_invalid_freeze_seconds: f64,
     /// v2 分层配置开关（默认启用；设 0 回退旧硬编码 aliases 逻辑）。
     pub v2_config_enabled: bool,
+    /// 诊断日志落盘目录（默认 ~/.local/state/llm-provider-router/logs，journal 不可信时的持久化证据）。
+    pub diag_dir: String,
+    /// 单个诊断文件最大体积（字节），超限轮转。
+    pub diag_max_bytes: u64,
+    /// 诊断文件最多保留个数，超限删除最旧。
+    pub diag_max_files: usize,
+    /// 诊断采样率：每 N 个请求记录 1 个请求级事件（1=全量，默认 1）。
+    pub diag_sample_every: u64,
 }
 
 pub fn load_settings() -> anyhow::Result<Settings> {
-    let router_auth_config_path = env_or(
-        "LLM_PROVIDER_ROUTER_AUTH_CONFIG_PATH",
-        DEFAULT_ROUTER_AUTH_CONFIG_PATH,
-    );
     Ok(Settings {
         host: env_or("LLM_PROVIDER_ROUTER_HOST", "127.0.0.1"),
         port: env_or("LLM_PROVIDER_ROUTER_PORT", "8789")
@@ -231,8 +239,7 @@ pub fn load_settings() -> anyhow::Result<Settings> {
                 env::var("LLM_PROVIDER_ROUTER_API_KEY")
                     .ok()
                     .filter(|value| !value.is_empty())
-            })
-            .or_else(|| load_router_bearer_token(&router_auth_config_path)),
+            }),
         usage_db_path: env_or("LLM_PROVIDER_ROUTER_USAGE_DB_PATH", DEFAULT_USAGE_DB_PATH),
         state_db_path: env_or("LLM_PROVIDER_ROUTER_STATE_DB_PATH", DEFAULT_STATE_DB_PATH),
         weight_config_path: env_or(
@@ -260,6 +267,10 @@ pub fn load_settings() -> anyhow::Result<Settings> {
             "LLM_PROVIDER_ROUTER_SEARCH_PROVIDERS_PATH",
             DEFAULT_SEARCH_PROVIDERS_PATH,
         ),
+        model_equivalences_path: env_or(
+            "LLM_PROVIDER_ROUTER_MODEL_EQUIVALENCES_PATH",
+            DEFAULT_MODEL_EQUIVALENCES_PATH,
+        ),
         provider_models_path: env_or(
             "LLM_PROVIDER_ROUTER_PROVIDER_MODELS_PATH",
             "config/provider-models.json",
@@ -270,6 +281,19 @@ pub fn load_settings() -> anyhow::Result<Settings> {
         )
         .parse()?,
         v2_config_enabled: env_or("LLM_PROVIDER_ROUTER_V2", "1") != "0",
+        diag_dir: env_or("LLM_PROVIDER_ROUTER_DIAG_DIR", DEFAULT_DIAG_DIR),
+        diag_max_bytes: env_or("LLM_PROVIDER_ROUTER_DIAG_MAX_BYTES", DEFAULT_DIAG_MAX_BYTES)
+            .parse()
+            .unwrap_or(10 * 1024 * 1024),
+        diag_max_files: env_or("LLM_PROVIDER_ROUTER_DIAG_MAX_FILES", DEFAULT_DIAG_MAX_FILES)
+            .parse()
+            .unwrap_or(50),
+        diag_sample_every: env_or(
+            "LLM_PROVIDER_ROUTER_DIAG_SAMPLE_EVERY",
+            DEFAULT_DIAG_SAMPLE_EVERY,
+        )
+        .parse()
+        .unwrap_or(1),
     })
 }
 
@@ -418,16 +442,4 @@ pub fn env_or(name: &str, default: &str) -> String {
         .ok()
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| default.to_string())
-}
-
-fn load_router_bearer_token(config_path: &str) -> Option<String> {
-    let path = expand_path(config_path);
-    if !Path::new(&path).is_file() {
-        return None;
-    }
-    let data: serde_json::Value = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
-    data.get("bearer_token")?
-        .as_str()
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
 }

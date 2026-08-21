@@ -1,5 +1,6 @@
 mod config;
 mod config_v2;
+mod diag;
 mod front_proxy;
 mod json_config;
 mod proxy;

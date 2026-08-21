@@ -60,6 +60,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         .route("/health", get(health))
         .route("/", get(dashboard))
         .route("/dashboard", get(dashboard))
+        .route("/settings", get(dashboard))
         .route("/api/state", get(api_state))
         .route("/api/usage", get(api_usage))
         .route("/api/usage/reset", post(api_usage_reset))
@@ -101,6 +102,14 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
             get(api_config_token_prices).put(api_config_token_prices_update),
         )
         .route(
+            "/api/config/token-prices/apply-equivalents",
+            post(api_config_token_prices_apply_equivalents),
+        )
+        .route(
+            "/api/config/model-equivalences",
+            get(api_config_model_equivalences).put(api_config_model_equivalences_update),
+        )
+        .route(
             "/api/config/keys",
             get(api_config_keys)
                 .put(api_config_keys_update)
@@ -114,6 +123,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         .route("/v1/models", get(models))
         .route("/v1/chat/completions", post(chat_completions))
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
+        .fallback(get(dashboard))
         .with_state(app_state);
 
     let addr: SocketAddr = format!("{}:{}", settings.host, settings.port).parse()?;
@@ -705,6 +715,38 @@ async fn api_config_token_prices_update(
     with_state_json(&app, |state| Ok(merge_ok(state.set_token_prices(prices)?)))
 }
 
+async fn api_config_token_prices_apply_equivalents(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let Some(model) = payload.get("model").and_then(Value::as_str) else {
+        return bad_request("model (string) is required");
+    };
+    let only_missing = payload.get("only_missing").and_then(Value::as_bool).unwrap_or(false);
+    with_state_json(&app, |state| Ok(merge_ok(state.apply_price_to_equivalents(model, only_missing)?)))
+}
+
+async fn api_config_model_equivalences(State(app): State<AppState>) -> Response {
+    with_state_json(&app, |state| Ok(merge_ok(state.equivalences_snapshot())))
+}
+
+async fn api_config_model_equivalences_update(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let Some(groups) = payload.get("groups").and_then(Value::as_array) else {
+        return bad_request("groups must be a list");
+    };
+    let parsed: Vec<crate::json_config::EquivalenceGroup> = groups.iter().filter_map(|g| {
+        Some(crate::json_config::EquivalenceGroup {
+            id: g.get("id")?.as_str()?.to_string(),
+            display_name: g.get("display_name")?.as_str()?.to_string(),
+            models: g.get("models")?.as_array()?.iter().filter_map(|m| m.as_str().map(|s| s.to_string())).collect(),
+        })
+    }).collect();
+    with_state_json(&app, |state| Ok(merge_ok(state.set_equivalences(parsed)?)))
+}
+
 async fn api_config_keys(State(app): State<AppState>) -> Response {
     with_state_json(&app, |state| Ok(merge_ok(state.key_secret_snapshot()?)))
 }
@@ -884,6 +926,13 @@ async fn chat_completions(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Response {
+    if crate::diag::diag_enabled(&app.settings) {
+        // 请求入口埋点（不含消息正文/密钥）：收集期用于对照是 pi 下发参数问题还是上游兼容问题。
+        crate::diag::append(&app.settings, "request.chat_completions", serde_json::json!({
+            "model": payload.get("model").and_then(Value::as_str).unwrap_or(""),
+            "summary": crate::diag::payload_summary(&payload),
+        }));
+    }
     if let Some(response) = validate_auth(&app.settings, &headers) {
         return response;
     }
@@ -984,6 +1033,12 @@ fn header_str(headers: &HeaderMap, name: &'static str) -> Option<String> {
         .map(str::to_string)
 }
 
+fn is_muse_spark(alias: &ModelAlias) -> bool {
+    alias.upstream_model().contains("muse-spark")
+        || alias.provider() == "opencode-go"
+        || alias.base_url.contains("opencode")
+}
+
 fn prepare_upstream_payload(payload: &Value, alias: &ModelAlias) -> Value {
     let mut next = payload.clone();
     next["model"] = Value::String(alias.upstream_model().to_string());
@@ -1001,11 +1056,40 @@ fn prepare_upstream_payload(payload: &Value, alias: &ModelAlias) -> Value {
             }
         }
     }
-    // DeepSeek 官方对部分 OpenAI 兼容字段有额外严格校验（见 normalize_deepseek_official），
-    // 转发前做最小化兼容归一化，避免上游 400。
-    if is_deepseek_official(alias) {
-        normalize_deepseek_official(&mut next);
+    // 上游兼容归一化：按供应商做最小改写（不覆盖客户端显式语义，必然 400 才改）。
+    // DeepSeek 官方需 normalize_deepseek_official；muse-spark 为非推理模型，需记录 xhigh 下发的 thinking。
+    let diag_settings = crate::config::load_settings().unwrap_or_else(|_| crate::config::Settings {
+        host: "".into(), port: 0, session_ttl_seconds: 0.0,
+        monthly_quota_fallback_seconds: 0.0, five_hour_quota_fallback_seconds: 0.0,
+        request_timeout_seconds: 0.0, local_bearer_token: None,
+        usage_db_path: "".into(), state_db_path: "".into(),
+        weight_config_path: "".into(), provider_config_path: "".into(),
+        custom_key_config_path: "".into(), api_keys_path: "".into(),
+        token_price_config_path: "".into(), model_alias_config_path: "".into(),
+        search_providers_path: "".into(), model_equivalences_path: "".into(),
+        provider_models_path: "".into(), auth_invalid_freeze_seconds: 0.0,
+        v2_config_enabled: false,
+        diag_dir: crate::config::DEFAULT_DIAG_DIR.to_string(),
+        diag_max_bytes: 10*1024*1024, diag_max_files: 50, diag_sample_every: 1,
+    });
+    // 收集期：记录原始 payload 的关键字段（不含消息正文/密钥），便于事后定位是协议兼容还是模型能力问题。
+    if is_muse_spark(alias) && (payload.get("thinking").is_some() || payload.get("reasoning_effort").is_some() || payload.get("reasoning").is_some()) {
+        crate::diag::append(&diag_settings, "normalize.muse_spark.thinking_seen", json!({
+            "alias": alias.alias, "provider": alias.provider(), "upstream_model": alias.upstream_model(),
+            "summary_before": crate::diag::payload_summary(payload),
+        }));
     }
+    if is_deepseek_official(alias) {
+        let before_summary = crate::diag::payload_summary(&next);
+        normalize_deepseek_official(&mut next);
+        if before_summary != crate::diag::payload_summary(&next) {
+            crate::diag::append(&diag_settings, "normalize.deepseek.applied", json!({
+                "alias": alias.alias, "provider": alias.provider(), "upstream_model": alias.upstream_model(),
+                "before": before_summary, "after": crate::diag::payload_summary(&next),
+            }));
+        }
+    }
+    // muse-spark 收集期：仅观测，不改写（待收集期结束若证据充分再在此剥离 thinking/reasoning_effort）。
     next
 }
 
@@ -1111,8 +1195,8 @@ fn assistant_tool_calls_missing_reasoning(next: &Value) -> bool {
         .unwrap_or(false)
 }
 
-/// 记录上游 4xx/5xx 失败到 stderr（systemd 下进 journald），便于排查上游拒绝。
-/// 只记录 provider/model/status 和错误信息摘要，不输出请求正文。
+/// 记录上游 4xx/5xx 失败：stderr（journal）+ 诊断文件（持久化，journal 损坏时仍可回看）。
+/// 只记录 provider/model/status 和错误信息摘要，不输出请求正文/密钥。
 fn log_upstream_failure(alias: &ModelAlias, status: u16, body_text: &str) {
     if status < 400 {
         return;
@@ -1139,6 +1223,18 @@ fn log_upstream_failure(alias: &ModelAlias, status: u16, body_text: &str) {
         status,
         message
     );
+    // 持久化到诊断文件（best-effort，失败不影响主链路）。
+    if let Ok(settings) = crate::config::load_settings() {
+        if crate::diag::diag_enabled(&settings) {
+            crate::diag::append(&settings, "upstream.failure", serde_json::json!({
+                "provider": alias.provider(),
+                "model": alias.upstream_model(),
+                "alias": alias.alias,
+                "status": status,
+                "error": message.chars().take(500).collect::<String>(),
+            }));
+        }
+    }
 }
 
 enum CallError {
@@ -1322,10 +1418,34 @@ async fn stream_upstream_route(
 
                 let mut body_text = Vec::new();
                 let mut bytes_stream = response.bytes_stream();
+                // 兼容不标准上游（如 muse-spark 的 finish_reason 为 null 且无 [DONE]）：
+                // 逐行跟踪流中是否出现过标准结束信号，缺失时在流尾补齐，
+                // 避免客户端报 "Stream ended without finish_reason"。
+                let mut saw_finish_reason = false;
+                let mut saw_done = false;
                 while let Some(item) = bytes_stream.next().await {
                     match item {
                         Ok(chunk) => {
                             body_text.extend_from_slice(&chunk);
+                            let text = String::from_utf8_lossy(&chunk);
+                            for line in text.lines() {
+                                let trimmed_line = line.trim();
+                                let Some(data) = trimmed_line.strip_prefix("data:") else {
+                                    continue;
+                                };
+                                let body = data.trim();
+                                if body == "[DONE]" {
+                                    saw_done = true;
+                                    continue;
+                                }
+                                if let Ok(value) = serde_json::from_str::<Value>(body) {
+                                    if let Some(fr) = value.pointer("/choices/0/finish_reason") {
+                                        if fr.as_str().is_some_and(|s| !s.is_empty()) {
+                                            saw_finish_reason = true;
+                                        }
+                                    }
+                                }
+                            }
                             yield Ok(chunk);
                         }
                         Err(exc) => {
@@ -1334,7 +1454,28 @@ async fn stream_upstream_route(
                         }
                     }
                 }
+                // 上游缺失标准结束信号时补齐（仅影响不标准上游，标准上游无额外输出）
+                if !saw_finish_reason {
+                    yield Ok(Bytes::from(
+                        "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                    ));
+                }
+                if !saw_done {
+                    yield Ok(Bytes::from("data: [DONE]\n\n"));
+                }
                 let body_text = String::from_utf8_lossy(&body_text).to_string();
+                // 流式结束埋点：上游是否缺失 finish_reason/[DONE]，用于量化 muse-spark 类不标准流的影响。
+                if crate::diag::diag_enabled(&app.settings) && (!saw_finish_reason || !saw_done) {
+                    crate::diag::append(&app.settings, "stream.incomplete_upstream", serde_json::json!({
+                        "alias": alias.alias,
+                        "provider": alias.provider(),
+                        "model": alias.upstream_model(),
+                        "status": status,
+                        "saw_finish_reason": saw_finish_reason,
+                        "saw_done": saw_done,
+                        "bytes": body_text.len(),
+                    }));
+                }
                 freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
                 let usage = extract_usage_from_stream(&body_text);
                 record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref());
