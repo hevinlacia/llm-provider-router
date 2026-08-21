@@ -835,9 +835,9 @@ function TokenPricesPanel({ config, v2, equivalences, onChange, onSaved, onError
 
   const counts = useMemo(() => {
     const map: Record<string, number> = {};
-    for (const p of providers) map[p] = config.models.filter((m) => m.model.startsWith(`${p}/`)).length;
+    for (const p of providers) map[p] = (config?.models ?? []).filter((m) => m.model.startsWith(`${p}/`)).length;
     return map;
-  }, [config.models, providers]);
+  }, [config, providers]);
 
   return <section className="card"><div className="section-title"><h2>Token Prices</h2><span className="muted">{current.config_path}</span></div><p className="muted">仅展示模型池引用的供应商真实模型（<code>provider/model</code>）。右侧切换供应商，下方列出该供应商的模型；每行可一键把价格同步给等价关系表中同组的其它供应商模型。</p>
     <div className="toolbar" style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
@@ -851,9 +851,9 @@ function TokenPricesPanel({ config, v2, equivalences, onChange, onSaved, onError
 }
 
 function ModelEquivalencesPanel({ config, onSaved, onError }: { config: ModelEquivalencesConfig | null; onSaved: (value: ModelEquivalencesConfig) => void; onError: (value: string) => void }) {
+  const [draft, setDraft] = useState<ModelEquivalencesConfig>(config ?? { ok: true, groups: [], config_path: '' });
+  useEffect(() => { if (config) setDraft(config); }, [config]);
   if (!config) return <section className="card"><h2>Model Equivalences</h2><p className="muted">Loading equivalences...</p></section>;
-  const [draft, setDraft] = useState(config);
-  useEffect(() => setDraft(config), [config]);
   function updateGroup(idx: number, patch: Partial<ModelEquivalencesConfig['groups'][number]>) {
     const groups = [...draft.groups];
     groups[idx] = { ...groups[idx], ...patch };
