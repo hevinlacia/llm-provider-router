@@ -1,4 +1,4 @@
-import type { FilterState, KeyConfig, ModelAliasConfig, ProviderConfig, StateResponse, TokenPriceConfig, UsageSnapshot, V2Status, WeightConfig } from './types';
+import type { FilterState, KeyConfig, ModelAliasConfig, ProviderConfig, ProviderModelsResponse, StateResponse, TokenPriceConfig, UsageSnapshot, V2Status, WeightConfig } from './types';
 
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
@@ -100,6 +100,10 @@ export const api = {
   v2Status() {
     return request<V2Status>('/api/config/v2');
   },
+  providerModels(name: string, refresh = false) {
+    const query = refresh ? '?refresh=1' : '';
+    return request<ProviderModelsResponse>(`/api/config/v2/providers/${encodeURIComponent(name)}/models${query}`);
+  },
   updateV2Provider(oldName: string, provider: { name: string; base_url: string; keys: Record<string, { env_var: string; weight: number; billing_type: string; enabled: boolean }> }) {
     return request<V2Status>('/api/config/v2/providers', {
       method: 'PUT',
@@ -107,11 +111,46 @@ export const api = {
       body: JSON.stringify({ old_name: oldName, provider }),
     });
   },
+  createV2Provider(provider: { name: string; base_url: string; keys: Record<string, { env_var: string; weight: number; billing_type: string; enabled: boolean }> }) {
+    return request<V2Status>('/api/config/v2/providers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    });
+  },
   updateV2LogicalModel(name: string, body: { strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null }> }) {
     return request<V2Status>('/api/config/v2/logical-models', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, ...body }),
+    });
+  },
+  createV2LogicalModel(body: { name: string; strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null }> }) {
+    return request<V2Status>('/api/config/v2/logical-models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  },
+  deleteV2LogicalModel(name: string) {
+    return request<V2Status>('/api/config/v2/logical-models', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+  },
+  upsertVirtualModel(name: string, provider: string, upstreamModel: string) {
+    return request<V2Status>('/api/config/v2/virtual-models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, provider, upstream_model: upstreamModel }),
+    });
+  },
+  deleteVirtualModel(name: string, provider: string) {
+    return request<V2Status>('/api/config/v2/virtual-models', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, provider }),
     });
   },
   saveKeys(keys: Record<string, string>, deleteNames: string[]) {

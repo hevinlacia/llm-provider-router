@@ -164,4 +164,15 @@ export type V2Status = {
   providers?: Record<string, V2ProviderStatus>;
   models?: V2PhysicalModel[];
   logical_models?: Record<string, V2LogicalModel>;
+  /** 虚拟模型：虚拟名 → { 供应商 → 实际上游模型名 } */
+  virtual_models?: Record<string, Record<string, string>>;
+};
+
+export type ProviderModelsResponse = {
+  ok: boolean;
+  provider: string;
+  cached?: boolean;
+  models?: string[];
+  fetched_at?: number | null;
+  error?: string;
 };

@@ -14,3 +14,6 @@ frontend/tsconfig.tsbuildinfo
 # key files: secrets now live in ~/Developer/vault; router reads env vars only
 config/api-keys.json
 config/api-keys.sops.json
+
+# runtime-generated provider model cache (settings UI "view provider details")
+config/provider-models.json

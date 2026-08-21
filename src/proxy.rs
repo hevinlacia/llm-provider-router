@@ -1,12 +1,12 @@
 use crate::config::{KeyRef, ModelAlias, Settings};
-use crate::router_state::{maybe_freeze_key, parse_retry_after, NoAvailableKeyError, RouterState};
+use crate::router_state::{maybe_freeze_key, NoAvailableKeyError, RouterState};
 use crate::search::{SearchPool, SearchProvidersFile, UnifiedSearchRequest};
 use axum::body::{Body, Bytes};
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::StreamExt;
 use serde::Deserialize;
@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
 
@@ -40,7 +40,12 @@ fn default_period() -> String {
 
 pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     let timeout = Duration::from_secs_f64(settings.request_timeout_seconds);
-    let client = reqwest::Client::builder().timeout(timeout).build()?;
+    // opencode-go (zen/go) 上游用 Cloudflare 拦截非浏览器 UA（error 1010），
+    // 全局使用浏览器 UA 以兼容该上游；OpenAI 兼容 API 不校验 UA，无副作用。
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+        .build()?;
     let state = Arc::new(Mutex::new(RouterState::new(settings.clone())?));
     let search_pool = Arc::new(Mutex::new(SearchPool::new(
         &settings.search_providers_path,
@@ -70,11 +75,22 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         .route("/api/config/v2", get(api_config_v2))
         .route(
             "/api/config/v2/providers",
-            put(api_config_v2_providers_update),
+            post(api_config_v2_providers_create).put(api_config_v2_providers_update),
+        )
+        .route(
+            "/api/config/v2/providers/{name}/models",
+            get(api_config_v2_provider_models),
+        )
+        .route(
+            "/api/config/v2/virtual-models",
+            post(api_config_v2_virtual_models_upsert)
+                .delete(api_config_v2_virtual_models_delete),
         )
         .route(
             "/api/config/v2/logical-models",
-            put(api_config_v2_logical_models_update),
+            post(api_config_v2_logical_models_create)
+                .put(api_config_v2_logical_models_update)
+                .delete(api_config_v2_logical_models_delete),
         )
         .route(
             "/api/config/providers",
@@ -207,21 +223,16 @@ async fn api_config_v2(State(app): State<AppState>) -> Response {
     with_state_json(&app, |state| Ok(state.v2_status()))
 }
 
-async fn api_config_v2_providers_update(
-    State(app): State<AppState>,
-    Json(payload): Json<Value>,
-) -> Response {
-    let Some(old_name) = payload.get("old_name").and_then(Value::as_str) else {
-        return bad_request("old_name (string) is required");
-    };
-    let Some(provider) = payload.get("provider").and_then(Value::as_object) else {
-        return bad_request("provider (object) is required");
-    };
+/// 解析 v2 供应商对象：{ name, base_url, keys } -> (name, base_url, keys)。
+/// 供新增/编辑供应商 handler 复用，错误返回可直接透传给 bad_request 的文案。
+fn parse_v2_provider_body(
+    provider: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(String, String, HashMap<String, crate::config_v2::V2Key>), String> {
     let Some(new_name) = provider.get("name").and_then(Value::as_str) else {
-        return bad_request("provider.name (string) is required");
+        return Err("provider.name (string) is required".to_string());
     };
     let Some(base_url) = provider.get("base_url").and_then(Value::as_str) else {
-        return bad_request("provider.base_url (string) is required");
+        return Err("provider.base_url (string) is required".to_string());
     };
     let mut keys = HashMap::new();
     if let Some(key_objs) = provider.get("keys").and_then(Value::as_object) {
@@ -246,8 +257,22 @@ async fn api_config_v2_providers_update(
             );
         }
     }
+    Ok((new_name.to_string(), base_url.to_string(), keys))
+}
+
+async fn api_config_v2_providers_create(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let Some(provider) = payload.get("provider").and_then(Value::as_object) else {
+        return bad_request("provider (object) is required");
+    };
+    let (name, base_url, keys) = match parse_v2_provider_body(provider) {
+        Ok(parsed) => parsed,
+        Err(message) => return bad_request(&message),
+    };
     match app.state.lock() {
-        Ok(mut state) => match state.update_v2_provider(old_name, new_name, base_url, keys) {
+        Ok(mut state) => match state.create_v2_provider(&name, &base_url, keys) {
             Ok(value) => json_status(StatusCode::OK, value),
             Err(err) => bad_request(&err.to_string()),
         },
@@ -255,12 +280,35 @@ async fn api_config_v2_providers_update(
     }
 }
 
-async fn api_config_v2_logical_models_update(
+async fn api_config_v2_providers_update(
     State(app): State<AppState>,
     Json(payload): Json<Value>,
 ) -> Response {
+    let Some(old_name) = payload.get("old_name").and_then(Value::as_str) else {
+        return bad_request("old_name (string) is required");
+    };
+    let Some(provider) = payload.get("provider").and_then(Value::as_object) else {
+        return bad_request("provider (object) is required");
+    };
+    let (new_name, base_url, keys) = match parse_v2_provider_body(provider) {
+        Ok(parsed) => parsed,
+        Err(message) => return bad_request(&message),
+    };
+    match app.state.lock() {
+        Ok(mut state) => match state.update_v2_provider(old_name, &new_name, &base_url, keys) {
+            Ok(value) => json_status(StatusCode::OK, value),
+            Err(err) => bad_request(&err.to_string()),
+        },
+        Err(_) => internal_error("router state lock poisoned"),
+    }
+}
+
+/// 解析逻辑模型 body：name / strategy / targets / params。
+fn parse_logical_model_body(
+    payload: &Value,
+) -> Result<(String, crate::config_v2::V2Strategy, HashMap<String, serde_json::Value>, Vec<crate::config_v2::V2Target>), String> {
     let Some(name) = payload.get("name").and_then(Value::as_str) else {
-        return bad_request("name (string) is required");
+        return Err("name (string) is required".to_string());
     };
     let Some(strategy) = payload
         .get("strategy")
@@ -272,15 +320,15 @@ async fn api_config_v2_logical_models_update(
             _ => None,
         })
     else {
-        return bad_request("strategy must be one of: priority, weighted, usage-aware");
+        return Err("strategy must be one of: priority, weighted, usage-aware".to_string());
     };
     let Some(targets_json) = payload.get("targets").and_then(Value::as_array) else {
-        return bad_request("targets (array) is required");
+        return Err("targets (array) is required".to_string());
     };
     let mut targets = Vec::new();
     for item in targets_json {
         let Some(model) = item.get("model").and_then(Value::as_str) else {
-            return bad_request("each target needs a model (string)");
+            return Err("each target needs a model (string)".to_string());
         };
         targets.push(crate::config_v2::V2Target {
             model: model.trim().to_string(),
@@ -296,11 +344,274 @@ async fn api_config_v2_logical_models_update(
                 .collect::<HashMap<_, _>>()
         })
         .unwrap_or_default();
+    Ok((name.to_string(), strategy, params, targets))
+}
+
+async fn api_config_v2_logical_models_create(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let (name, strategy, params, targets) = match parse_logical_model_body(&payload) {
+        Ok(parsed) => parsed,
+        Err(message) => return bad_request(&message),
+    };
     match app.state.lock() {
-        Ok(mut state) => match state.update_v2_logical_model(name, strategy, params, targets) {
+        Ok(mut state) => match state.create_v2_logical_model(&name, strategy, params, targets) {
             Ok(value) => json_status(StatusCode::OK, value),
             Err(err) => bad_request(&err.to_string()),
         },
+        Err(_) => internal_error("router state lock poisoned"),
+    }
+}
+
+async fn api_config_v2_logical_models_update(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let (name, strategy, params, targets) = match parse_logical_model_body(&payload) {
+        Ok(parsed) => parsed,
+        Err(message) => return bad_request(&message),
+    };
+    match app.state.lock() {
+        Ok(mut state) => match state.update_v2_logical_model(&name, strategy, params, targets) {
+            Ok(value) => json_status(StatusCode::OK, value),
+            Err(err) => bad_request(&err.to_string()),
+        },
+        Err(_) => internal_error("router state lock poisoned"),
+    }
+}
+
+async fn api_config_v2_logical_models_delete(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let Some(name) = payload.get("name").and_then(Value::as_str) else {
+        return bad_request("name (string) is required");
+    };
+    match app.state.lock() {
+        Ok(mut state) => match state.delete_v2_logical_model(name) {
+            Ok(value) => json_status(StatusCode::OK, value),
+            Err(err) => bad_request(&err.to_string()),
+        },
+        Err(_) => internal_error("router state lock poisoned"),
+    }
+}
+
+/// 供应商模型列表：
+/// - 无 `?refresh=1`：返回本地缓存（若有），否则实时拉取并持久化。
+/// - 带 `?refresh=1`：强制实时拉取供应商 `/models` 并持久化到 config/provider-models.json。
+async fn api_config_v2_provider_models(
+    State(app): State<AppState>,
+    Path(name): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let refresh = params.get("refresh").map(|v| v == "1" || v == "true").unwrap_or(false);
+
+    // 1. 未强制刷新时先查本地缓存
+    if !refresh {
+        let cached = crate::config_v2::load_provider_models_file(&app.settings.provider_models_path);
+        if let Some(entry) = cached.providers.get(&name) {
+            if entry.error.is_none() {
+                return json_status(
+                    StatusCode::OK,
+                    json!({
+                        "ok": true,
+                        "provider": name,
+                        "cached": true,
+                        "models": entry.models,
+                        "fetched_at": entry.fetched_at,
+                    }),
+                );
+            }
+        }
+    }
+
+    // 2. 取 provider 信息（base_url + enabled key env_var）
+    let probe = match app.state.lock() {
+        Ok(state) => state.v2_provider_probe(&name),
+        Err(_) => return internal_error("router state lock poisoned"),
+    };
+    let Some((base_url, env_vars)) = probe else {
+        return json_status(
+            StatusCode::NOT_FOUND,
+            json!({
+                "ok": false,
+                "error": format!("unknown v2 provider: {name}"),
+            }),
+        );
+    };
+    if env_vars.is_empty() {
+        return json_status(
+            StatusCode::BAD_REQUEST,
+            json!({ "ok": false, "error": format!("provider {name} has no keys configured") }),
+        );
+    }
+
+    // 3. 逐个 key 尝试拉取 /models
+    let mut last_error: Option<String> = None;
+    let mut models: Option<Vec<String>> = None;
+    for env_var in &env_vars {
+        let key = std::env::var(env_var).ok().filter(|v| !v.is_empty());
+        let Some(key) = key else {
+            last_error = Some(format!("env var {env_var} is not set"));
+            continue;
+        };
+        let url = format!("{}/models", base_url.trim_end_matches('/'));
+        let result = app
+            .client
+            .get(&url)
+            .bearer_auth(key)
+            .send()
+            .await;
+        match result {
+            Ok(response) if response.status().is_success() => {
+                match response.json::<Value>().await {
+                    Ok(value) => {
+                        let list = value
+                            .get("data")
+                            .and_then(Value::as_array)
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|m| {
+                                        m.get("id")
+                                            .and_then(Value::as_str)
+                                            .map(str::to_string)
+                                    })
+                                    .collect::<Vec<String>>()
+                            })
+                            .unwrap_or_default();
+                        if list.is_empty() {
+                            last_error = Some(format!("provider {name} returned empty model list"));
+                        } else {
+                            models = Some(list);
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        last_error = Some(format!("failed to parse /models response: {err}"));
+                    }
+                }
+            }
+            Ok(response) => {
+                let status = response.status().as_u16();
+                let body = response.text().await.unwrap_or_default();
+                let message = serde_json::from_str::<Value>(&body)
+                    .ok()
+                    .and_then(|v| {
+                        v.get("error")
+                            .and_then(|e| e.get("message"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+                    .unwrap_or_else(|| body.chars().take(200).collect());
+                last_error = Some(format!("upstream {status}: {message}"));
+            }
+            Err(err) => {
+                last_error = Some(format!("request failed: {err}"));
+            }
+        }
+    }
+
+    let fetched_at = crate::state_store::now_seconds();
+    // 4. 持久化（成功写 models，失败写 error）
+    let mut file = crate::config_v2::load_provider_models_file(&app.settings.provider_models_path);
+    match models {
+        Some(list) => {
+            let mut list = list;
+            list.sort();
+            list.dedup();
+            file.providers.insert(
+                name.clone(),
+                crate::config_v2::ProviderModelsEntry {
+                    models: list.clone(),
+                    fetched_at: Some(fetched_at),
+                    error: None,
+                },
+            );
+            let _ = crate::config_v2::write_provider_models_file(
+                &app.settings.provider_models_path,
+                &file,
+            );
+            json_status(
+                StatusCode::OK,
+                json!({
+                    "ok": true,
+                    "provider": name,
+                    "cached": false,
+                    "models": list,
+                    "fetched_at": fetched_at,
+                }),
+            )
+        }
+        None => {
+            let error = last_error.unwrap_or_else(|| "unknown error".to_string());
+            file.providers.insert(
+                name.clone(),
+                crate::config_v2::ProviderModelsEntry {
+                    models: Vec::new(),
+                    fetched_at: Some(fetched_at),
+                    error: Some(error.clone()),
+                },
+            );
+            let _ = crate::config_v2::write_provider_models_file(
+                &app.settings.provider_models_path,
+                &file,
+            );
+            json_status(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "ok": false,
+                    "provider": name,
+                    "error": error,
+                }),
+            )
+        }
+    }
+}
+
+/// 新增/更新虚拟模型映射：`{ name, provider, upstream_model }`。
+async fn api_config_v2_virtual_models_upsert(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let Some(name) = payload.get("name").and_then(Value::as_str) else {
+        return bad_request("name (string) is required");
+    };
+    let Some(provider) = payload.get("provider").and_then(Value::as_str) else {
+        return bad_request("provider (string) is required");
+    };
+    let Some(upstream_model) = payload.get("upstream_model").and_then(Value::as_str) else {
+        return bad_request("upstream_model (string) is required");
+    };
+    match app.state.lock() {
+        Ok(mut state) => {
+            match state.upsert_v2_virtual_model(name, provider, upstream_model) {
+                Ok(value) => json_status(StatusCode::OK, value),
+                Err(err) => bad_request(&err.to_string()),
+            }
+        }
+        Err(_) => internal_error("router state lock poisoned"),
+    }
+}
+
+/// 删除虚拟模型映射：`{ name, provider }`。
+async fn api_config_v2_virtual_models_delete(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let Some(name) = payload.get("name").and_then(Value::as_str) else {
+        return bad_request("name (string) is required");
+    };
+    let Some(provider) = payload.get("provider").and_then(Value::as_str) else {
+        return bad_request("provider (string) is required");
+    };
+    match app.state.lock() {
+        Ok(mut state) => {
+            match state.delete_v2_virtual_model_mapping(name, provider) {
+                Ok(value) => json_status(StatusCode::OK, value),
+                Err(err) => bad_request(&err.to_string()),
+            }
+        }
         Err(_) => internal_error("router state lock poisoned"),
     }
 }
@@ -841,14 +1152,7 @@ async fn call_upstream(
     payload: Value,
 ) -> Result<Response, CallError> {
     let retry_policy = alias.retry_policy.clone();
-    let deadline = retry_policy
-        .as_ref()
-        .map(|policy| Instant::now() + Duration::from_secs(policy.max_retry_seconds));
     let mut tried = HashSet::new();
-    let mut last_error: Option<String> = None;
-    let mut last_retriable_status: Option<u16> = None;
-    let mut last_retriable_content: Option<Value> = None;
-    let mut last_retry_after: Option<f64> = None;
 
     loop {
         let selected_key = match select_key_locked(app, &alias, session_id.as_deref(), &tried) {
@@ -858,39 +1162,8 @@ async fn call_upstream(
         let key = match selected_key {
             Ok(key) => key,
             Err(exc) => {
-                if let Some(policy) = retry_policy.as_ref() {
-                    if deadline
-                        .map(|deadline| Instant::now() < deadline)
-                        .unwrap_or(false)
-                    {
-                        let delay = if last_error.is_some() {
-                            2.0
-                        } else {
-                            compute_retry_delay(
-                                policy.retry_delay_seconds,
-                                deadline.unwrap(),
-                                last_retry_after,
-                            )
-                        };
-                        if delay > 0.0 {
-                            tokio::time::sleep(Duration::from_secs_f64(delay)).await;
-                        }
-                        tried.clear();
-                        continue;
-                    }
-                }
-                if let (Some(status), Some(content)) =
-                    (last_retriable_status, last_retriable_content.clone())
-                {
-                    return Ok(json_status(status_code(status), content));
-                }
-                if last_error.is_some() && !tried.is_empty() {
-                    return Ok(upstream_unavailable_response(
-                        &alias,
-                        &tried,
-                        last_error.as_deref().unwrap_or("upstream_error"),
-                    ));
-                }
+                // key 全部不可用/冻结：不空转重试（retry_policy 的退避只对上游可重试状态码生效），
+                // 立即返回 NoAvailable，让上层 for 循环 fallback 到下一个 target。
                 return Err(CallError::NoAvailable(exc));
             }
         };
@@ -901,8 +1174,7 @@ async fn call_upstream(
             Err(message) => return Ok(internal_error(&message)),
         };
         let Some(key_value) = key_value else {
-            record_usage(&app.state, &alias.alias, &key.name, 599, None);
-            last_error = Some("missing_upstream_key".to_string());
+            record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None);
             continue;
         };
 
@@ -919,9 +1191,8 @@ async fn call_upstream(
             .await;
         let response = match response {
             Ok(response) => response,
-            Err(exc) => {
-                record_usage(&app.state, &alias.alias, &key.name, 599, None);
-                last_error = Some(exc.to_string());
+            Err(_) => {
+                record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None);
                 continue;
             }
         };
@@ -947,18 +1218,11 @@ async fn call_upstream(
             record_usage(
                 &app.state,
                 &alias.alias,
-                &key.name,
+                &usage_key_name(&app, &key),
                 status,
                 extract_usage(&content),
             );
             log_upstream_failure(&alias, status, &body_text);
-            last_retriable_status = Some(status);
-            last_retriable_content = Some(content);
-            last_retry_after = parse_retry_after(
-                headers
-                    .get("retry-after")
-                    .and_then(|value| value.to_str().ok()),
-            );
             continue;
         }
 
@@ -973,7 +1237,7 @@ async fn call_upstream(
         record_usage(
             &app.state,
             &alias.alias,
-            &key.name,
+            &usage_key_name(&app, &key),
             status,
             extract_usage(&content),
         );
@@ -1001,8 +1265,6 @@ async fn stream_upstream_route(
             let upstream_payload = prepare_upstream_payload(&payload, &alias);
             let mut tried = HashSet::new();
             let retry_policy = alias.retry_policy.clone();
-            let deadline = retry_policy.as_ref().map(|policy| Instant::now() + Duration::from_secs(policy.max_retry_seconds));
-            let mut last_retry_after: Option<f64> = None;
 
             loop {
                 let selected_key = match select_key_locked(&app, &alias, session_id.as_deref(), &tried) {
@@ -1015,20 +1277,7 @@ async fn stream_upstream_route(
                 let key = match selected_key {
                     Ok(key) => key,
                     Err(_) => {
-                        if let Some(policy) = retry_policy.as_ref() {
-                            if deadline.map(|deadline| Instant::now() < deadline).unwrap_or(false) {
-                                let delay = if last_error.is_some() {
-                                    2.0
-                                } else {
-                                    compute_retry_delay(policy.retry_delay_seconds, deadline.unwrap(), last_retry_after)
-                                };
-                                if delay > 0.0 {
-                                    tokio::time::sleep(Duration::from_secs_f64(delay)).await;
-                                }
-                                tried.clear();
-                                continue;
-                            }
-                        }
+                        // key 全部不可用/冻结：立即退出当前 alias，外层 for 循环 fallback 到下一个 target。
                         break;
                     }
                 };
@@ -1041,8 +1290,7 @@ async fn stream_upstream_route(
                     }
                 };
                 let Some(key_value) = key_value else {
-                    record_usage(&app.state, &alias.alias, &key.name, 599, None);
-                    last_error = Some("missing_upstream_key".to_string());
+                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None);
                     continue;
                 };
                 let response = app
@@ -1056,7 +1304,7 @@ async fn stream_upstream_route(
                 let response = match response {
                     Ok(response) => response,
                     Err(exc) => {
-                        record_usage(&app.state, &alias.alias, &key.name, 599, None);
+                        record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None);
                         last_error = Some(exc.to_string());
                         continue;
                     }
@@ -1067,9 +1315,8 @@ async fn stream_upstream_route(
                     let body_text = response.text().await.unwrap_or_default();
                     freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
                     let usage = extract_usage_from_stream(&body_text).or_else(|| serde_json::from_str::<Value>(&body_text).ok().and_then(|value| extract_usage(&value).cloned()));
-                    record_usage(&app.state, &alias.alias, &key.name, status, usage.as_ref());
+                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref());
                     log_upstream_failure(&alias, status, &body_text);
-                    last_retry_after = parse_retry_after(headers.get("retry-after").and_then(|value| value.to_str().ok()));
                     continue;
                 }
 
@@ -1090,7 +1337,7 @@ async fn stream_upstream_route(
                 let body_text = String::from_utf8_lossy(&body_text).to_string();
                 freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
                 let usage = extract_usage_from_stream(&body_text);
-                record_usage(&app.state, &alias.alias, &key.name, status, usage.as_ref());
+                record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref());
                 log_upstream_failure(&alias, status, &body_text);
                 return;
             }
@@ -1104,20 +1351,6 @@ async fn stream_upstream_route(
         .header(CONTENT_TYPE, "text/event-stream")
         .body(Body::from_stream(stream))
         .unwrap_or_else(|_| internal_error("failed to create streaming response"))
-}
-
-fn compute_retry_delay(base_delay: f64, deadline: Instant, last_retry_after: Option<f64>) -> f64 {
-    let mut delay = base_delay;
-    if let Some(retry_after) = last_retry_after {
-        let remaining = retry_after - crate::state_store::now_seconds();
-        if remaining > delay {
-            delay = remaining;
-        }
-    }
-    let remaining_deadline = deadline
-        .saturating_duration_since(Instant::now())
-        .as_secs_f64();
-    delay.min(remaining_deadline)
 }
 
 fn select_key_locked(
@@ -1159,6 +1392,16 @@ fn freeze_maybe(
 ) {
     if let Ok(mut state) = state.lock() {
         let _ = maybe_freeze_key(&mut state, key, status_code, headers, body_text, settings);
+    }
+}
+
+/// v2 模式下 usage 记录的 key 名带 provider 前缀，避免不同供应商同名 key 合并统计；
+/// 非 v2（旧逻辑）保持原名，避免破坏历史数据兼容。
+fn usage_key_name(app: &AppState, key: &KeyRef) -> String {
+    if app.settings.v2_config_enabled {
+        format!("{}/{}", key.provider, key.name)
+    } else {
+        key.name.clone()
     }
 }
 
@@ -1205,23 +1448,6 @@ fn all_keys_frozen_response(exc: NoAvailableKeyError) -> Response {
         response.headers_mut().insert("retry-after", value);
     }
     response
-}
-
-fn upstream_unavailable_response(
-    alias: &ModelAlias,
-    tried: &HashSet<String>,
-    exc: &str,
-) -> Response {
-    json_status(
-        StatusCode::SERVICE_UNAVAILABLE,
-        json!({
-            "error": {
-                "message": format!("all {} upstream keys failed for {}", tried.len(), alias.alias),
-                "type": "upstream_connect_error",
-                "last_error": exc,
-            }
-        }),
-    )
 }
 
 fn stream_error_event(alias: &str, tried: usize, exc: &str) -> String {

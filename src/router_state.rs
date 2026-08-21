@@ -2,7 +2,7 @@ use crate::config::{
     aliases, default_key_weights, default_provider_base_urls, KeyRef, ModelAlias, Settings,
     DEFAULT_ARK_BASE_URL,
 };
-use crate::config_v2::{self, TargetCandidate, V2Strategy};
+use crate::config_v2::{self, is_provider_scoped_virtual, TargetCandidate, V2Strategy};
 use crate::json_config::{
     ApiKeysStore, CustomKeyEntry, CustomKeyPoolConfig, KeyWeightConfig, KeyWeightsConfigData,
     ModelAliasConfig, ProviderConfig, TokenPrice, TokenPriceConfig,
@@ -277,10 +277,10 @@ impl RouterState {
                     if let Some(key) = alias
                         .keys
                         .iter()
-                        .find(|key| key.name == binding.key_name && key.weight > 0)
+                        .find(|key| key_state_id(key) == binding.key_name && key.weight > 0)
                     {
                         let key = key.clone();
-                        let _ = self.bind(&alias.alias, session_id, &key.name);
+                        let _ = self.bind(&alias.alias, session_id, &key_state_id(&key));
                         return Ok(key);
                     }
                 }
@@ -290,7 +290,7 @@ impl RouterState {
         for key in &alias.keys {
             if key.weight > 0
                 && !excluded.contains(&key.name)
-                && !self.is_frozen(&key.name).unwrap_or(true)
+                && !self.is_frozen(&key_state_id(key)).unwrap_or(true)
             {
                 candidates.push(key.clone());
             }
@@ -311,7 +311,7 @@ impl RouterState {
                     .unwrap_or_else(|| candidates[0].clone())
             });
         if let Some(session_id) = session_id {
-            let _ = self.bind(&alias.alias, session_id, &key.name);
+            let _ = self.bind(&alias.alias, session_id, &key_state_id(&key));
         }
         Ok(key)
     }
@@ -613,8 +613,13 @@ impl RouterState {
     }
 
     pub fn key_secret_snapshot(&mut self) -> anyhow::Result<Value> {
+        let refs = if self.v2.is_some() {
+            self.v2_key_refs()
+        } else {
+            self.all_key_refs()
+        };
         let mut keys = Vec::new();
-        for key in self.all_key_refs() {
+        for key in refs {
             let env_configured = env::var(&key.env_var)
                 .ok()
                 .filter(|value| !value.is_empty())
@@ -958,12 +963,45 @@ impl RouterState {
                 }),
             );
         }
+        let mut virtual_models: serde_json::Map<String, Value> = serde_json::Map::new();
+        let mut vlist: Vec<(String, String, String)> = Vec::new(); // (name, provider, upstream)
+        for (name, mappings) in &cfg.virtual_models {
+            for (provider, upstream) in mappings {
+                vlist.push((name.clone(), provider.clone(), upstream.clone()));
+            }
+        }
+        vlist.sort();
+        for (name, provider, upstream) in vlist {
+            let obj = virtual_models
+                .entry(name)
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .expect("virtual_models entry is object");
+            obj.insert(provider, Value::String(upstream));
+        }
         json!({
             "v2_enabled": true,
             "providers": providers,
             "models": models,
             "logical_models": logical,
+            "virtual_models": virtual_models,
         })
+    }
+
+    /// v2 供应商探测信息：base_url + enabled key 的 env_var 列表（用于拉取 /models）。
+    pub fn v2_provider_probe(&self, name: &str) -> Option<(String, Vec<String>)> {
+        let cfg = self.v2.as_ref()?;
+        let provider = cfg.providers.get(name)?;
+        let mut env_vars: Vec<String> = provider
+            .keys
+            .iter()
+            .filter(|(_, key)| key.enabled)
+            .map(|(_, key)| key.env_var.clone())
+            .collect();
+        if env_vars.is_empty() {
+            env_vars = provider.keys.values().map(|key| key.env_var.clone()).collect();
+        }
+        Some((provider.base_url.clone(), env_vars))
     }
 
     /// 编辑 v2 供应商：改名 / base_url / keys（新增、删除、启用停用）。
@@ -1011,6 +1049,38 @@ impl RouterState {
         Ok(self.v2_status())
     }
 
+    /// 新增 v2 供应商：name / base_url / keys（可先不填 key，创建后再通过编辑补 key）。
+    /// 新供应商不引用任何物理模型，无需同步 models.json / logical-models.json，写回后热加载。
+    pub fn create_v2_provider(
+        &mut self,
+        name: &str,
+        base_url: &str,
+        keys: HashMap<String, config_v2::V2Key>,
+    ) -> anyhow::Result<Value> {
+        let name = name.trim();
+        if name.is_empty() {
+            anyhow::bail!("provider name must not be empty");
+        }
+        if base_url.trim().is_empty() {
+            anyhow::bail!("base_url must not be empty");
+        }
+        let mut providers = config_v2::load_providers_file(config_v2::V2_PROVIDERS_PATH)?;
+        if providers.providers.contains_key(name) {
+            anyhow::bail!("provider {name} already exists");
+        }
+        providers.providers.insert(
+            name.to_string(),
+            config_v2::V2Provider {
+                base_url: base_url.trim().to_string(),
+                retry: None,
+                keys,
+            },
+        );
+        config_v2::write_providers_file(config_v2::V2_PROVIDERS_PATH, &providers)?;
+        self.reload_v2();
+        Ok(self.v2_status())
+    }
+
     /// 编辑 v2 逻辑模型：路由策略 + 目标（物理模型或嵌套逻辑模型）。
     /// 写回 `logical-models.json` 后热加载并返回最新视图。
     pub fn update_v2_logical_model(
@@ -1031,16 +1101,7 @@ impl RouterState {
         if !cfg.logical_models.contains_key(name) {
             anyhow::bail!("logical model {name} not found");
         }
-        for target in &targets {
-            let ok = cfg.models.contains_key(&target.model)
-                || (cfg.logical_models.contains_key(&target.model) && target.model != name);
-            if !ok {
-                anyhow::bail!(
-                    "target {}: unknown physical model or logical model (or self-reference)",
-                    target.model
-                );
-            }
-        }
+        Self::validate_targets(&cfg, name, &targets)?;
         let mut logical =
             config_v2::load_logical_models_file(config_v2::V2_LOGICAL_MODELS_PATH)?;
         let lm = logical
@@ -1054,6 +1115,154 @@ impl RouterState {
             config_v2::V2_LOGICAL_MODELS_PATH,
             &logical,
         )?;
+        self.reload_v2();
+        Ok(self.v2_status())
+    }
+
+    /// 新增模型池（逻辑模型）：名字不能与物理模型 / 虚拟模型 / 已有逻辑模型冲突。
+    pub fn create_v2_logical_model(
+        &mut self,
+        name: &str,
+        strategy: config_v2::V2Strategy,
+        params: HashMap<String, serde_json::Value>,
+        targets: Vec<config_v2::V2Target>,
+    ) -> anyhow::Result<Value> {
+        let name = name.trim();
+        if name.is_empty() {
+            anyhow::bail!("logical model name must not be empty");
+        }
+        if targets.is_empty() {
+            anyhow::bail!("route must have at least one target");
+        }
+        let cfg = config_v2::load_v2_config()?;
+        if cfg.logical_models.contains_key(name) {
+            anyhow::bail!("logical model {name} already exists");
+        }
+        if cfg.models.contains_key(name) {
+            anyhow::bail!("logical model name conflicts with physical model id: {name}");
+        }
+        if cfg.virtual_models.contains_key(name) {
+            anyhow::bail!("logical model name conflicts with virtual model name: {name}");
+        }
+        Self::validate_targets(&cfg, name, &targets)?;
+        let mut logical =
+            config_v2::load_logical_models_file(config_v2::V2_LOGICAL_MODELS_PATH)?;
+        logical.logical_models.insert(
+            name.to_string(),
+            config_v2::V2LogicalModel {
+                params,
+                route: config_v2::V2Route { strategy, targets },
+            },
+        );
+        config_v2::write_logical_models_file(
+            config_v2::V2_LOGICAL_MODELS_PATH,
+            &logical,
+        )?;
+        self.reload_v2();
+        Ok(self.v2_status())
+    }
+
+    /// 删除模型池（逻辑模型）：同时从其他模型池的 targets 移除对该池的引用，
+    /// 避免 validate 因悬空引用失败。
+    pub fn delete_v2_logical_model(&mut self, name: &str) -> anyhow::Result<Value> {
+        let mut logical =
+            config_v2::load_logical_models_file(config_v2::V2_LOGICAL_MODELS_PATH)?;
+        if !logical.logical_models.contains_key(name) {
+            anyhow::bail!("logical model {name} not found");
+        }
+        logical.logical_models.remove(name);
+        for lm in logical.logical_models.values_mut() {
+            lm.route.targets.retain(|t| t.model != name);
+        }
+        config_v2::write_logical_models_file(
+            config_v2::V2_LOGICAL_MODELS_PATH,
+            &logical,
+        )?;
+        self.reload_v2();
+        Ok(self.v2_status())
+    }
+
+    /// 校验 targets 引用（物理模型 / 虚拟模型 / 其他逻辑模型，不含自身）。
+    fn validate_targets(
+        cfg: &config_v2::V2Config,
+        name: &str,
+        targets: &[config_v2::V2Target],
+    ) -> anyhow::Result<()> {
+        for target in targets {
+            let ok = cfg.models.contains_key(&target.model)
+                || (cfg.logical_models.contains_key(&target.model) && target.model != name)
+                || cfg.virtual_models.contains_key(&target.model)
+                || is_provider_scoped_virtual(cfg, &target.model);
+            if !ok {
+                anyhow::bail!(
+                    "target {}: unknown physical model, virtual model or logical model (or self-reference)",
+                    target.model
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// 新增/更新虚拟模型映射：`virtual_models[name][provider] = upstream_model`。
+    /// 同名虚拟模型在多个供应商下可分别映射实际模型名。
+    pub fn upsert_v2_virtual_model(
+        &mut self,
+        name: &str,
+        provider: &str,
+        upstream_model: &str,
+    ) -> anyhow::Result<Value> {
+        let name = name.trim();
+        let provider = provider.trim();
+        let upstream = upstream_model.trim();
+        if name.is_empty() {
+            anyhow::bail!("virtual model name must not be empty");
+        }
+        if !provider.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            anyhow::bail!("invalid provider name: {provider}");
+        }
+        if upstream.is_empty() {
+            anyhow::bail!("upstream model must not be empty");
+        }
+        // 校验供应商存在
+        let cfg = config_v2::load_v2_config()?;
+        if !cfg.providers.contains_key(provider) {
+            anyhow::bail!("unknown provider: {provider}");
+        }
+        // 校验不能与物理模型 id / 逻辑模型名冲突
+        if cfg.models.contains_key(name) {
+            anyhow::bail!("virtual model name conflicts with physical model id: {name}");
+        }
+        if cfg.logical_models.contains_key(name) {
+            anyhow::bail!("virtual model name conflicts with logical model name: {name}");
+        }
+
+        let mut file = config_v2::load_virtual_models_file(config_v2::V2_VIRTUAL_MODELS_PATH);
+        file.virtual_models
+            .entry(name.to_string())
+            .or_default()
+            .insert(provider.to_string(), upstream.to_string());
+        config_v2::write_virtual_models_file(config_v2::V2_VIRTUAL_MODELS_PATH, &file)?;
+        self.reload_v2();
+        Ok(self.v2_status())
+    }
+
+    /// 删除虚拟模型映射。删掉某个供应商的映射后若有其他供应商映射则保留虚拟名。
+    pub fn delete_v2_virtual_model_mapping(
+        &mut self,
+        name: &str,
+        provider: &str,
+    ) -> anyhow::Result<Value> {
+        let mut file = config_v2::load_virtual_models_file(config_v2::V2_VIRTUAL_MODELS_PATH);
+        let Some(mappings) = file.virtual_models.get_mut(name) else {
+            anyhow::bail!("virtual model {name} not found");
+        };
+        if mappings.remove(provider).is_none() {
+            anyhow::bail!("virtual model {name} has no mapping for provider {provider}");
+        }
+        if mappings.is_empty() {
+            file.virtual_models.remove(name);
+        }
+        config_v2::write_virtual_models_file(config_v2::V2_VIRTUAL_MODELS_PATH, &file)?;
         self.reload_v2();
         Ok(self.v2_status())
     }
@@ -1194,6 +1403,28 @@ impl RouterState {
         let mut values = refs.into_values().collect::<Vec<_>>();
         values.sort_by_key(|key| key.name.clone());
         values
+    }
+
+    /// v2 模式下的 key 视图：从 providers-v2.json 构建，key 名带 provider 前缀
+    /// （`provider/key`），避免不同供应商同名 key 在 keys/usage 视图中合并。
+    fn v2_key_refs(&self) -> Vec<KeyRef> {
+        let mut refs = Vec::new();
+        if let Some(cfg) = &self.v2 {
+            for (provider_name, provider) in &cfg.providers {
+                for (key_name, key) in &provider.keys {
+                    refs.push(KeyRef {
+                        name: format!("{provider_name}/{key_name}"),
+                        env_var: key.env_var.clone(),
+                        weight: key.weight,
+                        provider: provider_name.clone(),
+                        billing_type: key.billing_type.clone(),
+                        persist: key.persist,
+                    });
+                }
+            }
+        }
+        refs.sort_by_key(|key| key.name.clone());
+        refs
     }
 
     pub fn known_key_names(&mut self) -> HashSet<String> {
@@ -1566,6 +1797,16 @@ fn parse_reset_timestamp(text: &str) -> Option<f64> {
         .map(|dt| dt.timestamp() as f64)
 }
 
+/// key 状态唯一标识：跨供应商同名 key 用 `provider/name` 区分，
+/// 避免不同供应商同名 key 在 frozen / binding 中互相影响。
+fn key_state_id(key: &KeyRef) -> String {
+    if key.provider.is_empty() {
+        key.name.clone()
+    } else {
+        format!("{}/{}", key.provider, key.name)
+    }
+}
+
 pub fn maybe_freeze_key(
     state: &mut RouterState,
     key: &KeyRef,
@@ -1578,12 +1819,12 @@ pub fn maybe_freeze_key(
         return Ok(());
     }
     if let Some((until, reason)) = parse_quota_reset(body_text, settings) {
-        state.freeze(&key.name, until, reason)?;
+        state.freeze(&key_state_id(key), until, reason)?;
         return Ok(());
     }
     if matches!(status_code, 401 | 403) {
         if let Some((until, reason)) = parse_auth_invalid(body_text, settings) {
-            state.freeze(&key.name, until, reason)?;
+            state.freeze(&key_state_id(key), until, reason)?;
             return Ok(());
         }
     }
@@ -1593,7 +1834,7 @@ pub fn maybe_freeze_key(
                 .get("retry-after")
                 .and_then(|value| value.to_str().ok()),
         ) {
-            state.freeze(&key.name, until, "retry_after")?;
+            state.freeze(&key_state_id(key), until, "retry_after")?;
         }
     }
     Ok(())
@@ -1652,6 +1893,7 @@ mod tests {
             token_price_config_path: ":memory:".to_string(),
             model_alias_config_path: ":memory:".to_string(),
             search_providers_path: ":memory:".to_string(),
+            provider_models_path: ":memory:".to_string(),
             auth_invalid_freeze_seconds: 86400.0,
             // router_state 测试覆盖旧逻辑；v2 行为由 config_v2 模块测试覆盖。
             v2_config_enabled: false,

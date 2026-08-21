@@ -19,6 +19,7 @@ use std::path::Path;
 pub const V2_PROVIDERS_PATH: &str = "config/providers-v2.json";
 pub const V2_MODELS_PATH: &str = "config/models.json";
 pub const V2_LOGICAL_MODELS_PATH: &str = "config/logical-models.json";
+pub const V2_VIRTUAL_MODELS_PATH: &str = "config/virtual-models.json";
 
 // ---------------------------------------------------------------------------
 // 数据结构
@@ -90,6 +91,20 @@ pub struct V2Family {
     pub display_name: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ProviderModelsFile {
+    pub providers: HashMap<String, ProviderModelsEntry>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProviderModelsEntry {
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub fetched_at: Option<f64>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct V2ModelsFile {
     #[serde(default)]
@@ -142,21 +157,36 @@ pub struct V2LogicalModelsFile {
     pub logical_models: HashMap<String, V2LogicalModel>,
 }
 
+/// 虚拟模型文件：虚拟名（全局抽象名）→ { 供应商 → 实际上游模型名 }。
+/// 同一虚拟名可跨供应商映射，便于模型池统一不同供应商的同一模型命名。
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct V2VirtualModelsFile {
+    pub virtual_models: HashMap<String, HashMap<String, String>>,
+}
+
 /// 聚合后的 v2 配置视图。
 #[derive(Clone, Debug, Default)]
 pub struct V2Config {
     pub providers: HashMap<String, V2Provider>,
     pub models: HashMap<String, V2PhysicalModel>,
     pub logical_models: HashMap<String, V2LogicalModel>,
+    /// 虚拟名 → { 供应商 → 上游模型名 }
+    pub virtual_models: HashMap<String, HashMap<String, String>>,
 }
 
 // ---------------------------------------------------------------------------
 // 加载
 // ---------------------------------------------------------------------------
 
-/// 从三个 v2 配置文件加载聚合配置。任一文件缺失/解析失败返回 Err。
+/// 从四个 v2 配置文件加载聚合配置。任一核心文件缺失/解析失败返回 Err；
+/// 虚拟模型文件缺失时视为空。
 pub fn load_v2_config() -> anyhow::Result<V2Config> {
-    load_v2_config_from(&V2_PROVIDERS_PATH, &V2_MODELS_PATH, &V2_LOGICAL_MODELS_PATH)
+    load_v2_config_from(
+        &V2_PROVIDERS_PATH,
+        &V2_MODELS_PATH,
+        &V2_LOGICAL_MODELS_PATH,
+        &V2_VIRTUAL_MODELS_PATH,
+    )
 }
 
 /// 供测试注入路径的加载入口。
@@ -164,15 +194,21 @@ pub fn load_v2_config_from(
     providers_path: &str,
     models_path: &str,
     logical_models_path: &str,
+    virtual_models_path: &str,
 ) -> anyhow::Result<V2Config> {
     let providers: V2ProviderFile = read_json(providers_path)?;
     let models: V2ModelsFile = read_json(models_path)?;
     let logical: V2LogicalModelsFile = read_json(logical_models_path)?;
+    let virtual_file: V2VirtualModelsFile = match read_json(virtual_models_path) {
+        Ok(file) => file,
+        Err(_) => V2VirtualModelsFile::default(),
+    };
 
     let cfg = V2Config {
         providers: providers.providers,
         models: models.models,
         logical_models: logical.logical_models,
+        virtual_models: virtual_file.virtual_models,
     };
     validate(&cfg)?;
     Ok(cfg)
@@ -208,6 +244,34 @@ pub fn load_logical_models_file(path: &str) -> anyhow::Result<V2LogicalModelsFil
 }
 
 pub fn write_logical_models_file(path: &str, file: &V2LogicalModelsFile) -> anyhow::Result<()> {
+    let raw = serde_json::to_string_pretty(file)?;
+    fs::write(Path::new(path), format!("{raw}\n"))?;
+    Ok(())
+}
+
+/// 读取虚拟模型文件（缺失时返回空文件）。
+pub fn load_virtual_models_file(path: &str) -> V2VirtualModelsFile {
+    match read_json::<V2VirtualModelsFile>(path) {
+        Ok(file) => file,
+        Err(_) => V2VirtualModelsFile::default(),
+    }
+}
+
+pub fn write_virtual_models_file(path: &str, file: &V2VirtualModelsFile) -> anyhow::Result<()> {
+    let raw = serde_json::to_string_pretty(file)?;
+    fs::write(Path::new(path), format!("{raw}\n"))?;
+    Ok(())
+}
+
+/// 读取供应商模型列表缓存（不存在或损坏时返回空文件）。
+pub fn load_provider_models_file(path: &str) -> ProviderModelsFile {
+    match read_json::<ProviderModelsFile>(path) {
+        Ok(file) => file,
+        Err(_) => ProviderModelsFile::default(),
+    }
+}
+
+pub fn write_provider_models_file(path: &str, file: &ProviderModelsFile) -> anyhow::Result<()> {
     let raw = serde_json::to_string_pretty(file)?;
     fs::write(Path::new(path), format!("{raw}\n"))?;
     Ok(())
@@ -292,7 +356,9 @@ pub fn validate(cfg: &V2Config) -> anyhow::Result<()> {
             let known_physical = cfg.models.contains_key(&target.model);
             let known_logical =
                 cfg.logical_models.contains_key(&target.model) && target.model.as_str() != alias.as_str();
-            if !known_physical && !known_logical {
+            let known_virtual = cfg.virtual_models.contains_key(&target.model)
+                || is_provider_scoped_virtual(cfg, &target.model);
+            if !known_physical && !known_logical && !known_virtual {
                 return Err(anyhow!(
                     "logical model {alias}: target references unknown physical model or logical model '{}'",
                     target.model
@@ -301,6 +367,17 @@ pub fn validate(cfg: &V2Config) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// 判断 `provider/virtual` 形式（限定某供应商下的虚拟模型）是否有效。
+pub fn is_provider_scoped_virtual(cfg: &V2Config, target: &str) -> bool {
+    let Some((provider, rest)) = target.split_once('/') else {
+        return false;
+    };
+    cfg.providers.contains_key(provider)
+        && cfg.virtual_models
+            .get(rest)
+            .is_some_and(|m| m.contains_key(provider))
 }
 
 // ---------------------------------------------------------------------------
@@ -442,12 +519,105 @@ fn resolve_targets_inner(
             {
                 candidates.push(candidate);
             }
+        } else if let Some(virtual_cands) = virtual_candidates(cfg, alias, &target.model, target.weight, &lm.route.strategy) {
+            candidates.extend(virtual_cands);
         } else if let Some(nested) = resolve_targets_inner(cfg, &target.model, visited) {
             candidates.extend(nested);
         }
     }
     visited.remove(alias);
     Some(candidates)
+}
+
+/// 虚拟模型展开：
+/// - `target` 为纯虚拟名 → 展开所有映射供应商的物理候选；
+/// - `target` 为 `provider/virtual` → 仅展开该供应商下的该虚拟模型。
+/// 返回 None 表示不是虚拟模型引用。
+fn virtual_candidates(
+    cfg: &V2Config,
+    alias: &str,
+    target: &str,
+    weight: Option<i64>,
+    strategy: &V2Strategy,
+) -> Option<Vec<TargetCandidate>> {
+    let mut out = Vec::new();
+    if let Some(mappings) = cfg.virtual_models.get(target) {
+        // 纯虚拟名：展开所有供应商映射
+        let mut providers: Vec<&String> = mappings.keys().collect();
+        providers.sort();
+        for provider in providers {
+            if let Some(upstream) = mappings.get(provider) {
+                if let Some(candidate) =
+                    virtual_candidate(cfg, alias, provider, upstream, weight, strategy)
+                {
+                    out.push(candidate);
+                }
+            }
+        }
+        return Some(out);
+    }
+    // provider/virtual 形式
+    if let Some((provider, rest)) = target.split_once('/') {
+        if let Some(upstream) = cfg
+            .virtual_models
+            .get(rest)
+            .and_then(|m| m.get(provider))
+        {
+            if let Some(candidate) = virtual_candidate(cfg, alias, provider, upstream, weight, strategy) {
+                out.push(candidate);
+            }
+            return Some(out);
+        }
+    }
+    None
+}
+
+/// 虚拟模型 → 单个物理候选（base_url/keys/retry 来自所属供应商）。
+fn virtual_candidate(
+    cfg: &V2Config,
+    alias: &str,
+    provider_name: &str,
+    upstream_model: &str,
+    weight: Option<i64>,
+    strategy: &V2Strategy,
+) -> Option<TargetCandidate> {
+    let prov = cfg.providers.get(provider_name)?;
+
+    let keys: Vec<KeyRef> = prov
+        .keys
+        .iter()
+        .filter(|(_, key)| key.enabled)
+        .map(|(key_name, key)| KeyRef {
+            name: key_name.clone(),
+            env_var: key.env_var.clone(),
+            weight: key.weight,
+            provider: provider_name.to_string(),
+            billing_type: key.billing_type.clone(),
+            persist: key.persist,
+        })
+        .collect();
+    if keys.is_empty() {
+        return None;
+    }
+
+    let retry = prov.retry.as_ref().map(|r| {
+        RetryPolicy::new(r.max_retry_seconds, r.retry_delay_seconds, &r.retry_on_status)
+    });
+
+    let model = ModelAlias::new(
+        alias,
+        &format!("openai/{}", upstream_model),
+        &prov.base_url,
+        keys,
+        retry,
+    )
+    .with_params(lm_params_default(cfg, alias));
+
+    Some(TargetCandidate {
+        model,
+        weight,
+        strategy: strategy.clone(),
+    })
 }
 
 /// 单个物理模型候选（enabled 已过滤，params 为逻辑默认 + 物理覆写合并）。
@@ -591,7 +761,8 @@ mod tests {
         let p = write_temp(&dir, "providers.json", PROVIDERS);
         let m = write_temp(&dir, "models.json", MODELS);
         let l = write_temp(&dir, "logical.json", LOGICAL);
-        load_v2_config_from(&p, &m, &l).unwrap()
+        let v = write_temp(&dir, "virtual.json", r#"{"virtual_models":{}}"#);
+        load_v2_config_from(&p, &m, &l, &v).unwrap()
     }
 
     #[test]
@@ -648,7 +819,7 @@ mod tests {
             "logical.json",
             r#"{"logical_models":{"x":{"route":{"targets":[{"model":"nope/missing"}]}}}}"#,
         );
-        let result = load_v2_config_from(&p, &m, &l);
+        let result = load_v2_config_from(&p, &m, &l, "/nonexistent/virtual-models.json");
         assert!(result.is_err(), "引用不存在的物理模型应报错");
         assert!(result.unwrap_err().to_string().contains("unknown physical model"));
     }
@@ -660,7 +831,7 @@ mod tests {
         let p = dir.join("providers.json").to_string_lossy().to_string();
         let m = dir.join("models.json").to_string_lossy().to_string();
         let l = dir.join("logical.json").to_string_lossy().to_string();
-        let result = load_v2_config_from(&p, &m, &l);
+        let result = load_v2_config_from(&p, &m, &l, "/nonexistent/virtual-models.json");
         assert!(result.is_err(), "文件缺失应返回 Err");
     }
 
@@ -794,7 +965,7 @@ mod tests {
               }
             }"#,
         );
-        let cfg = load_v2_config_from(&p, &m, &l).unwrap();
+        let cfg = load_v2_config_from(&p, &m, &l, "/nonexistent/virtual-models.json").unwrap();
         let candidates = resolve_targets(&cfg, "alias-b").unwrap();
         assert_eq!(candidates.len(), 2, "alias-b 应展开 = alias-a 的 official + ark 物理候选");
         assert_eq!(candidates[0].model.base_url, "https://api.deepseek.com");
@@ -817,10 +988,83 @@ mod tests {
               }
             }"#,
         );
-        let cfg = load_v2_config_from(&p, &m, &l).unwrap();
+        let cfg = load_v2_config_from(&p, &m, &l, "/nonexistent/virtual-models.json").unwrap();
         // 纯环：resolve 应能返回（空候选），不无限递归
         let candidates = resolve_targets(&cfg, "alias-a").unwrap();
         assert!(candidates.is_empty(), "纯环无物理候选");
+    }
+
+    #[test]
+    fn resolve_virtual_model_expands_all_providers() {
+        let dir = std::env::temp_dir().join(format!("lpr-v2-test-{}-vm", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let p = write_temp(&dir, "providers.json", PROVIDERS);
+        let m = write_temp(
+            &dir,
+            "models.json",
+            r#"{"families":{},"models":{}}"#,
+        );
+        let l = write_temp(
+            &dir,
+            "logical.json",
+            r#"{
+              "logical_models": {
+                "flash-pool": { "route": { "strategy": "priority", "targets": [ { "model": "deepseek-v4-flash" } ] } }
+              }
+            }"#,
+        );
+        let v = write_temp(
+            &dir,
+            "virtual.json",
+            r#"{
+              "virtual_models": {
+                "deepseek-v4-flash": {
+                  "ark": "deepseek-v4-flash-ga-260731",
+                  "deepseek-official": "deepseek-v4-flash"
+                }
+              }
+            }"#,
+        );
+        let cfg = load_v2_config_from(&p, &m, &l, &v).unwrap();
+        let candidates = resolve_targets(&cfg, "flash-pool").unwrap();
+        assert_eq!(candidates.len(), 2, "虚拟名应展开为两个供应商候选");
+        let base_urls: Vec<&str> = candidates.iter().map(|c| c.model.base_url.as_str()).collect();
+        assert!(base_urls.contains(&"https://ark.cn-beijing.volces.com/api/coding/v3"));
+        assert!(base_urls.contains(&"https://api.deepseek.com"));
+        // 虚拟名不应出现在物理模型表，展开时按 provider 的 key 生成
+        let ark_candidate = candidates.iter().find(|c| c.model.base_url.contains("volces")).unwrap();
+        assert_eq!(ark_candidate.model.upstream_model(), "deepseek-v4-flash-ga-260731");
+    }
+
+    #[test]
+    fn validate_accepts_virtual_model_targets() {
+        let dir = std::env::temp_dir().join(format!("lpr-v2-test-{}-vmval", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let p = write_temp(&dir, "providers.json", PROVIDERS);
+        let m = write_temp(&dir, "models.json", r#"{"families":{},"models":{}}"#);
+        let l = write_temp(
+            &dir,
+            "logical.json",
+            r#"{
+              "logical_models": {
+                "pool": { "route": { "strategy": "priority", "targets": [ { "model": "deepseek-v4-flash" }, { "model": "ark/deepseek-v4-flash" } ] } }
+              }
+            }"#,
+        );
+        let v = write_temp(
+            &dir,
+            "virtual.json",
+            r#"{
+              "virtual_models": {
+                "deepseek-v4-flash": {
+                  "ark": "deepseek-v4-flash-ga-260731"
+                }
+              }
+            }"#,
+        );
+        let cfg = load_v2_config_from(&p, &m, &l, &v).unwrap();
+        // validate 应通过（纯虚拟名 + provider/virtual 形式都合法）
+        assert!(cfg.logical_models.contains_key("pool"));
     }
 
     #[test]

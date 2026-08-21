@@ -85,7 +85,11 @@ impl KeyRef {
 
 #[derive(Clone, Debug)]
 pub struct RetryPolicy {
+    // max_retry_seconds / retry_delay_seconds 保留用于配置解析与展示；
+    // 运行时退避重试已改为：key 全冻结时直接 fallback，不做长时间空转。
+    #[allow(dead_code)]
     pub max_retry_seconds: u64,
+    #[allow(dead_code)]
     pub retry_delay_seconds: f64,
     pub retry_on_status: Vec<u16>,
 }
@@ -190,6 +194,8 @@ pub struct Settings {
     pub token_price_config_path: String,
     pub model_alias_config_path: String,
     pub search_providers_path: String,
+    /// 供应商模型列表持久化路径（设置界面“查看供应商详情”缓存）。
+    pub provider_models_path: String,
     pub auth_invalid_freeze_seconds: f64,
     /// v2 分层配置开关（默认启用；设 0 回退旧硬编码 aliases 逻辑）。
     pub v2_config_enabled: bool,
@@ -253,6 +259,10 @@ pub fn load_settings() -> anyhow::Result<Settings> {
         search_providers_path: env_or(
             "LLM_PROVIDER_ROUTER_SEARCH_PROVIDERS_PATH",
             DEFAULT_SEARCH_PROVIDERS_PATH,
+        ),
+        provider_models_path: env_or(
+            "LLM_PROVIDER_ROUTER_PROVIDER_MODELS_PATH",
+            "config/provider-models.json",
         ),
         auth_invalid_freeze_seconds: env_or(
             "LLM_PROVIDER_ROUTER_AUTH_INVALID_FREEZE_SECONDS",

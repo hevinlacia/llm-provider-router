@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
-import type { Bucket, CostBucket, CustomModelAlias, FilterState, KeyConfig, ModelAliasConfig, ProviderConfig, StateResponse, TokenPriceConfig, UsageSnapshot, V2LogicalModel, V2ProviderStatus, V2Status, WeightConfig } from './types';
+import type { Bucket, CostBucket, CustomModelAlias, FilterState, KeyConfig, ModelAliasConfig, ProviderConfig, ProviderModelsResponse, StateResponse, TokenPriceConfig, UsageSnapshot, V2LogicalModel, V2ProviderStatus, V2Status, WeightConfig } from './types';
 import './styles.css';
 
 const number = new Intl.NumberFormat();
@@ -25,10 +25,10 @@ function UsageTable({ data, tokenFirst = false }: { data?: Record<string, Bucket
   return <div className="table-wrap"><table><thead><tr><th>Name</th><th>Requests</th><th>Errors</th><th>Input Uncached</th><th>Input Cached</th><th>Cache Hit</th><th>Output</th><th>Total</th></tr></thead><tbody>{rows.map(([name, item]) => <tr key={name}><td>{name}</td><td>{number.format(item.requests)}</td><td>{number.format(item.errors)}</td><td>{number.format(item.prompt_uncached_tokens ?? Math.max(0, item.prompt_tokens - item.cached_tokens))}</td><td>{number.format(item.cached_tokens)}</td><td>{formatPercent(item.cache_hit_rate)}</td><td>{number.format(item.completion_tokens)}</td><td>{number.format(item.total_tokens)}</td></tr>)}</tbody></table></div>;
 }
 
-function TokenTable({ data }: { data?: Record<string, Bucket> }) {
+function TokenTable({ data, providers }: { data?: Record<string, Bucket>; providers?: Record<string, string> }) {
   const rows = Object.entries(data ?? {}).sort((left, right) => (right[1].total_tokens ?? 0) - (left[1].total_tokens ?? 0));
   if (!rows.length) return <p className="muted">No token usage today.</p>;
-  return <div className="table-wrap"><table><thead><tr><th>Key</th><th>Input Uncached</th><th>Input Cached</th><th>Cache Hit</th><th>Output</th><th>Total Tokens</th><th>Requests</th></tr></thead><tbody>{rows.map(([name, item]) => <tr key={name}><td>{name}</td><td>{number.format(item.prompt_uncached_tokens ?? Math.max(0, item.prompt_tokens - item.cached_tokens))}</td><td>{number.format(item.cached_tokens)}</td><td>{formatPercent(item.cache_hit_rate)}</td><td>{number.format(item.completion_tokens)}</td><td>{number.format(item.total_tokens)}</td><td>{number.format(item.requests)}</td></tr>)}</tbody></table></div>;
+  return <div className="table-wrap"><table><thead><tr><th>Key</th><th>Input Uncached</th><th>Input Cached</th><th>Cache Hit</th><th>Output</th><th>Total Tokens</th><th>Requests</th></tr></thead><tbody>{rows.map(([name, item]) => { const provider = providers?.[name]; const slash = name.indexOf('/'); const displayName = slash > 0 ? name.slice(slash + 1) : name; const displayProvider = provider ?? (slash > 0 ? name.slice(0, slash) : undefined); return <tr key={name}><td>{displayName}{displayProvider ? <div className="muted small-text">{displayProvider}</div> : null}</td><td>{number.format(item.prompt_uncached_tokens ?? Math.max(0, item.prompt_tokens - item.cached_tokens))}</td><td>{number.format(item.cached_tokens)}</td><td>{formatPercent(item.cache_hit_rate)}</td><td>{number.format(item.completion_tokens)}</td><td>{number.format(item.total_tokens)}</td><td>{number.format(item.requests)}</td></tr>; })}</tbody></table></div>;
 }
 
 
@@ -42,13 +42,22 @@ function HomePage() {
   const [filters, setFilters] = useState<FilterState>({ period: 'all', start: '', end: '' });
   const [state, setState] = useState<StateResponse | null>(null);
   const [today, setToday] = useState<UsageSnapshot | null>(null);
+  const [keyConfig, setKeyConfig] = useState<KeyConfig | null>(null);
   const [error, setError] = useState('');
+
+  // key name -> provider (from /api/config/keys), used to label keys in tables.
+  const keyProviders = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const key of keyConfig?.keys ?? []) map[key.name] = key.provider;
+    return map;
+  }, [keyConfig]);
 
   const loadData = useCallback(async () => {
     try {
-      const [stateData, todayData] = await Promise.all([api.state(filters), api.usage({ period: 'today' })]);
+      const [stateData, todayData, keyData] = await Promise.all([api.state(filters), api.usage({ period: 'today' }), api.keys()]);
       setState(stateData);
       setToday(todayData);
+      setKeyConfig(keyData);
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -80,7 +89,7 @@ function HomePage() {
   return <section className="page active"><header><div><h1>Dashboard</h1><div className="muted">{usage ? `Uptime ${number.format(usage.uptime_seconds)}s · ${state?.bindings ?? 0} active bindings · period ${usage.range.period}` : 'Loading usage metrics...'}</div>{error && <div className="error">{error}</div>}</div><div className="header-actions"><button className="secondary" onClick={() => void loadData()}>Refresh</button><button onClick={() => void resetUsage()}>Reset Usage</button></div></header>
     <section className="toolbar"><div className="field"><label>Range</label><select value={filters.period} onChange={(event) => setFilters({ ...filters, period: event.target.value })}><option value="all">All</option><option value="today">Today</option><option value="day">Last 24h</option><option value="month">This Month</option></select></div><div className="field"><label>Start</label><input type="date" value={filters.start} onChange={(event) => setFilters({ ...filters, start: event.target.value })} /></div><div className="field"><label>End</label><input type="date" value={filters.end} onChange={(event) => setFilters({ ...filters, end: event.target.value })} /></div><button className="secondary" onClick={() => setFilters({ period: 'all', start: '', end: '' })}>Clear Range</button></section>
     <section className="grid">{card('Requests', total?.requests ?? 0)}{card('Errors', total?.errors ?? 0)}{card('Input Uncached', total?.prompt_uncached_tokens ?? Math.max(0, (total?.prompt_tokens ?? 0) - (total?.cached_tokens ?? 0)))}{card('Input Cached', total?.cached_tokens ?? 0)}{card('Cache Hit', formatPercent(total?.cache_hit_rate))}{card('Output Tokens', total?.completion_tokens ?? 0)}{card('Total Tokens', total?.total_tokens ?? 0)}{card('Total Cost', formatMoney(usage?.total_cost?.total_cost))}</section>
-    <section className="card"><div className="section-title"><h2>Today by Key</h2><span className="muted">{today ? `${number.format(today.total.total_tokens)} total tokens today` : ''}</span></div><TokenTable data={today?.by_key} /></section>
+    <section className="card"><div className="section-title"><h2>Today by Key</h2><span className="muted">{today ? `${number.format(today.total.total_tokens)} total tokens today` : ''}</span></div><TokenTable data={today?.by_key} providers={keyProviders} /></section>
     <section className="card"><h2>Daily Requests</h2><UsageTable data={usage?.by_day} /></section>
     <section className="card"><h2>Monthly Requests</h2><UsageTable data={usage?.by_month} /></section>
     <section className="card"><div className="section-title"><h2>Cost by Model</h2><span className="muted">{usage?.total_cost ? `${formatMoney(usage.total_cost.total_cost)} total` : ''}</span></div><CostTable data={usage?.by_model_cost} /></section>
@@ -99,9 +108,10 @@ type ProviderDraft = {
   keys: Record<string, { env_var: string; weight: number; billing_type: string; enabled: boolean }>;
 };
 
-function ProviderEditor({ providerName, provider, onCancel, onSaved, onError }: {
+function ProviderEditor({ providerName, provider, isNew = false, onCancel, onSaved, onError }: {
   providerName: string;
   provider: V2ProviderStatus;
+  isNew?: boolean;
   onCancel: () => void;
   onSaved: (value: V2Status) => void;
   onError: (value: string) => void;
@@ -136,13 +146,17 @@ function ProviderEditor({ providerName, provider, onCancel, onSaved, onError }: 
       };
     }
     try {
-      onSaved(await api.updateV2Provider(providerName, { name: name.trim(), base_url: baseUrl.trim(), keys: keyMap }));
+      if (isNew) {
+        onSaved(await api.createV2Provider({ name: name.trim(), base_url: baseUrl.trim(), keys: keyMap }));
+      } else {
+        onSaved(await api.updateV2Provider(providerName, { name: name.trim(), base_url: baseUrl.trim(), keys: keyMap }));
+      }
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
     }
   }
   return <div className="modal-overlay" onClick={onCancel}><div className="modal" onClick={(event) => event.stopPropagation()}>
-    <h3>Edit Provider: {providerName}</h3>
+    <h3>{isNew ? 'Add Provider' : `Edit Provider: ${providerName}`}</h3>
     <div className="field"><label>Name</label><input value={name} onChange={(event) => setName(event.target.value)} /></div>
     <div className="field"><label>Base URL</label><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></div>
     <h4>Keys</h4>
@@ -154,14 +168,16 @@ function ProviderEditor({ providerName, provider, onCancel, onSaved, onError }: 
   </div></div>;
 }
 
-function LogicalModelEditor({ name, logical, candidates, onCancel, onSaved, onError }: {
+function LogicalModelEditor({ name, logical, candidates, isNew = false, onCancel, onSaved, onError }: {
   name: string;
   logical: V2LogicalModel;
   candidates: string[];
+  isNew?: boolean;
   onCancel: () => void;
   onSaved: (value: V2Status) => void;
   onError: (value: string) => void;
 }) {
+  const [poolName, setPoolName] = useState(name);
   const [strategy, setStrategy] = useState(logical.strategy);
   const [targets, setTargets] = useState<Array<{ model: string; weight: string }>>(() =>
     logical.targets.map((t) => ({ model: t.model, weight: t.weight != null ? String(t.weight) : '' })),
@@ -176,16 +192,22 @@ function LogicalModelEditor({ name, logical, candidates, onCancel, onSaved, onEr
   async function save() {
     const cleaned = targets.filter((t) => t.model.trim());
     if (!cleaned.length) { onError('At least one target is required'); return; }
+    if (!poolName.trim()) { onError('Model pool name must not be empty'); return; }
     const parsed = cleaned.map((t) => ({ model: t.model.trim(), weight: t.weight.trim() === '' ? null : Math.max(0, Number(t.weight) || 0) }));
     try {
-      onSaved(await api.updateV2LogicalModel(name, { strategy, targets: parsed }));
+      if (isNew) {
+        onSaved(await api.createV2LogicalModel({ name: poolName.trim(), strategy, targets: parsed }));
+      } else {
+        onSaved(await api.updateV2LogicalModel(poolName.trim(), { strategy, targets: parsed }));
+      }
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
     }
   }
-  const datalistId = `lm-targets-${name}`;
+  const datalistId = `lm-targets-${poolName || 'new'}`;
   return <div className="modal-overlay" onClick={onCancel}><div className="modal" onClick={(event) => event.stopPropagation()}>
-    <h3>Edit Logical Model: {name}</h3>
+    <h3>{isNew ? 'Add Model Pool' : `Edit Model Pool: ${name}`}</h3>
+    <div className="field"><label>Pool Name</label><input value={poolName} onChange={(event) => setPoolName(event.target.value)} disabled={!isNew} placeholder="e.g. low-model-auto" /></div>
     <div className="field"><label>Strategy</label>
       <select value={strategy} onChange={(event) => setStrategy(event.target.value)}>
         <option value="priority">priority</option>
@@ -193,35 +215,161 @@ function LogicalModelEditor({ name, logical, candidates, onCancel, onSaved, onEr
         <option value="usage-aware">usage-aware</option>
       </select>
     </div>
-    <h4>Targets (physical models or logical models)</h4>
+    <h4>Targets (virtual model, physical model id, or another model pool)</h4>
     <datalist id={datalistId}>{candidates.map((candidate) => <option key={candidate} value={candidate} />)}</datalist>
     <div className="table-wrap"><table><thead><tr><th>Target</th><th>Weight</th><th></th></tr></thead><tbody>
-      {targets.map((t, i) => <tr key={i}><td><input list={datalistId} value={t.model} placeholder="ark/deepseek-v4-flash-260801 or another logical model" onChange={(event) => updateTarget(i, { model: event.target.value })} /></td><td><input className="weight-input" type="number" min="0" value={t.weight} placeholder="optional" onChange={(event) => updateTarget(i, { weight: event.target.value })} /></td><td><button className="secondary" onClick={() => removeTarget(i)}>Delete</button></td></tr>)}
+      {targets.map((t, i) => <tr key={i}><td><input list={datalistId} value={t.model} placeholder="e.g. deepseek-v4-flash (virtual) or ark/deepseek-v4-flash-260801" onChange={(event) => updateTarget(i, { model: event.target.value })} /></td><td><input className="weight-input" type="number" min="0" value={t.weight} placeholder="optional" onChange={(event) => updateTarget(i, { weight: event.target.value })} /></td><td><button className="secondary" onClick={() => removeTarget(i)}>Delete</button></td></tr>)}
     </tbody></table></div>
     <button className="secondary" onClick={addTarget}>Add Target</button>
-    <div className="toolbar"><button className="secondary" onClick={onCancel}>Cancel</button><button onClick={() => void save()}>Save</button></div>
+    <div className="toolbar"><button className="secondary" onClick={onCancel}>Cancel</button><button onClick={() => void save()}>{isNew ? 'Create' : 'Save'}</button></div>
+  </div></div>;
+}
+
+function formatFetchedAt(ts?: number | null): string {
+  if (!ts) return '';
+  return new Date(ts * 1000).toLocaleString();
+}
+
+function ProviderModelsModal({ providerName, onCancel, onError }: {
+  providerName: string;
+  onCancel: () => void;
+  onError: (value: string) => void;
+}) {
+  const [data, setData] = useState<ProviderModelsResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async (refresh: boolean) => {
+    if (refresh) setRefreshing(true); else setLoading(true);
+    try {
+      setData(await api.providerModels(providerName, refresh));
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [providerName, onError]);
+
+  useEffect(() => { void load(false); }, [load]);
+
+  const models = data?.models ?? [];
+  const fetchedAt = formatFetchedAt(data?.fetched_at);
+  const isError = Boolean(data && !data.ok);
+
+  return <div className="modal-overlay" onClick={onCancel}><div className="modal" onClick={(event) => event.stopPropagation()}>
+    <div className="section-title"><h3>Provider Models: {providerName}</h3><div className="title-actions"><span className="muted small-text">{data?.cached ? 'cached · ' : ''}{fetchedAt ? `fetched ${fetchedAt}` : ''}</span><button className="secondary compact-button" disabled={refreshing} onClick={() => void load(true)}>{refreshing ? 'Refreshing...' : 'Refresh'}</button></div></div>
+    {loading && <p className="muted">Loading models...</p>}
+    {isError && <p className="error">Failed to fetch: {data?.error}</p>}
+    {!loading && !isError && models.length === 0 && <p className="muted">No models fetched yet. Click Refresh to pull the model list from the provider.</p>}
+    {!loading && !isError && models.length > 0 && <>
+      <p className="muted small-text">{models.length} models supported by this provider.</p>
+      <div className="model-chip-list">{models.map((m) => <span className="model-chip" key={m}>{m}</span>)}</div>
+    </>}
+    <div className="toolbar"><button className="secondary" onClick={onCancel}>Close</button></div>
+  </div></div>;
+}
+
+function ProviderVirtualModelsModal({ providerName, virtualModels, onCancel, onSaved, onError }: {
+  providerName: string;
+  virtualModels: Record<string, Record<string, string>>;
+  onCancel: () => void;
+  onSaved: (value: V2Status) => void;
+  onError: (value: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [upstream, setUpstream] = useState('');
+  const [models, setModels] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  const existing = useMemo(() => Object.entries(virtualModels)
+    .filter(([, m]) => m[providerName])
+    .map(([name, m]) => ({ name, upstream: m[providerName] }))
+    .sort((a, b) => a.name.localeCompare(b.name)), [virtualModels, providerName]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.providerModels(providerName).then((res) => {
+      if (!cancelled && res.models) setModels(res.models);
+    }).catch(() => { /* datalist 为空也允许手动输入 */ });
+    return () => { cancelled = true; };
+  }, [providerName]);
+
+  async function save() {
+    if (!name.trim()) { onError('Virtual model name must not be empty'); return; }
+    if (!upstream.trim()) { onError('Upstream model must not be empty'); return; }
+    setSaving(true);
+    try {
+      const next = await api.upsertVirtualModel(name.trim(), providerName, upstream.trim());
+      onSaved(next);
+      setName(''); setUpstream('');
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove(item: { name: string }) {
+    if (!confirm(`Delete virtual model "${item.name}" mapping for ${providerName}?`)) return;
+    try {
+      onSaved(await api.deleteVirtualModel(item.name, providerName));
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  const datalistId = `vm-upstream-${providerName}`;
+  return <div className="modal-overlay" onClick={onCancel}><div className="modal" onClick={(event) => event.stopPropagation()}>
+    <h3>Virtual Models: {providerName}</h3>
+    <p className="muted small-text">虚拟模型是供应商无关的抽象名，映射到该供应商的实际模型名。模型池 target 可直接填虚拟模型名，路由时自动展开到所有配置了该虚拟名的供应商。</p>
+    <h4>Existing</h4>
+    {existing.length === 0 && <p className="muted">No virtual models for this provider yet.</p>}
+    {existing.length > 0 && <div className="table-wrap"><table><thead><tr><th>Virtual Model</th><th>Upstream Model</th><th></th></tr></thead><tbody>{existing.map((item) => <tr key={item.name}><td className="strong-cell">{item.name}</td><td className="muted small-text">{item.upstream}</td><td><button className="secondary compact-button" onClick={() => void remove(item)}>Delete</button></td></tr>)}</tbody></table></div>}
+    <h4>Add New</h4>
+    <div className="field"><label>Virtual Model Name</label><input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. deepseek-v4-flash" /></div>
+    <div className="field"><label>Upstream Model ({providerName})</label><input list={datalistId} value={upstream} onChange={(event) => setUpstream(event.target.value)} placeholder="Search or type actual model name" />
+      <datalist id={datalistId}>{models.map((m) => <option key={m} value={m} />)}</datalist>
+      <div className="muted small-text">{models.length > 0 ? `${models.length} models available (cached from provider). Type to filter or enter manually.` : 'No cached model list. Click provider Details > Refresh first, or type manually.'}</div>
+    </div>
+    <div className="toolbar"><button className="secondary" onClick={onCancel}>Close</button><button disabled={saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Add Virtual Model'}</button></div>
   </div></div>;
 }
 
 function V2Panel({ config, onSaved, onError }: { config: V2Status | null; onSaved: (value: V2Status) => void; onError: (value: string) => void }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [editingLogical, setEditingLogical] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [addingPool, setAddingPool] = useState(false);
+  const [viewingModels, setViewingModels] = useState<string | null>(null);
+  const [viewingVirtual, setViewingVirtual] = useState<string | null>(null);
   if (!config) return <section className="card"><h2>Providers & Logical Models</h2><p className="muted">Loading routing settings...</p></section>;
   if (!config.v2_enabled) return <section className="card"><div className="section-title"><h2>Providers & Logical Models</h2><span className="muted">disabled</span></div><p className="muted">Layered routing is disabled (set LLM_PROVIDER_ROUTER_V2=1 to enable).</p></section>;
   const providers = Object.entries(config.providers ?? {}).sort(([a], [b]) => a.localeCompare(b));
   const logical = Object.entries(config.logical_models ?? {}).sort(([a], [b]) => a.localeCompare(b));
   const editingProvider = editing ? (config.providers?.[editing] ?? null) : null;
+  async function deletePool(name: string) {
+    try {
+      onSaved(await api.deleteV2LogicalModel(name));
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    }
+  }
   return <>
     <section className="card settings-section providers-section">
-      <div className="section-title settings-title"><div><h2>Providers</h2><p className="muted">Upstream provider endpoints, key availability, and provider health.</p></div><span className="muted">{providers.length} providers · {config.models?.length ?? 0} physical models</span></div>
-      <div className="table-wrap"><table className="settings-table providers-table"><thead><tr><th>Provider</th><th>Base URL</th><th>Keys</th><th>Status</th><th></th></tr></thead><tbody>{providers.map(([name, p]) => <tr key={name}><td className="strong-cell">{name}</td><td className="muted small-text url-cell">{p.base_url}</td><td>{p.key_enabled}/{p.key_total}{p.key_frozen > 0 ? ` (${p.key_frozen} frozen)` : ''}</td><td><span className={`status ${p.available ? 'ok' : 'warn'}`}>{p.available ? 'available' : 'unavailable'}</span></td><td><button className="secondary compact-button" onClick={() => setEditing(name)}>Edit</button></td></tr>)}</tbody></table></div>
+      <div className="section-title settings-title"><div><h2>Providers</h2><p className="muted">Upstream provider endpoints, key availability, and provider health.</p></div><div className="title-actions"><span className="muted">{providers.length} providers · {config.models?.length ?? 0} physical models</span><button className="secondary compact-button" onClick={() => setAdding(true)}>Add Provider</button></div></div>
+      <div className="table-wrap"><table className="settings-table providers-table"><thead><tr><th>Provider</th><th>Base URL</th><th>Keys</th><th>Status</th><th></th></tr></thead><tbody>{providers.map(([name, p]) => <tr key={name}><td className="strong-cell">{name}</td><td className="muted small-text url-cell">{p.base_url}</td><td>{p.key_enabled}/{p.key_total}{p.key_frozen > 0 ? ` (${p.key_frozen} frozen)` : ''}</td><td><span className={`status ${p.available ? 'ok' : 'warn'}`}>{p.available ? 'available' : 'unavailable'}</span></td><td><div className="row-actions"><button className="secondary compact-button" onClick={() => setViewingModels(name)}>Details</button><button className="secondary compact-button" onClick={() => setViewingVirtual(name)}>Virtual</button><button className="secondary compact-button" onClick={() => setEditing(name)}>Edit</button></div></td></tr>)}</tbody></table></div>
     </section>
     <section className="card settings-section logical-models-section">
-      <div className="section-title settings-title"><div><h2>Logical Models</h2><p className="muted">Virtual model names and ordered target routing.</p></div><span className="muted">{logical.length} logical models</span></div>
-      <div className="table-wrap"><table className="settings-table logical-models-table"><thead><tr><th>Logical Model</th><th>Strategy</th><th>Targets</th><th></th></tr></thead><tbody>{logical.map(([name, lm]) => <tr key={name}><td className="strong-cell">{name}</td><td><span className="status">{lm.strategy}</span></td><td className="muted small-text target-cell">{lm.targets.map((t) => <span className="target-pill" key={`${name}-${t.model}-${t.weight ?? 'default'}`}>{t.model}{t.weight != null ? <span className="target-weight">w={t.weight}</span> : null}</span>)}</td><td><button className="secondary compact-button" onClick={() => setEditingLogical(name)}>Edit</button></td></tr>)}</tbody></table></div>
+      <div className="section-title settings-title"><div><h2>Model Pools</h2><p className="muted">逻辑模型池：虚拟模型名与有序/加权路由目标。target 可填虚拟模型名、物理模型 id（provider/upstream）或另一个模型池。</p></div><div className="title-actions"><span className="muted">{logical.length} model pools</span><button className="secondary compact-button" onClick={() => setAddingPool(true)}>Add Pool</button></div></div>
+      <div className="table-wrap"><table className="settings-table logical-models-table"><thead><tr><th>Model Pool</th><th>Strategy</th><th>Targets</th><th></th></tr></thead><tbody>{logical.map(([name, lm]) => <tr key={name}><td className="strong-cell">{name}</td><td><span className="status">{lm.strategy}</span></td><td className="muted small-text target-cell">{lm.targets.map((t) => <span className="target-pill" key={`${name}-${t.model}-${t.weight ?? 'default'}`}>{t.model}{t.weight != null ? <span className="target-weight">w={t.weight}</span> : null}</span>)}</td><td><div className="row-actions"><button className="secondary compact-button" onClick={() => setEditingLogical(name)}>Edit</button><button className="secondary compact-button" onClick={() => { if (confirm(`Delete model pool "${name}"? References from other pools will be removed.`)) void deletePool(name); }}>Delete</button></div></td></tr>)}</tbody></table></div>
     </section>
+    {adding && <ProviderEditor isNew providerName="" provider={{ base_url: '', key_total: 0, key_enabled: 0, key_frozen: 0, available: false, keys: {} }} onCancel={() => setAdding(false)} onSaved={(next) => { setAdding(false); onSaved(next); }} onError={onError} />}
     {editingProvider && <ProviderEditor providerName={editing!} provider={editingProvider} onCancel={() => setEditing(null)} onSaved={(next) => { setEditing(null); onSaved(next); }} onError={onError} />}
-    {editingLogical && config.logical_models?.[editingLogical] && <LogicalModelEditor name={editingLogical} logical={config.logical_models[editingLogical]} candidates={[(config.models ?? []).map((m) => m.id), Object.keys(config.logical_models ?? {}).filter((x) => x !== editingLogical)].flat()} onCancel={() => setEditingLogical(null)} onSaved={(next) => { setEditingLogical(null); onSaved(next); }} onError={onError} />}
+    {editingLogical && config.logical_models?.[editingLogical] && <LogicalModelEditor name={editingLogical} logical={config.logical_models[editingLogical]} candidates={[(config.models ?? []).map((m) => m.id), Object.keys(config.logical_models ?? {}).filter((x) => x !== editingLogical), Object.keys(config.virtual_models ?? {})].flat()} onCancel={() => setEditingLogical(null)} onSaved={(next) => { setEditingLogical(null); onSaved(next); }} onError={onError} />}
+    {addingPool && <LogicalModelEditor isNew name="" logical={{ strategy: 'priority', targets: [], params: {} }} candidates={[(config.models ?? []).map((m) => m.id), Object.keys(config.logical_models ?? {}), Object.keys(config.virtual_models ?? {})].flat()} onCancel={() => setAddingPool(false)} onSaved={(next) => { setAddingPool(false); onSaved(next); }} onError={onError} />}
+    {viewingModels && <ProviderModelsModal providerName={viewingModels} onCancel={() => setViewingModels(null)} onError={onError} />}
+    {viewingVirtual && <ProviderVirtualModelsModal providerName={viewingVirtual} virtualModels={config.virtual_models ?? {}} onCancel={() => setViewingVirtual(null)} onSaved={onSaved} onError={onError} />}
   </>;
 }
 
