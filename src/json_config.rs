@@ -508,6 +508,41 @@ impl TokenPriceConfig {
         }
     }
 
+    pub fn sync_to_known(&mut self, known: &HashSet<String>) {
+        self.defaults.retain(|k, _| known.contains(k));
+        self.memory.retain(|k, _| known.contains(k));
+        for model in known {
+            self.defaults
+                .entry(model.clone())
+                .or_insert_with(TokenPrice::default);
+            self.memory
+                .entry(model.clone())
+                .or_insert_with(TokenPrice::default);
+        }
+        if self.is_memory() {
+            return;
+        }
+        // Prune file to exactly `known` (keep existing prices for known, fill missing with default)
+        let mut file_data: HashMap<String, TokenPrice> = if self.path.exists() {
+            fs::read_to_string(&self.path)
+                .ok()
+                .and_then(|raw| serde_json::from_str(&raw).ok())
+                .unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
+        let before = file_data.len();
+        file_data.retain(|k, _| known.contains(k));
+        for model in known {
+            file_data
+                .entry(model.clone())
+                .or_insert_with(TokenPrice::default);
+        }
+        if file_data.len() != before || file_data.len() != known.len() {
+            let _ = self.write(&file_data);
+        }
+    }
+
     fn write(&self, prices: &HashMap<String, TokenPrice>) -> anyhow::Result<()> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
@@ -523,6 +558,58 @@ impl TokenPriceConfig {
     fn is_memory(&self) -> bool {
         self.path.to_string_lossy() == ":memory:"
     }
+}
+
+/// 跨供应商模型等价关系表：同一等价组的多个 `provider/model` 视为同一模型，
+/// 用于 Token Prices 一键同步。文件 `config/model-equivalences.json`。
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ModelEquivalencesFile {
+    #[serde(default)]
+    pub groups: Vec<EquivalenceGroup>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EquivalenceGroup {
+    pub id: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub models: Vec<String>,
+}
+
+pub struct ModelEquivalencesConfig {
+    pub path: PathBuf,
+    memory: ModelEquivalencesFile,
+}
+
+impl ModelEquivalencesConfig {
+    pub fn new(path: &str) -> Self {
+        Self { path: expand_path(path), memory: ModelEquivalencesFile::default() }
+    }
+    pub fn get(&mut self) -> ModelEquivalencesFile {
+        if self.is_memory() { return self.memory.clone(); }
+        if !self.path.exists() { return ModelEquivalencesFile::default(); }
+        let Ok(raw) = fs::read_to_string(&self.path) else { return ModelEquivalencesFile::default(); };
+        serde_json::from_str::<ModelEquivalencesFile>(&raw).unwrap_or_default()
+    }
+    pub fn set(&mut self, file: ModelEquivalencesFile) -> anyhow::Result<ModelEquivalencesFile> {
+        if self.is_memory() { self.memory = file.clone(); return Ok(file); }
+        if let Some(parent) = self.path.parent() { fs::create_dir_all(parent)?; }
+        fs::write(&self.path, format!("{}\n", serde_json::to_string_pretty(&file)?))?;
+        Ok(file)
+    }
+    /// 返回 `model -> group.id` 映射
+    pub fn model_to_group(&mut self) -> HashMap<String, String> {
+        let mut m = HashMap::new();
+        for g in self.get().groups { for model in g.models { m.insert(model, g.id.clone()); } }
+        m
+    }
+    /// 返回 `group.id -> models`
+    pub fn group_to_models(&mut self) -> HashMap<String, Vec<String>> {
+        let mut m = HashMap::new();
+        for g in self.get().groups { m.insert(g.id.clone(), g.models.clone()); }
+        m
+    }
+    fn is_memory(&self) -> bool { self.path.to_string_lossy() == ":memory:" }
 }
 
 /// Stores LLM provider key VALUES (env_var -> secret) in a gitignored JSON file.

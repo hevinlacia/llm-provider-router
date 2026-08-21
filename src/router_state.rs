@@ -5,7 +5,7 @@ use crate::config::{
 use crate::config_v2::{self, is_provider_scoped_virtual, TargetCandidate, V2Strategy};
 use crate::json_config::{
     ApiKeysStore, CustomKeyEntry, CustomKeyPoolConfig, KeyWeightConfig, KeyWeightsConfigData,
-    ModelAliasConfig, ProviderConfig, TokenPrice, TokenPriceConfig,
+    ModelAliasConfig, ModelEquivalencesConfig, ProviderConfig, TokenPrice, TokenPriceConfig,
 };
 use crate::state_store::{now_seconds, StateStore};
 use crate::usage_store::UsageStore;
@@ -58,6 +58,7 @@ pub struct RouterState {
     custom_key_config: CustomKeyPoolConfig,
     token_price_config: TokenPriceConfig,
     model_alias_config: ModelAliasConfig,
+    model_equivalences: ModelEquivalencesConfig,
     api_keys_store: ApiKeysStore,
     /// v2 分层配置（加载失败为 None，回退旧逻辑）。
     v2: Option<config_v2::V2Config>,
@@ -91,6 +92,7 @@ impl RouterState {
             ProviderConfig::new(&settings.provider_config_path, default_provider_base_urls());
         let mut custom_key_config = CustomKeyPoolConfig::new(&settings.custom_key_config_path);
         let model_alias_config = ModelAliasConfig::new(&settings.model_alias_config_path);
+        let model_equivalences = ModelEquivalencesConfig::new(&settings.model_equivalences_path);
         let token_price_config = TokenPriceConfig::new(
             &settings.token_price_config_path,
             default_token_prices(),
@@ -177,6 +179,7 @@ impl RouterState {
             custom_key_config,
             token_price_config,
             model_alias_config,
+            model_equivalences,
             api_keys_store,
             v2,
         };
@@ -392,7 +395,7 @@ impl RouterState {
         end: Option<&str>,
     ) -> anyhow::Result<Value> {
         let mut snapshot = self.usage_store.snapshot(period, start, end)?;
-        let prices = self.token_prices();
+        let prices = self.expanded_prices_for_cost();
         apply_costs(&mut snapshot, &prices);
         Ok(snapshot)
     }
@@ -512,12 +515,63 @@ impl RouterState {
         json!({ "models": models, "config_path": self.token_price_config.path.to_string_lossy() })
     }
 
+    pub fn equivalences_snapshot(&mut self) -> Value {
+        let file = self.model_equivalences.get();
+        json!({ "groups": file.groups, "config_path": self.model_equivalences.path.to_string_lossy() })
+    }
+
+    pub fn set_equivalences(&mut self, groups: Vec<crate::json_config::EquivalenceGroup>) -> anyhow::Result<Value> {
+        // 校验：id 唯一、非空；models 形如 provider/model
+        let mut seen = HashSet::new();
+        for g in &groups {
+            if g.id.trim().is_empty() { anyhow::bail!("equivalence group id must not be empty"); }
+            if !seen.insert(g.id.clone()) { anyhow::bail!("duplicate equivalence group id: {}", g.id); }
+            for m in &g.models {
+                if !m.contains('/') { anyhow::bail!("model must be provider/model: {}", m); }
+            }
+        }
+        self.model_equivalences.set(crate::json_config::ModelEquivalencesFile { groups })?;
+        Ok(self.equivalences_snapshot())
+    }
+
+    pub fn apply_price_to_equivalents(&mut self, model: &str, only_missing: bool) -> anyhow::Result<Value> {
+        let prices = self.token_price_config.get();
+        let source_price = prices.get(model).cloned().ok_or_else(|| anyhow::anyhow!("unknown model: {}", model))?;
+        let group_models: Vec<String> = {
+            let file = self.model_equivalences.get();
+            file.groups.into_iter().find(|g| g.models.iter().any(|m| m == model)).map(|g| g.models).unwrap_or_default()
+        };
+        if group_models.is_empty() { anyhow::bail!("model is not in any equivalence group: {}", model); }
+        let mut next = prices.clone();
+        let mut applied = Vec::new();
+        for target in group_models {
+            if target == model { continue; }
+            if only_missing {
+                let existing = next.get(&target);
+                let is_zero = existing.map(|p| p.input_uncached_per_million == 0.0 && p.input_cached_per_million == 0.0 && p.output_per_million == 0.0).unwrap_or(true);
+                if !is_zero { continue; }
+            }
+            next.insert(target.clone(), source_price.clone());
+            applied.push(target);
+        }
+        if applied.is_empty() { anyhow::bail!("no equivalent models to apply (all already priced or no peers)"); }
+        let known = self.referenced_physical_model_ids();
+        // 仅写入 known（物理已引用）中的目标
+        let filtered: HashMap<String, TokenPrice> = next.into_iter().filter(|(k, _)| known.contains(k)).collect();
+        self.token_price_config.set(filtered, &known)?;
+        Ok(json!({ "applied_to": applied, "source": model, "price": source_price, "token_prices": self.token_price_snapshot() }))
+    }
+
     pub fn set_token_prices(
         &mut self,
         prices: HashMap<String, TokenPrice>,
     ) -> anyhow::Result<Value> {
         self.sync_token_price_defaults();
-        let known = self.known_model_names();
+        let known = if self.v2.is_some() {
+            self.referenced_physical_model_ids()
+        } else {
+            self.known_model_names()
+        };
         let unknown = prices
             .keys()
             .filter(|model| !known.contains(*model))
@@ -893,6 +947,8 @@ impl RouterState {
             return json!({ "v2_enabled": false });
         };
         let mut providers = serde_json::Map::new();
+        let provider_models =
+            config_v2::load_provider_models_file(&self.settings.provider_models_path);
         for (name, prov) in &cfg.providers {
             let enabled: Vec<_> = prov.keys.iter().filter(|(_, k)| k.enabled).collect();
             let frozen_count = enabled
@@ -922,6 +978,11 @@ impl RouterState {
                     "key_frozen": frozen_count,
                     "available": enabled.len() - frozen_count > 0,
                     "keys": keys,
+                    "models": provider_models
+                        .providers
+                        .get(name)
+                        .map(|e| e.models.clone())
+                        .unwrap_or_default(),
                 }),
             );
         }
@@ -1101,6 +1162,8 @@ impl RouterState {
         if !cfg.logical_models.contains_key(name) {
             anyhow::bail!("logical model {name} not found");
         }
+        Self::auto_register_target_models(self, &cfg, &targets)?;
+        let cfg = config_v2::load_v2_config()?;
         Self::validate_targets(&cfg, name, &targets)?;
         let mut logical =
             config_v2::load_logical_models_file(config_v2::V2_LOGICAL_MODELS_PATH)?;
@@ -1120,6 +1183,7 @@ impl RouterState {
     }
 
     /// 新增模型池（逻辑模型）：名字不能与物理模型 / 虚拟模型 / 已有逻辑模型冲突。
+    /// 未注册的 `provider/upstream` target 会自动注册为物理模型（provider 已知时）。
     pub fn create_v2_logical_model(
         &mut self,
         name: &str,
@@ -1144,6 +1208,8 @@ impl RouterState {
         if cfg.virtual_models.contains_key(name) {
             anyhow::bail!("logical model name conflicts with virtual model name: {name}");
         }
+        Self::auto_register_target_models(self, &cfg, &targets)?;
+        let cfg = config_v2::load_v2_config()?;
         Self::validate_targets(&cfg, name, &targets)?;
         let mut logical =
             config_v2::load_logical_models_file(config_v2::V2_LOGICAL_MODELS_PATH)?;
@@ -1183,6 +1249,40 @@ impl RouterState {
     }
 
     /// 校验 targets 引用（物理模型 / 虚拟模型 / 其他逻辑模型，不含自身）。
+    /// 自动注册 `provider/upstream` 形式的未注册物理模型 target。
+    /// 仅注册 provider 已知的组合（宽松接受任意 upstream；上游不存在时路由期失败并走 fallback，不阻塞配置保存）。
+    fn auto_register_target_models(
+        &mut self,
+        cfg: &config_v2::V2Config,
+        targets: &[config_v2::V2Target],
+    ) -> anyhow::Result<()> {
+        let known_providers: HashSet<&str> = cfg.providers.keys().map(String::as_str).collect();
+        let unregistered: Vec<String> = targets
+            .iter()
+            .filter_map(|t| {
+                let model = t.model.trim();
+                if model
+                    .split_once('/')
+                    .is_some_and(|(p, _)| cfg.providers.contains_key(p))
+                    && !cfg.models.contains_key(model)
+                {
+                    Some(model.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if !unregistered.is_empty() {
+            config_v2::register_physical_models(
+                config_v2::V2_MODELS_PATH,
+                &unregistered,
+                &known_providers,
+            )?;
+            self.reload_v2();
+        }
+        Ok(())
+    }
+
     fn validate_targets(
         cfg: &config_v2::V2Config,
         name: &str,
@@ -1457,9 +1557,129 @@ impl RouterState {
         self.settings_aliases().keys().cloned().collect()
     }
 
+    /// 仅保留模型池实际引用的供应商真实模型（物理模型 id）。
+    fn referenced_physical_model_ids(&self) -> HashSet<String> {
+        let Some(cfg) = self.v2.as_ref() else {
+            return aliases().keys().cloned().collect();
+        };
+        let physical_ids: HashSet<&String> = cfg.models.keys().collect();
+        let mut referenced = HashSet::new();
+        fn collect(
+            cfg: &config_v2::V2Config,
+            alias: &str,
+            referenced: &mut HashSet<String>,
+            visited: &mut HashSet<String>,
+            physical_ids: &HashSet<&String>,
+        ) {
+            if !visited.insert(alias.to_string()) {
+                return;
+            }
+            let Some(lm) = cfg.logical_models.get(alias) else {
+                return;
+            };
+            for target in &lm.route.targets {
+                if physical_ids.contains(&target.model) {
+                    referenced.insert(target.model.clone());
+                } else if let Some(mappings) = cfg.virtual_models.get(&target.model) {
+                    for (provider, upstream) in mappings {
+                        referenced.insert(format!("{}/{}", provider, upstream));
+                    }
+                } else if target.model.contains('/') {
+                    if let Some((provider, rest)) = target.model.split_once('/') {
+                        if let Some(mappings) = cfg.virtual_models.get(rest) {
+                            if let Some(upstream) = mappings.get(provider) {
+                                referenced.insert(format!("{}/{}", provider, upstream));
+                                continue;
+                            }
+                        }
+                    }
+                    // 未注册但形如 provider/upstream 的物理 id，也视为真实模型
+                    referenced.insert(target.model.clone());
+                } else if cfg.logical_models.contains_key(&target.model) {
+                    collect(cfg, &target.model, referenced, visited, physical_ids);
+                }
+            }
+        }
+        for alias in cfg.logical_models.keys() {
+            let mut visited = HashSet::new();
+            collect(cfg, alias, &mut referenced, &mut visited, &physical_ids);
+        }
+        // 仅保留已在 models.json 中定义的物理模型（未定义的虚拟展开已单独插入）
+        // 但用户要求“供应商实际模型”即物理层面的模型，保留所有 referenced（含虚拟展开的 provider/upstream）
+        referenced
+    }
+
+    fn first_physical_for_logical(&self, alias: &str) -> Option<String> {
+        let cfg = self.v2.as_ref()?;
+        fn dfs(cfg: &config_v2::V2Config, current: &str, visited: &mut HashSet<String>) -> Option<String> {
+            if !visited.insert(current.to_string()) {
+                return None;
+            }
+            let lm = cfg.logical_models.get(current)?;
+            for target in &lm.route.targets {
+                if cfg.models.contains_key(&target.model) {
+                    return Some(target.model.clone());
+                }
+                if let Some(mappings) = cfg.virtual_models.get(&target.model) {
+                    let mut providers: Vec<&String> = mappings.keys().collect();
+                    providers.sort();
+                    if let Some(provider) = providers.first() {
+                        if let Some(upstream) = mappings.get(*provider) {
+                            return Some(format!("{}/{}", provider, upstream));
+                        }
+                    }
+                }
+                if target.model.contains('/') {
+                    if let Some((provider, rest)) = target.model.split_once('/') {
+                        if let Some(mappings) = cfg.virtual_models.get(rest) {
+                            if let Some(upstream) = mappings.get(provider) {
+                                return Some(format!("{}/{}", provider, upstream));
+                            }
+                        }
+                    }
+                    // 形如 provider/upstream 的未注册物理也直接返回
+                    if target.model.contains('/') {
+                        return Some(target.model.clone());
+                    }
+                }
+                if cfg.logical_models.contains_key(&target.model) {
+                    if let Some(found) = dfs(cfg, &target.model, visited) {
+                        return Some(found);
+                    }
+                }
+            }
+            None
+        }
+        let mut visited = HashSet::new();
+        dfs(cfg, alias, &mut visited)
+    }
+
+    fn expanded_prices_for_cost(&mut self) -> HashMap<String, TokenPrice> {
+        let physical_prices = self.token_price_config.get();
+        let mut expanded = physical_prices.clone();
+        if let Some(cfg) = self.v2.clone() {
+            for logical in cfg.logical_models.keys() {
+                if expanded.contains_key(logical) {
+                    continue;
+                }
+                if let Some(first) = self.first_physical_for_logical(logical) {
+                    if let Some(price) = physical_prices.get(&first) {
+                        expanded.insert(logical.clone(), price.clone());
+                    }
+                }
+            }
+        }
+        expanded
+    }
+
     fn sync_token_price_defaults(&mut self) {
-        let defaults = default_token_prices();
-        self.token_price_config.add_defaults(defaults);
+        if self.v2.is_some() {
+            let known = self.referenced_physical_model_ids();
+            self.token_price_config.sync_to_known(&known);
+        } else {
+            let defaults = default_token_prices();
+            self.token_price_config.add_defaults(defaults);
+        }
     }
 
     fn rebind_disabled_sessions(&mut self, weights: &KeyWeightsConfigData) -> anyhow::Result<()> {
@@ -1893,10 +2113,15 @@ mod tests {
             token_price_config_path: ":memory:".to_string(),
             model_alias_config_path: ":memory:".to_string(),
             search_providers_path: ":memory:".to_string(),
+            model_equivalences_path: ":memory:".to_string(),
             provider_models_path: ":memory:".to_string(),
             auth_invalid_freeze_seconds: 86400.0,
             // router_state 测试覆盖旧逻辑；v2 行为由 config_v2 模块测试覆盖。
             v2_config_enabled: false,
+            diag_dir: ":memory:".to_string(),
+            diag_max_bytes: 10 * 1024 * 1024,
+            diag_max_files: 0,
+            diag_sample_every: 1,
         }
     }
 

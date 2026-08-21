@@ -1,65 +1,65 @@
 {
-  "deepseek-v4-flash-auto": {
+  "ark/deepseek-v4-flash-260801": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "deepseek-v4-flash-260801": {
+  "ark/deepseek-v4-pro": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "deepseek-v4-flash-official": {
+  "ark/glm-5-3-260801": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "deepseek-v4-pro-auto": {
+  "ark/minimax-m3": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "deepseek-v4-pro-official": {
+  "deepseek-official/deepseek-v4-flash": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "glm-latest-auto": {
+  "deepseek-official/deepseek-v4-pro": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "high-model-auto": {
+  "openai-relay/gpt-5.5": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "low-model-auto": {
+  "openai-relay/gpt-5.6-luna": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "medium-model-auto": {
+  "openai-relay/gpt-5.6-sol": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "minimax-latest-auto": {
+  "openai-relay/gpt-5.6-terra": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "openai-gpt-5.5-hevin": {
+  "openai-relay/grok-4.6": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "openai-gpt-5.6-sol-hevin": {
+  "opencode-go/deepseek-v4-flash": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "picture-model-auto": {
+  "opencode-go/muse-spark-1.2-contributor": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
