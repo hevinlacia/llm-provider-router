@@ -1,4 +1,4 @@
-import type { FilterState, KeyConfig, ModelAliasConfig, ProviderConfig, ProviderModelsResponse, StateResponse, TokenPriceConfig, UsageSnapshot, V2Status, WeightConfig } from './types';
+import type { FilterState, KeyConfig, ModelAliasConfig, ProviderConfig, ProviderModelsResponse, RouterCapabilities, StateResponse, TokenPriceConfig, UsageSnapshot, V2Status, WeightConfig } from './types';
 
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
@@ -99,6 +99,12 @@ export const api = {
   },
   v2Status() {
     return request<V2Status>('/api/config/v2');
+  },
+  routerCapabilities() {
+    return request<RouterCapabilities>('/api/router/capabilities');
+  },
+  models() {
+    return request<{ object: string; data: Array<{ id: string; object: string; owned_by: string; context_window?: number; max_output_tokens?: number }> }>('/v1/models');
   },
   providerModels(name: string, refresh = false) {
     const query = refresh ? '?refresh=1' : '';

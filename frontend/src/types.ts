@@ -151,6 +151,8 @@ export type V2PhysicalModel = {
   upstream_model: string;
   family?: string | null;
   params: Record<string, unknown>;
+  context_window?: number | null;
+  max_output_tokens?: number | null;
 };
 
 export type V2LogicalModel = {
@@ -175,4 +177,24 @@ export type ProviderModelsResponse = {
   models?: string[];
   fetched_at?: number | null;
   error?: string;
+};
+
+export type RouterCapabilities = {
+  ok: boolean;
+  v2_enabled: boolean;
+  generated_at: number;
+  models: Array<{
+    id: string;
+    strategy: string;
+    effective: { contextWindow?: number | null; maxTokens?: number | null };
+    targets: Array<{
+      id: string;
+      provider: string;
+      upstream_model: string;
+      context_window?: number | null;
+      max_output_tokens?: number | null;
+      available: boolean;
+      weight?: number | null;
+    }>;
+  }>;
 };

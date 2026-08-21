@@ -114,6 +114,10 @@ pub struct ModelAlias {
     /// 服务器侧默认/覆写参数（v2：逻辑模型默认 params 与物理模型覆写 params 的合并结果）。
     /// 应用时只填充客户端未提供的字段，不覆盖客户端显式参数。
     pub params: HashMap<String, serde_json::Value>,
+    /// 协商用：物理模型的真实上下文窗口（tokens）。None = 未声明，取保守默认。
+    pub context_window: Option<u32>,
+    /// 协商用：物理模型单次最大输出 tokens。
+    pub max_output_tokens: Option<u32>,
 }
 
 impl ModelAlias {
@@ -131,12 +135,20 @@ impl ModelAlias {
             keys,
             retry_policy,
             params: HashMap::new(),
+            context_window: None,
+            max_output_tokens: None,
         }
     }
 
     /// 追加服务器侧参数（v2 路由展开时用于携带逻辑模型默认 + 物理模型覆写）。
     pub fn with_params(mut self, params: HashMap<String, serde_json::Value>) -> Self {
         self.params = params;
+        self
+    }
+
+    pub fn with_windows(mut self, context_window: Option<u32>, max_output_tokens: Option<u32>) -> Self {
+        self.context_window = context_window;
+        self.max_output_tokens = max_output_tokens;
         self
     }
 

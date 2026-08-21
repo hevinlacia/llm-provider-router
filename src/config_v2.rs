@@ -83,6 +83,12 @@ pub struct V2PhysicalModel {
     /// 参数覆写（可选）：实际路由到该物理模型时应用；空 = 继承逻辑模型默认参数。
     #[serde(default)]
     pub params: HashMap<String, serde_json::Value>,
+    /// 上游真实上下文窗口（tokens）。缺省时由 Router 推断或取保守默认值。
+    #[serde(default)]
+    pub context_window: Option<u32>,
+    /// 上游单次最大输出 tokens。缺省时取保守默认值。
+    #[serde(default)]
+    pub max_output_tokens: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -150,6 +156,21 @@ pub struct V2LogicalModel {
     #[serde(default)]
     pub params: HashMap<String, serde_json::Value>,
     pub route: V2Route,
+    /// 展示/协商用：是否支持 reasoning/thinking（Pi 侧 registerProvider 透传）。
+    #[serde(default)]
+    pub reasoning: Option<bool>,
+    /// 输入模态：如 ["text"] 或 ["text","image"]。
+    #[serde(default)]
+    pub input: Option<Vec<String>>,
+    /// Pi 侧 thinkingLevelMap（如 reasoning 模型的 high->high 映射）。
+    #[serde(default)]
+    pub thinking_level_map: Option<HashMap<String, Option<String>>>,
+    /// Pi compat.thinkingFormat（如 openai 侧 reasoning_effort）。
+    #[serde(default)]
+    pub thinking_format: Option<String>,
+    /// 人类可读展示名。
+    #[serde(default)]
+    pub display_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -347,6 +368,16 @@ pub fn validate(cfg: &V2Config) -> anyhow::Result<()> {
             // family 允许指向未显式声明的族（隐式族），不强制校验。
             let _ = family;
         }
+        if let Some(w) = model.context_window {
+            if w == 0 {
+                return Err(anyhow!("model {model_id}: context_window must be > 0"));
+            }
+        }
+        if let Some(m) = model.max_output_tokens {
+            if m == 0 {
+                return Err(anyhow!("model {model_id}: max_output_tokens must be > 0"));
+            }
+        }
     }
     for (alias, lm) in &cfg.logical_models {
         if lm.route.targets.is_empty() {
@@ -454,16 +485,15 @@ pub fn fold_to_aliases(cfg: &V2Config) -> anyhow::Result<HashMap<String, ModelAl
             )
         });
 
-        aliases.insert(
-            alias.clone(),
-            ModelAlias::new(
-                alias,
-                &format!("openai/{}", model.upstream_model),
-                &provider.base_url,
-                keys,
-                retry,
-            ),
+        let mut alias_obj = ModelAlias::new(
+            alias,
+            &format!("openai/{}", model.upstream_model),
+            &provider.base_url,
+            keys,
+            retry,
         );
+        alias_obj = alias_obj.with_windows(model.context_window, model.max_output_tokens);
+        aliases.insert(alias.clone(), alias_obj);
     }
     Ok(aliases)
 }
@@ -604,7 +634,7 @@ fn virtual_candidate(
         RetryPolicy::new(r.max_retry_seconds, r.retry_delay_seconds, &r.retry_on_status)
     });
 
-    let model = ModelAlias::new(
+    let mut model = ModelAlias::new(
         alias,
         &format!("openai/{}", upstream_model),
         &prov.base_url,
@@ -612,6 +642,14 @@ fn virtual_candidate(
         retry,
     )
     .with_params(lm_params_default(cfg, alias));
+    // 虚拟映射无独立物理记录，尝试从 models 表按 provider+upstream 复用窗口声明
+    if let Some(pm) = cfg
+        .models
+        .values()
+        .find(|pm| pm.provider == provider_name && pm.upstream_model == upstream_model)
+    {
+        model = model.with_windows(pm.context_window, pm.max_output_tokens);
+    }
 
     Some(TargetCandidate {
         model,
@@ -656,7 +694,8 @@ fn physical_candidate(
         keys,
         retry,
     )
-    .with_params(merge_params(&lm_params_default(cfg, alias), &pm.params));
+    .with_params(merge_params(&lm_params_default(cfg, alias), &pm.params))
+    .with_windows(pm.context_window, pm.max_output_tokens);
 
     Some(TargetCandidate {
         model,

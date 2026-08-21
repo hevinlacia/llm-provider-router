@@ -95,8 +95,9 @@ npm run build
 - `GET/PUT /api/config/weights` — key routing weights.
 - `GET/PUT /api/config/providers` — provider base URLs.
 - `GET/PUT/POST /api/config/keys` — encrypted key metadata/update/add.
-- `GET /v1/models` — OpenAI-compatible model list.
-- `POST /v1/chat/completions` — OpenAI-compatible chat completions, streaming and non-streaming.
+- `GET /v1/models` — OpenAI-compatible model list (enriched with `context_window`/`max_output_tokens` for dynamic context negotiation).
+- `GET /api/router/capabilities` — dynamic context negotiation view: per logical model `effective: {contextWindow,maxTokens}` (conservative min across available physical targets) + per-target windows/availability.
+- `POST /v1/chat/completions` — OpenAI-compatible chat completions (non-streaming responses include `x-llm-router-*` headers for per-request precise window; streaming includes conservative hint), streaming and non-streaming.
 - `POST /v1/search` — unified web search proxy (search key pool): authenticated with the same local bearer token, routes to Tavily/Exa/Brave by key pool. See [Search Key Pool](#search-key-pool).
 - `GET/PUT /api/config/search-providers` — inspect/update the search key pool configuration.
 - `GET /_proxy/health` — front-proxy backend health.
@@ -239,3 +240,28 @@ The Rust schema intentionally matches the previous SQLite tables so existing loc
 - `deepseek-v4-pro-auto` -> `openai/deepseek-v4-pro`
 - `deepseek-v4-flash-auto` -> `openai/deepseek-v4-flash`
 - `minimax-latest-auto` -> `openai/minimax-m3`
+
+## Dynamic Context Negotiation (Pi × Router)
+
+`*-auto` models route across suppliers with different real `contextWindow`/`maxOutput`. Pi was using static `~/.pi/agent/models.json` thresholds, causing `compaction`/`isContextOverflow` mismatch. The router now negotiates dynamically:
+
+- `GET /api/router/capabilities` → per logical model `effective` (min across available targets) + `targets[]` detail.
+- `GET /v1/models` → enriched with `context_window`/`max_output_tokens` (from capabilities effective, fallback to physical declaration).
+- `POST /v1/chat/completions` → non-streaming responses carry `x-llm-router-{model,upstream-model,provider,context-window,max-output}` for precise per-request correction; streaming carries conservative hint from preferred target.
+
+Pi extension: `pi-extensions/router-context-sync.ts` (copy to `~/.pi/agent/extensions/` and `/reload`) polls `capabilities` (fallback `v1/models`) and `after_provider_response` headers, then hot-patches via `pi.registerProvider(llm-provider-router, {modelOverrides})` — no Pi core change. Settings UI shows `Context Negotiation` panel with effective windows.
+
+## Pi: B 全量托管（推荐）
+
+让模型与窗口完全由 Router 定，Pi 只保留 provider 声明：
+
+```bash
+# 1) 精简 Pi 模型配置（备份原有）
+cp ~/.pi/agent/models.json ~/.pi/agent/models.json.bak
+cp pi-models.minimal.json ~/.pi/agent/models.json
+# 2) 安装托管扩展
+cp pi-extensions/router-context-sync.ts ~/.pi/agent/extensions/router-context-sync.ts
+# 3) 重启 pi 或 /reload
+```
+
+`settings.json` 保留 `enabledModels` 白名单即可（`"llm-provider-router/low-model-auto"` 等），窗口与 reasoning/input/thinkingLevelMap 由 Router 的 `logical-models.json` 统一管理；切换模型或 Router 改窗口后，Pi 下次启动/轮询/命中响应头即自动热更新。

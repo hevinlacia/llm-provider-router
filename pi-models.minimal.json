@@ -1,0 +1,12 @@
+{
+  "providers": {
+    "llm-provider-router": {
+      "baseUrl": "http://127.0.0.1:8789/v1",
+      "api": "openai-completions",
+      "apiKey": "local-dev",
+      "authHeader": true,
+      "compat": { "supportsStore": false },
+      "models": []
+    }
+  }
+}

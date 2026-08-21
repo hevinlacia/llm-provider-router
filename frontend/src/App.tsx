@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
-import type { Bucket, CostBucket, CustomModelAlias, FilterState, KeyConfig, ModelAliasConfig, ProviderConfig, ProviderModelsResponse, StateResponse, TokenPriceConfig, UsageSnapshot, V2LogicalModel, V2ProviderStatus, V2Status, WeightConfig } from './types';
+import type { Bucket, CostBucket, CustomModelAlias, FilterState, KeyConfig, ModelAliasConfig, ProviderConfig, ProviderModelsResponse, RouterCapabilities, StateResponse, TokenPriceConfig, UsageSnapshot, V2LogicalModel, V2ProviderStatus, V2Status, WeightConfig } from './types';
 import './styles.css';
 
 const number = new Intl.NumberFormat();
@@ -336,6 +336,24 @@ function ProviderVirtualModelsModal({ providerName, virtualModels, onCancel, onS
   </div></div>;
 }
 
+function formatWindow(n?: number | null): string {
+  if (n == null) return '—';
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
+}
+
+function CapabilitiesPanel({ caps, onRefresh, error }: { caps: RouterCapabilities | null; onRefresh: () => void; error?: string }) {
+  if (!caps) return <section className="card"><h2>Context Negotiation</h2><p className="muted">Loading dynamic context capabilities...</p></section>;
+  if (!caps.v2_enabled) return <section className="card"><h2>Context Negotiation</h2><p className="muted">Layered routing disabled; capabilities unavailable.</p></section>;
+  const rows = [...(caps.models ?? [])].sort((a, b) => a.id.localeCompare(b.id));
+  return <section className="card settings-section">
+    <div className="section-title settings-title"><div><h2>Context Negotiation</h2><p className="muted">Effective context window = conservative min across available physical targets (available=true). Pi拉取此视图热补 compaction阈值。</p></div><div className="title-actions"><span className="muted">{rows.length} logical models · {caps.v2_enabled ? 'v2' : 'legacy'}</span><button className="secondary compact-button" onClick={onRefresh}>Refresh</button></div></div>
+    {error && <div className="error">{error}</div>}
+    <div className="table-wrap"><table className="settings-table"><thead><tr><th>Model</th><th>Strategy</th><th>Effective Window</th><th>Targets (window / available)</th></tr></thead><tbody>{rows.map((m) => <tr key={m.id}><td className="strong-cell">{m.id}</td><td><span className="status">{m.strategy}</span></td><td className="muted small-text">{formatWindow(m.effective.contextWindow)} / {formatWindow(m.effective.maxTokens)} {m.effective.contextWindow == null ? <span className="status warn">unset</span> : null}</td><td className="muted small-text target-cell">{m.targets.map((t) => <span className="target-pill" key={`${m.id}-${t.id}`} title={`${t.provider}/${t.upstream_model}`}>{t.id} {formatWindow(t.context_window)} {t.available ? '' : '(unavail)'} {t.weight != null ? `w=${t.weight}` : ''}</span>)}</td></tr>)}</tbody></table></div>
+    <p className="muted small-text">Header校正：非流式chat completions响应头 <code>x-llm-router-context-window / x-llm-router-max-output</code> 为本次命中物理模型的精确值；流式为首选候选的保守提示。Pi扩展 <code>router-context-sync</code> 已通过 capabilities + 响应头双通道热补。</p>
+  </section>;
+}
+
 function V2Panel({ config, onSaved, onError }: { config: V2Status | null; onSaved: (value: V2Status) => void; onError: (value: string) => void }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [editingLogical, setEditingLogical] = useState<string | null>(null);
@@ -376,14 +394,18 @@ function V2Panel({ config, onSaved, onError }: { config: V2Status | null; onSave
 function SettingsPage() {
   const [tokenPrices, setTokenPrices] = useState<TokenPriceConfig | null>(null);
   const [v2, setV2] = useState<V2Status | null>(null);
+  const [caps, setCaps] = useState<RouterCapabilities | null>(null);
+  const [capsError, setCapsError] = useState('');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
 
   const loadSettings = useCallback(async () => {
     try {
-      const [tokenPriceData, v2Data] = await Promise.all([api.tokenPrices(), api.v2Status()]);
+      const [tokenPriceData, v2Data, capsData] = await Promise.all([api.tokenPrices(), api.v2Status(), api.routerCapabilities().catch(() => null as unknown as RouterCapabilities)]);
       setTokenPrices(tokenPriceData);
       setV2(v2Data);
+      if (capsData) setCaps(capsData);
+      setCapsError('');
       setStatus('Settings loaded.');
       setError('');
     } catch (err) {
@@ -391,9 +413,19 @@ function SettingsPage() {
     }
   }, []);
 
+  const refreshCaps = useCallback(async () => {
+    try {
+      setCaps(await api.routerCapabilities());
+      setCapsError('');
+    } catch (err) {
+      setCapsError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
   useEffect(() => { void loadSettings(); }, [loadSettings]);
 
   return <section className="page active"><header><div><h1>Settings</h1><div className="muted">Manage providers, keys, token prices, and logical model routing.</div>{status && <div className="ok">{status}</div>}{error && <div className="error">{error}</div>}</div><button className="secondary" onClick={() => void loadSettings()}>Refresh</button></header>
+    <CapabilitiesPanel caps={caps} onRefresh={refreshCaps} error={capsError} />
     <V2Panel config={v2} onSaved={setV2} onError={setError} />
     <TokenPricesPanel config={tokenPrices} onChange={setTokenPrices} onSaved={(next) => { setTokenPrices(next); setStatus('Token prices saved.'); }} onError={setError} />
   </section>;
