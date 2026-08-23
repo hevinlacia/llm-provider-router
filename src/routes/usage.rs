@@ -6,7 +6,7 @@ use axum::response::{Html, Response};
 use serde_json::json;
 
 use super::resp::{merge_ok, with_state_json};
-use super::UsageQuery;
+use super::{UsageQuery, UsageSeriesQuery};
 
 pub(crate) async fn health(State(app): State<AppState>) -> Response {
     with_state_json(&app, |state| Ok(merge_ok(state.snapshot()?)))
@@ -39,6 +39,22 @@ pub(crate) async fn api_usage(
 ) -> Response {
     with_state_json(&app, |state| {
         state.usage_snapshot(&query.period, query.start.as_deref(), query.end.as_deref())
+    })
+}
+
+pub(crate) async fn api_usage_series(
+    State(app): State<AppState>,
+    Query(query): Query<UsageSeriesQuery>,
+) -> Response {
+    with_state_json(&app, |state| {
+        state.usage_series(
+            &query.period,
+            query.start.as_deref(),
+            query.end.as_deref(),
+            &query.bucket,
+            &query.group_by,
+            query.top,
+        )
     })
 }
 

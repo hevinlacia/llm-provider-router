@@ -408,4 +408,26 @@ impl RouterState {
         apply_costs(&mut snapshot, &prices);
         Ok(snapshot)
     }
+
+    pub fn usage_series(
+        &mut self,
+        period: &str,
+        start: Option<&str>,
+        end: Option<&str>,
+        bucket: &str,
+        group_by: &str,
+        top: Option<usize>,
+    ) -> anyhow::Result<Value> {
+        let mut payload = self.usage_store.series(period, start, end, bucket, group_by, top)?;
+        // 附带总量以便前端同屏做份额、平均成本的小算术
+        let prices = self.expanded_prices_for_cost();
+        let mut snapshot = self.usage_store.snapshot(period, start, end)?;
+        apply_costs(&mut snapshot, &prices);
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("total".to_string(), snapshot["total"].clone());
+            obj.insert("total_cost".to_string(), snapshot["total_cost"].clone());
+            obj.insert("range".to_string(), snapshot["range"].clone());
+        }
+        Ok(payload)
+    }
 }

@@ -32,19 +32,42 @@ pub struct UsageQuery {
     pub end: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UsageSeriesQuery {
+    #[serde(default = "default_period")]
+    pub period: String,
+    pub start: Option<String>,
+    pub end: Option<String>,
+    #[serde(default = "default_series_bucket")]
+    pub bucket: String,
+    #[serde(default = "default_series_group_by")]
+    pub group_by: String,
+    pub top: Option<usize>,
+}
+
 fn default_period() -> String {
     "all".to_string()
+}
+
+fn default_series_bucket() -> String {
+    "day".to_string()
+}
+
+fn default_series_group_by() -> String {
+    "model".to_string()
 }
 
 pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     let app_state = AppState::new(settings.clone())?;
     let app = Router::new()
+        .route("/analytics", get(usage::dashboard))
         .route("/health", get(usage::health))
         .route("/", get(usage::dashboard))
         .route("/dashboard", get(usage::dashboard))
         .route("/settings", get(usage::dashboard))
         .route("/api/state", get(usage::api_state))
         .route("/api/usage", get(usage::api_usage))
+        .route("/api/usage/series", get(usage::api_usage_series))
         .route("/api/usage/reset", post(usage::api_usage_reset))
         .route("/api/frozen/clear", post(usage::api_frozen_clear))
         .route(

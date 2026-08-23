@@ -167,6 +167,57 @@ impl UsageStore {
         }))
     }
 
+    /// Series: 小时/天维度的可视趋势；支持按 model/key_name 分组，按维度 topN 兜底聚合为"other"。
+    ///
+    /// 用途：新增用量分析页的“供应商/模型 token 曲线”主数据源；不破坏 snapshot 契约。
+    pub fn series(
+        &self,
+        period: &str,
+        start: Option<&str>,
+        end: Option<&str>,
+        bucket: &str,
+        group_by: &str,
+        top: Option<usize>,
+    ) -> anyhow::Result<Value> {
+        let (range_start, range_end) = resolve_time_range(period, start, end);
+        let bucket_expr = match bucket {
+            "hour" => "%Y-%m-%dT%H:00:00",
+            "month" => "%Y-%m",
+            _ => "%Y-%m-%d",
+        };
+        let group_col = match group_by {
+            "model" => "model",
+            "key" | "key_name" => "key_name",
+            "provider" => "key_name",
+            _ => "model",
+        };
+        // 预计算真实 range 起止的 unix 秒（考虑 period 隐含的相对 range）
+        let (where_sql, where_args) = time_filter_sql(range_start, range_end);
+        // 拉分维时序
+        let series = self.grouped_series(&bucket_expr, group_col, &where_sql, &where_args)?;
+        // 维度合并：topN=0 表示全保留；否则取 total_tokens 最高的 N 个，其余归 other
+        let top_n = top.unwrap_or(0);
+        let merged = if top_n > 0 { merge_top_groups(series, top_n) } else { series };
+        // 补 0：为所有 bucket 统一做“该桶为 0 也保留”的对齐（利于前端做连续曲线）
+        let buckets: Vec<String> = {
+            let mut b = merged
+                .values()
+                .flat_map(|m| m.keys().cloned())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            b.sort();
+            b
+        };
+        let filled = fill_zero_buckets(merged, &buckets);
+        Ok(json!({
+            "bucket": bucket,
+            "group_by": group_by,
+            "buckets": buckets,
+            "series": filled,
+        }))
+    }
+
     pub fn key_token_totals_for_model(
         &self,
         model: &str,
@@ -339,6 +390,129 @@ impl UsageStore {
         }
         Ok(result)
     }
+
+    fn grouped_series(
+        &self,
+        bucket_expr: &str,
+        group_col: &str,
+        where_sql: &str,
+        args: &[SqlValue],
+    ) -> anyhow::Result<HashMap<String, HashMap<String, Bucket>>> {
+        let query = format!(
+            r#"
+            SELECT
+                strftime('{bucket_expr}', created_at, 'unixepoch', 'localtime') AS bucket,
+                CAST({group_col} AS TEXT) AS name,
+                COUNT(*) AS requests,
+                COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS errors,
+                COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+                COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens
+            FROM usage_events
+            {where_sql}
+            GROUP BY bucket, name
+            ORDER BY bucket, name
+            "#,
+        );
+        let mut stmt = self.conn.prepare(&query)?;
+        let rows = stmt.query_map(params_from_iter(args.iter()), |row| {
+            let mut bucket = Bucket {
+                requests: row.get::<_, i64>("requests")?,
+                errors: row.get::<_, i64>("errors")?,
+                prompt_tokens: row.get::<_, i64>("prompt_tokens")?,
+                cached_tokens: row.get::<_, i64>("cached_tokens")?,
+                prompt_uncached_tokens: 0,
+                completion_tokens: row.get::<_, i64>("completion_tokens")?,
+                total_tokens: row.get::<_, i64>("total_tokens")?,
+                cache_hit_rate: 0.0,
+            };
+            bucket.prompt_uncached_tokens = prompt_uncached_tokens(&bucket);
+            bucket.cache_hit_rate = cache_hit_rate(&bucket);
+            let b: String = row.get("bucket")?;
+            let n: String = row.get("name")?;
+            Ok((n, b, bucket))
+        })?;
+        let mut result: HashMap<String, HashMap<String, Bucket>> = HashMap::new();
+        for row in rows {
+            let (name, bucket, data) = row?;
+            result.entry(name).or_default().insert(bucket, data);
+        }
+        Ok(result)
+    }
+}
+
+fn merge_top_groups(
+    mut series: HashMap<String, HashMap<String, Bucket>>,
+    top: usize,
+) -> HashMap<String, HashMap<String, Bucket>> {
+    let order: Vec<(String, i64)> = series
+        .iter()
+        .map(|(k, m)| (k.clone(), m.values().map(|b| b.total_tokens).sum::<i64>()))
+        .collect();
+    let mut ranked = order;
+    ranked.sort_by(|a, b| b.1.cmp(&a.1));
+    if ranked.len() <= top {
+        return series;
+    }
+    let keep: std::collections::HashSet<String> = ranked.into_iter().take(top).map(|(k, _)| k).collect();
+    let other_keys: Vec<String> = series
+        .keys()
+        .filter(|k| !keep.contains(*k))
+        .cloned()
+        .collect();
+    let mut other: HashMap<String, Bucket> = HashMap::new();
+    for k in &other_keys {
+        if let Some(m) = series.remove(k) {
+            for (bucket, b) in m {
+                let cur = other.entry(bucket).or_insert_with(|| Bucket {
+                    requests: 0,
+                    errors: 0,
+                    prompt_tokens: 0,
+                    cached_tokens: 0,
+                    prompt_uncached_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                    cache_hit_rate: 0.0,
+                });
+                cur.requests += b.requests;
+                cur.errors += b.errors;
+                cur.prompt_tokens += b.prompt_tokens;
+                cur.cached_tokens += b.cached_tokens;
+                cur.prompt_uncached_tokens += b.prompt_uncached_tokens;
+                cur.completion_tokens += b.completion_tokens;
+                cur.total_tokens += b.total_tokens;
+            }
+        }
+    }
+    for bucket in other.values_mut() {
+        bucket.cache_hit_rate = cache_hit_rate(bucket);
+    }
+    if !other.is_empty() {
+        series.insert("other".to_string(), other);
+    }
+    series
+}
+
+fn fill_zero_buckets(
+    mut series: HashMap<String, HashMap<String, Bucket>>,
+    buckets: &[String],
+) -> HashMap<String, HashMap<String, Bucket>> {
+    for m in series.values_mut() {
+        for b in buckets {
+            m.entry(b.clone()).or_insert_with(|| Bucket {
+                requests: 0,
+                errors: 0,
+                prompt_tokens: 0,
+                cached_tokens: 0,
+                prompt_uncached_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                cache_hit_rate: 0.0,
+            });
+        }
+    }
+    series
 }
 
 fn ensure_column(

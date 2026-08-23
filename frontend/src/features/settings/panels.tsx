@@ -164,6 +164,18 @@ export function TokenPricesPanel({ config, v2, equivalences, onChange, onSaved, 
     return map;
   }, [config]);
 
+  // All hooks must run on every render. `counts` was previously declared
+  // after the `if (!config) return` early-return, which caused a hook-order
+  // mismatch: first render (config=null) ran 7 hooks, subsequent render
+  // (config=TokenPriceConfig) ran 8 hooks → React minified error #310
+  // (Rendered more hooks than during the previous render) and a blank
+  // settings page. Keep this hook above the early-return.
+  const counts = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const p of providers) map[p] = (config?.models ?? []).filter((m) => m.model.startsWith(`${p}/`)).length;
+    return map;
+  }, [config, providers]);
+
   if (!config) return <section className="card"><h2>Token Prices</h2><p className="muted">Loading token prices...</p></section>;
   const current = config;
 
@@ -190,12 +202,6 @@ export function TokenPricesPanel({ config, v2, equivalences, onChange, onSaved, 
       setPendingEquiv(null);
     }
   }
-
-  const counts = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const p of providers) map[p] = (config?.models ?? []).filter((m) => m.model.startsWith(`${p}/`)).length;
-    return map;
-  }, [config, providers]);
 
   return <section className="card"><div className="section-title"><h2>Token Prices</h2><span className="muted">{current.config_path}</span></div><p className="muted">仅展示模型池引用的供应商真实模型（<code>provider/model</code>）。右侧切换供应商，下方列出该供应商的模型；每行可一键把价格同步给等价关系表中同组的其它供应商模型。</p>
     <div className="toolbar" style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>

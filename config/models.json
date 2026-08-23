@@ -1,140 +1,148 @@
 {
- "families": {
-  "deepseek-v4-flash": {
-   "display_name": "DeepSeek V4 Flash"
+  "families": {
+    "deepseek-v4-flash": {
+      "display_name": "DeepSeek V4 Flash"
+    },
+    "deepseek-v4-pro": {
+      "display_name": "DeepSeek V4 Pro"
+    }
   },
-  "deepseek-v4-pro": {
-   "display_name": "DeepSeek V4 Pro"
+  "models": {
+    "ark/deepseek-v4-flash-260801": {
+      "provider": "ark",
+      "upstream_model": "deepseek-v4-flash-260801",
+      "family": "deepseek-v4-flash",
+      "params": {},
+      "context_window": 950000,
+      "max_output_tokens": 384000
+    },
+    "openai-relay/gpt-5.6-terra": {
+      "provider": "openai-relay",
+      "upstream_model": "gpt-5.6-terra",
+      "family": null,
+      "params": {},
+      "context_window": 600000,
+      "max_output_tokens": 200000
+    },
+    "opencode-go/muse-spark-1.2-contributor": {
+      "provider": "opencode-go",
+      "upstream_model": "muse-spark-1.2-contributor",
+      "family": null,
+      "params": {},
+      "context_window": 1048576,
+      "max_output_tokens": 128000
+    },
+    "openai-relay/gpt-5.5": {
+      "provider": "openai-relay",
+      "upstream_model": "gpt-5.5",
+      "family": null,
+      "params": {},
+      "context_window": 1000000,
+      "max_output_tokens": 200000
+    },
+    "ark/glm-5-3-260801": {
+      "provider": "ark",
+      "upstream_model": "glm-5-3-260801",
+      "family": null,
+      "params": {},
+      "context_window": 1000000,
+      "max_output_tokens": 128000
+    },
+    "deepseek-official/deepseek-v4-pro": {
+      "provider": "deepseek-official",
+      "upstream_model": "deepseek-v4-pro",
+      "family": "deepseek-v4-pro",
+      "params": {},
+      "context_window": 950000,
+      "max_output_tokens": 384000
+    },
+    "openai-relay/gpt-5.6-sol": {
+      "provider": "openai-relay",
+      "upstream_model": "gpt-5.6-sol",
+      "family": null,
+      "params": {},
+      "context_window": 600000,
+      "max_output_tokens": 200000
+    },
+    "deepseek-official/deepseek-v4-flash-vision-exp": {
+      "provider": "deepseek-official",
+      "upstream_model": "deepseek-v4-flash-vision-exp",
+      "family": null,
+      "params": {},
+      "context_window": null,
+      "max_output_tokens": null
+    },
+    "ark/deepseek-v4-pro": {
+      "provider": "ark",
+      "upstream_model": "deepseek-v4-pro",
+      "family": "deepseek-v4-pro",
+      "params": {},
+      "context_window": 950000,
+      "max_output_tokens": 384000
+    },
+    "openai-relay/gpt-5.6-luna": {
+      "provider": "openai-relay",
+      "upstream_model": "gpt-5.6-luna",
+      "family": null,
+      "params": {},
+      "context_window": 600000,
+      "max_output_tokens": 200000
+    },
+    "opencode-go/glm-5.3": {
+      "provider": "opencode-go",
+      "upstream_model": "glm-5.3",
+      "family": null,
+      "params": {},
+      "context_window": 1000000,
+      "max_output_tokens": 128000
+    },
+    "ark/minimax-m3": {
+      "provider": "ark",
+      "upstream_model": "minimax-m3",
+      "family": null,
+      "params": {},
+      "context_window": 600000,
+      "max_output_tokens": 128000
+    },
+    "ark/glm-5.2": {
+      "provider": "ark",
+      "upstream_model": "glm-5.2",
+      "family": null,
+      "params": {},
+      "context_window": 1000000,
+      "max_output_tokens": 128000
+    },
+    "openai-relay/grok-4.6": {
+      "provider": "openai-relay",
+      "upstream_model": "grok-4.6",
+      "family": null,
+      "params": {},
+      "context_window": 500000,
+      "max_output_tokens": 128000
+    },
+    "ark/ark-code-latest": {
+      "provider": "ark",
+      "upstream_model": "ark-code-latest",
+      "family": null,
+      "params": {},
+      "context_window": 1000000,
+      "max_output_tokens": 128000
+    },
+    "deepseek-official/deepseek-v4-flash": {
+      "provider": "deepseek-official",
+      "upstream_model": "deepseek-v4-flash",
+      "family": "deepseek-v4-flash",
+      "params": {},
+      "context_window": 950000,
+      "max_output_tokens": 384000
+    },
+    "opencode-go/deepseek-v4-flash": {
+      "provider": "opencode-go",
+      "upstream_model": "deepseek-v4-flash",
+      "family": "deepseek-v4-flash",
+      "params": {},
+      "context_window": 950000,
+      "max_output_tokens": 384000
+    }
   }
- },
- "models": {
-  "ark/deepseek-v4-pro": {
-   "provider": "ark",
-   "upstream_model": "deepseek-v4-pro",
-   "family": "deepseek-v4-pro",
-   "params": {},
-   "context_window": 950000,
-   "max_output_tokens": 384000
-  },
-  "opencode-go/muse-spark-1.2-contributor": {
-   "provider": "opencode-go",
-   "upstream_model": "muse-spark-1.2-contributor",
-   "family": null,
-   "params": {},
-   "context_window": 1048576,
-   "max_output_tokens": 128000
-  },
-  "openai-relay/gpt-5.6-luna": {
-   "provider": "openai-relay",
-   "upstream_model": "gpt-5.6-luna",
-   "family": null,
-   "params": {},
-   "context_window": 600000,
-   "max_output_tokens": 200000
-  },
-  "openai-relay/gpt-5.6-terra": {
-   "provider": "openai-relay",
-   "upstream_model": "gpt-5.6-terra",
-   "family": null,
-   "params": {},
-   "context_window": 600000,
-   "max_output_tokens": 200000
-  },
-  "ark/deepseek-v4-flash-260801": {
-   "provider": "ark",
-   "upstream_model": "deepseek-v4-flash-260801",
-   "family": "deepseek-v4-flash",
-   "params": {},
-   "context_window": 950000,
-   "max_output_tokens": 384000
-  },
-  "deepseek-official/deepseek-v4-pro": {
-   "provider": "deepseek-official",
-   "upstream_model": "deepseek-v4-pro",
-   "family": "deepseek-v4-pro",
-   "params": {},
-   "context_window": 950000,
-   "max_output_tokens": 384000
-  },
-  "openai-relay/gpt-5.6-sol": {
-   "provider": "openai-relay",
-   "upstream_model": "gpt-5.6-sol",
-   "family": null,
-   "params": {},
-   "context_window": 600000,
-   "max_output_tokens": 200000
-  },
-  "ark/ark-code-latest": {
-   "provider": "ark",
-   "upstream_model": "ark-code-latest",
-   "family": null,
-   "params": {},
-   "context_window": 1000000,
-   "max_output_tokens": 128000
-  },
-  "opencode-go/glm-5.3": {
-   "provider": "opencode-go",
-   "upstream_model": "glm-5.3",
-   "family": null,
-   "params": {},
-   "context_window": 1000000,
-   "max_output_tokens": 128000
-  },
-  "deepseek-official/deepseek-v4-flash": {
-   "provider": "deepseek-official",
-   "upstream_model": "deepseek-v4-flash",
-   "family": "deepseek-v4-flash",
-   "params": {},
-   "context_window": 950000,
-   "max_output_tokens": 384000
-  },
-  "ark/glm-5-3-260801": {
-   "provider": "ark",
-   "upstream_model": "glm-5-3-260801",
-   "family": null,
-   "params": {},
-   "context_window": 1000000,
-   "max_output_tokens": 128000
-  },
-  "ark/minimax-m3": {
-   "provider": "ark",
-   "upstream_model": "minimax-m3",
-   "family": null,
-   "params": {},
-   "context_window": 600000,
-   "max_output_tokens": 128000
-  },
-  "ark/glm-5.2": {
-   "provider": "ark",
-   "upstream_model": "glm-5.2",
-   "family": null,
-   "params": {},
-   "context_window": 1000000,
-   "max_output_tokens": 128000
-  },
-  "openai-relay/gpt-5.5": {
-   "provider": "openai-relay",
-   "upstream_model": "gpt-5.5",
-   "family": null,
-   "params": {},
-   "context_window": 1000000,
-   "max_output_tokens": 200000
-  },
-  "openai-relay/grok-4.6": {
-   "provider": "openai-relay",
-   "upstream_model": "grok-4.6",
-   "family": null,
-   "params": {},
-   "context_window": 500000,
-   "max_output_tokens": 128000
-  },
-  "opencode-go/deepseek-v4-flash": {
-   "provider": "opencode-go",
-   "upstream_model": "deepseek-v4-flash",
-   "family": "deepseek-v4-flash",
-   "params": {},
-   "context_window": 950000,
-   "max_output_tokens": 384000
-  }
- }
 }

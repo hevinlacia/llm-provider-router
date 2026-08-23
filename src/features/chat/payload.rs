@@ -12,7 +12,12 @@ pub(crate) fn is_muse_spark(alias: &ModelAlias) -> bool {
 pub(crate) fn prepare_upstream_payload(payload: &Value, alias: &ModelAlias) -> Value {
     let mut next = payload.clone();
     next["model"] = Value::String(alias.upstream_model().to_string());
-    // 服务器侧默认/覆写参数（v2 逻辑模型默认 + 物理模型覆写的合并结果）：
+    // 思考强度翻译：DSH 只发 OpenAI 标准档位（xhigh），Router 按逻辑模型的 thinking_level_map
+    // 翻译成上游方言（deepseek-official xhigh->max）。仅对走 Router 的请求生效，直连不经此路径。
+    if let Some(map) = alias.thinking_level_map.as_ref() {
+        translate_reasoning_effort(&mut next, map);
+    }
+    // 服务器侧默认/覆写参数（v2 逻辑模型默认 + 物理模型覆写 params 的合并结果）：
     // 只填充客户端未提供的字段，不覆盖客户端显式参数。
     for (key, value) in &alias.params {
         if next.get(key).is_none() {
@@ -155,6 +160,111 @@ pub(crate) fn ensure_json_hint(next: &mut Value) {
             }
         }
         messages.insert(0, json!({ "role": "system", "content": HINT }));
+    }
+}
+
+/// OpenAI 标准档位（Router 对外契约）。不在此集合的强度视为非标，兜底按 xhigh 处理。
+const STANDARD_EFFORTS: &[&str] = &["off", "minimal", "low", "medium", "high", "xhigh"];
+
+fn is_standard_effort(s: &str) -> bool {
+    STANDARD_EFFORTS.contains(&s.trim().to_ascii_lowercase().as_str())
+}
+
+/// 将客户端标准档位按 alias 的 thinking_level_map 翻译成上游 wire 值。
+/// - map 含某档位且 Some(wire)：改写为 wire；
+/// - map 含某档位且 None：该档位在上游不支持，删除该字段回退上游默认；
+/// - map 不含该档位：保持原值（透传）；
+/// - 非标档位（不在 OpenAI 规范内）：兜底按 xhigh 翻译（xhigh->max 等）。
+/// 当前 DSH 对 OpenAI 协议走 `reasoning_effort`，部分历史/他端可能用 `reasoning` 或 `thinking` 字符串形态，这里全兼容。
+fn translate_reasoning_effort(next: &mut Value, map: &std::collections::HashMap<String, Option<String>>) {
+    // 1) reasoning_effort（主链路：openai-completions）
+    if let Some(effort) = next
+        .get("reasoning_effort")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    {
+        let key = effort.trim().to_ascii_lowercase();
+        if let Some(entry) = map.get(&key) {
+            match entry {
+                Some(wire) => next["reasoning_effort"] = Value::String(wire.clone()),
+                None => {
+                    next.as_object_mut().unwrap().remove("reasoning_effort");
+                }
+            }
+            return;
+        }
+        if !is_standard_effort(&key) {
+            // 非标 -> 兜底 xhigh
+            if let Some(entry) = map.get("xhigh") {
+                match entry {
+                    Some(wire) => next["reasoning_effort"] = Value::String(wire.clone()),
+                    None => {
+                        next.as_object_mut().unwrap().remove("reasoning_effort");
+                    }
+                }
+            } else {
+                next["reasoning_effort"] = Value::String("xhigh".to_string());
+            }
+            return;
+        }
+        // 标准但 map 未声明 -> 透传
+        return;
+    }
+    // 2) reasoning（兼容别名）
+    if let Some(effort) = next
+        .get("reasoning")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    {
+        let key = effort.trim().to_ascii_lowercase();
+        if let Some(entry) = map.get(&key) {
+            match entry {
+                Some(wire) => next["reasoning"] = Value::String(wire.clone()),
+                None => {
+                    next.as_object_mut().unwrap().remove("reasoning");
+                }
+            }
+            return;
+        }
+        if !is_standard_effort(&key) {
+            if let Some(entry) = map.get("xhigh") {
+                match entry {
+                    Some(wire) => next["reasoning"] = Value::String(wire.clone()),
+                    None => {
+                        next.as_object_mut().unwrap().remove("reasoning");
+                    }
+                }
+            } else {
+                next["reasoning"] = Value::String("xhigh".to_string());
+            }
+            return;
+        }
+        return;
+    }
+    // 3) thinking: 字符串形态（部分网关）
+    if let Some(effort) = next.get("thinking").and_then(Value::as_str).map(str::to_owned) {
+        let key = effort.trim().to_ascii_lowercase();
+        if let Some(entry) = map.get(&key) {
+            match entry {
+                Some(wire) => next["thinking"] = Value::String(wire.clone()),
+                None => {
+                    next.as_object_mut().unwrap().remove("thinking");
+                }
+            }
+            return;
+        }
+        if !is_standard_effort(&key) {
+            if let Some(entry) = map.get("xhigh") {
+                match entry {
+                    Some(wire) => next["thinking"] = Value::String(wire.clone()),
+                    None => {
+                        next.as_object_mut().unwrap().remove("thinking");
+                    }
+                }
+            } else {
+                next["thinking"] = Value::String("xhigh".to_string());
+            }
+        }
     }
 }
 

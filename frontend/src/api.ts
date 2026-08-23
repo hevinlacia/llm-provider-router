@@ -1,4 +1,4 @@
-import type { FilterState, KeyConfig, ModelAliasConfig, ModelEquivalencesConfig, ProviderConfig, ProviderModelsResponse, RouterCapabilities, StateResponse, TokenPriceConfig, UsageSnapshot, V2Status, WeightConfig } from './types';
+import type { FilterState, KeyConfig, ModelAliasConfig, ModelEquivalencesConfig, ProviderConfig, ProviderModelsResponse, RouterCapabilities, StateResponse, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, WeightConfig } from './types';
 
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
@@ -53,6 +53,24 @@ export const api = {
   },
   usage(filters: Partial<FilterState> = {}) {
     return request<UsageSnapshot>(`/api/usage${queryFromFilters({ period: filters.period ?? 'all', start: filters.start ?? '', end: filters.end ?? '' })}`);
+  },
+  usageSeries(params: {
+    period?: string;
+    start?: string;
+    end?: string;
+    bucket?: UsageSeriesBucket;
+    group_by?: UsageSeriesGroupBy;
+    top?: number;
+  }) {
+    const q = new URLSearchParams();
+    if (params.period) q.set('period', params.period);
+    if (params.start) q.set('start', params.start);
+    if (params.end) q.set('end', params.end);
+    if (params.bucket) q.set('bucket', params.bucket);
+    if (params.group_by) q.set('group_by', params.group_by);
+    if (params.top != null) q.set('top', String(params.top));
+    const qs = q.toString();
+    return request<UsageSeriesResponse>(`/api/usage/series${qs ? `?${qs}` : ''}`);
   },
   resetUsage() {
     return request<{ ok: boolean; usage: UsageSnapshot }>('/api/usage/reset', { method: 'POST' });

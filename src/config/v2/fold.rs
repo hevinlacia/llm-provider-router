@@ -71,6 +71,10 @@ pub fn fold_to_aliases(cfg: &V2Config) -> anyhow::Result<HashMap<String, ModelAl
             retry,
         );
         alias_obj = alias_obj.with_windows(model.context_window, model.max_output_tokens);
+        alias_obj = alias_obj.with_thinking(
+            lm.thinking_level_map.clone(),
+            lm.thinking_format.clone(),
+        );
         aliases.insert(alias.clone(), alias_obj);
     }
     Ok(aliases)

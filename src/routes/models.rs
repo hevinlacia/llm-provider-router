@@ -15,7 +15,10 @@ pub(crate) async fn models(State(app): State<AppState>, headers: HeaderMap) -> R
     }
     with_state_json(&app, |state| {
         let caps = state.router_capabilities();
-        let cap_map: std::collections::HashMap<String, (Option<u32>, Option<u32>)> = caps
+        let cap_map: std::collections::HashMap<
+            String,
+            (Option<u32>, Option<u32>, Option<serde_json::Value>, Option<bool>),
+        > = caps
             .get("models")
             .and_then(|v| v.as_array())
             .map(|arr| {
@@ -32,7 +35,9 @@ pub(crate) async fn models(State(app): State<AppState>, headers: HeaderMap) -> R
                             .get("maxTokens")?
                             .as_u64()
                             .map(|v| v as u32);
-                        Some((id, (cw, mo)))
+                        let input = m.get("input").cloned();
+                        let reasoning = m.get("reasoning").and_then(|v| v.as_bool());
+                        Some((id, (cw, mo, input, reasoning)))
                     })
                     .collect()
             })
@@ -41,9 +46,12 @@ pub(crate) async fn models(State(app): State<AppState>, headers: HeaderMap) -> R
             .settings_aliases()
             .values()
             .map(|alias| {
-                let (cw, mo) = cap_map.get(&alias.alias).copied().unwrap_or((None, None));
+                let (cw, mo, input, reasoning) =
+                    cap_map.get(&alias.alias).cloned().unwrap_or((None, None, None, None));
                 let cw = cw.or(alias.context_window);
                 let mo = mo.or(alias.max_output_tokens);
+                // input/reasoning：优先 Router 下发的逻辑模型配置，次选 settings_aliases 的硬编码兜底。
+                let caps_input = input.clone();
                 let mut obj = serde_json::json!({
                     "id": alias.alias,
                     "object": "model",
@@ -57,6 +65,12 @@ pub(crate) async fn models(State(app): State<AppState>, headers: HeaderMap) -> R
                 if let Some(v) = mo {
                     obj["max_output_tokens"] = json!(v);
                     obj["maxTokens"] = json!(v);
+                }
+                if let Some(input) = caps_input {
+                    obj["input"] = input;
+                }
+                if let Some(reasoning) = reasoning {
+                    obj["reasoning"] = json!(reasoning);
                 }
                 obj
             })

@@ -401,3 +401,13 @@ td input[type="checkbox"] { width: auto; accent-color: var(--cyan); }
   .kpi-grid { grid-template-columns: 1fr; }
   .add-key-grid { grid-template-columns: 1fr; max-width: none; }
 }
+
+/* ---------- analytics (用量分析曲线) ---------- */
+.trend-shell { margin-top: 14px; }
+.trend-svg { width: 100%; height: 300px; display: block; border: 1px solid rgba(148,163,184,.1); border-radius: 16px; background: rgba(0,0,0,.1); }
+.trend-grid { stroke: rgba(148,163,184,.12); stroke-width: 1; }
+.trend-y-label { fill: var(--faint); font: 700 11px var(--mono); }
+.trend-x-label { fill: var(--muted); font: 700 11px var(--mono); }
+.trend-legend-dots { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.legend-dot { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font: 700 12px var(--mono); }
+.legend-dot i { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }

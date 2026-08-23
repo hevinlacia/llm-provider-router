@@ -121,6 +121,10 @@ pub struct ModelAlias {
     pub context_window: Option<u32>,
     /// 协商用：物理模型单次最大输出 tokens。
     pub max_output_tokens: Option<u32>,
+    /// 思考强度映射：客户端标准档位 -> 上游实际 wire 值（None=不支持）。
+    pub thinking_level_map: Option<HashMap<String, Option<String>>>,
+    /// 上游思考字段协议（reasoning_effort / deepseek 等），供调试与后续 format 翻译使用。
+    pub thinking_format: Option<String>,
 }
 
 impl ModelAlias {
@@ -140,12 +144,24 @@ impl ModelAlias {
             params: HashMap::new(),
             context_window: None,
             max_output_tokens: None,
+            thinking_level_map: None,
+            thinking_format: None,
         }
     }
 
     /// 追加服务器侧参数（v2 路由展开时用于携带逻辑模型默认 + 物理模型覆写）。
     pub fn with_params(mut self, params: HashMap<String, serde_json::Value>) -> Self {
         self.params = params;
+        self
+    }
+
+    pub fn with_thinking(
+        mut self,
+        level_map: Option<HashMap<String, Option<String>>>,
+        format: Option<String>,
+    ) -> Self {
+        self.thinking_level_map = level_map;
+        self.thinking_format = format;
         self
     }
 

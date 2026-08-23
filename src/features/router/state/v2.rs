@@ -7,6 +7,10 @@ use crate::state_store::now_seconds;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
+fn orig_has_null_for(k: &str, map: Option<&HashMap<String, Option<String>>>) -> bool {
+    map.and_then(|m| m.get(k)).is_some_and(|v| v.is_none())
+}
+
 impl RouterState {
     /// v2 折叠视图：每个逻辑模型取主目标（route.targets[0]）折叠为 ModelAlias，
     /// 再接入 custom model aliases（运行时 API 手动新增的扁平逻辑模型）。
@@ -327,21 +331,44 @@ impl RouterState {
             } else {
                 all_mo.into_iter().min()
             };
-            models_out.push(json!({
+            // 对外暴露的 thinking_level_map 统一为 OpenAI 标准身份映射（xhigh:xhigh），
+            // 真实上游方言（xhigh->max）保留在内部 fold 的 ModelAlias，翻译在 Router 内完成。
+            let exposed_map = if lm.thinking_level_map.is_some() {
+                let mut m = std::collections::HashMap::new();
+                for k in ["minimal", "low", "medium", "high", "xhigh"] {
+                    if lm.thinking_level_map
+                        .as_ref()
+                        .is_some_and(|orig| orig.contains_key(k))
+                    {
+                        let wire = if orig_has_null_for(k, lm.thinking_level_map.as_ref()) {
+                            None
+                        } else {
+                            Some(k.to_string())
+                        };
+                        m.insert(k.to_string(), wire);
+                    }
+                }
+                // 仅当原 map 非空才暴露；保持与原有 null 语义兼容
+                if m.is_empty() { None } else { Some(serde_json::to_value(&m).unwrap()) }
+            } else {
+                None
+            };
+            let mut entry = json!({
                 "id": alias,
                 "name": lm.display_name.clone().unwrap_or_else(|| alias.clone()),
                 "display_name": lm.display_name.clone(),
                 "reasoning": lm.reasoning,
                 "input": lm.input.clone(),
-                "thinking_level_map": lm.thinking_level_map.clone(),
-                "thinking_format": lm.thinking_format.clone(),
                 "strategy": strategy,
                 "effective": {
                     "contextWindow": eff_cw,
                     "maxTokens": eff_mo,
                 },
                 "targets": targets_json,
-            }));
+            });
+            if let Some(v) = exposed_map { entry["thinking_level_map"] = v; }
+            if let Some(tf) = lm.thinking_format.clone() { entry["thinking_format"] = json!(tf); }
+            models_out.push(entry);
         }
         json!({
             "ok": true,

@@ -131,6 +131,20 @@ export type FilterState = {
   end: string;
 };
 
+export type UsageSeriesBucket = 'hour' | 'day' | 'month';
+export type UsageSeriesGroupBy = 'model' | 'provider' | 'key';
+export type UsageSeriesMetric = 'total_tokens' | 'prompt_tokens' | 'completion_tokens' | 'requests' | 'errors';
+
+export type UsageSeriesResponse = {
+  bucket: string;
+  group_by: string;
+  buckets: string[];
+  series: Record<string, Record<string, Bucket>>;
+  total: Bucket;
+  total_cost: CostBucket;
+  range: { period: string; start: number | null; end: number | null };
+};
+
 // ---- v2 分层架构状态（GET /api/config/v2）----
 
 export type V2KeyStatus = {
