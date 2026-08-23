@@ -197,7 +197,11 @@ impl UsageStore {
         let series = self.grouped_series(&bucket_expr, group_col, &where_sql, &where_args)?;
         // 维度合并：topN=0 表示全保留；否则取 total_tokens 最高的 N 个，其余归 other
         let top_n = top.unwrap_or(0);
-        let merged = if top_n > 0 { merge_top_groups(series, top_n) } else { series };
+        let merged = if top_n > 0 {
+            merge_top_groups(series, top_n)
+        } else {
+            series
+        };
         // 补 0：为所有 bucket 统一做“该桶为 0 也保留”的对齐（利于前端做连续曲线）
         let buckets: Vec<String> = {
             let mut b = merged
@@ -455,7 +459,8 @@ fn merge_top_groups(
     if ranked.len() <= top {
         return series;
     }
-    let keep: std::collections::HashSet<String> = ranked.into_iter().take(top).map(|(k, _)| k).collect();
+    let keep: std::collections::HashSet<String> =
+        ranked.into_iter().take(top).map(|(k, _)| k).collect();
     let other_keys: Vec<String> = series
         .keys()
         .filter(|k| !keep.contains(*k))

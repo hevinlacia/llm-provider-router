@@ -336,7 +336,8 @@ impl RouterState {
             let exposed_map = if lm.thinking_level_map.is_some() {
                 let mut m = std::collections::HashMap::new();
                 for k in ["minimal", "low", "medium", "high", "xhigh"] {
-                    if lm.thinking_level_map
+                    if lm
+                        .thinking_level_map
                         .as_ref()
                         .is_some_and(|orig| orig.contains_key(k))
                     {
@@ -349,7 +350,11 @@ impl RouterState {
                     }
                 }
                 // 仅当原 map 非空才暴露；保持与原有 null 语义兼容
-                if m.is_empty() { None } else { Some(serde_json::to_value(&m).unwrap()) }
+                if m.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::to_value(&m).unwrap())
+                }
             } else {
                 None
             };
@@ -366,8 +371,12 @@ impl RouterState {
                 },
                 "targets": targets_json,
             });
-            if let Some(v) = exposed_map { entry["thinking_level_map"] = v; }
-            if let Some(tf) = lm.thinking_format.clone() { entry["thinking_format"] = json!(tf); }
+            if let Some(v) = exposed_map {
+                entry["thinking_level_map"] = v;
+            }
+            if let Some(tf) = lm.thinking_format.clone() {
+                entry["thinking_format"] = json!(tf);
+            }
             models_out.push(entry);
         }
         json!({
@@ -471,7 +480,7 @@ impl RouterState {
         Ok(self.v2_status())
     }
 
-    /// 编辑 v2 逻辑模型：路由策略 + 目标（物理模型或嵌套逻辑模型）。
+    /// 编辑 v2 逻辑模型：路由策略 + 目标（物理模型或嵌套逻辑模型）+ 思考强度回退。
     /// 写回 `logical-models.json` 后热加载并返回最新视图。
     pub fn update_v2_logical_model(
         &mut self,
@@ -479,6 +488,8 @@ impl RouterState {
         strategy: config_v2::V2Strategy,
         params: HashMap<String, serde_json::Value>,
         targets: Vec<config_v2::V2Target>,
+        thinking_level_map: Option<HashMap<String, Option<String>>>,
+        thinking_format: Option<String>,
     ) -> anyhow::Result<Value> {
         if name.trim().is_empty() {
             anyhow::bail!("logical model name must not be empty");
@@ -502,6 +513,13 @@ impl RouterState {
         lm.route.strategy = strategy;
         lm.route.targets = targets;
         lm.params = params;
+        // 思考强度：None=不覆写（保留原值），Some(None/值)=显式清空/覆写
+        if thinking_level_map.is_some() {
+            lm.thinking_level_map = thinking_level_map;
+        }
+        if thinking_format.is_some() {
+            lm.thinking_format = thinking_format;
+        }
         config_v2::write_logical_models_file(config_v2::V2_LOGICAL_MODELS_PATH, &logical)?;
         self.reload_v2();
         Ok(self.v2_status())
@@ -515,6 +533,8 @@ impl RouterState {
         strategy: config_v2::V2Strategy,
         params: HashMap<String, serde_json::Value>,
         targets: Vec<config_v2::V2Target>,
+        thinking_level_map: Option<HashMap<String, Option<String>>>,
+        thinking_format: Option<String>,
     ) -> anyhow::Result<Value> {
         let name = name.trim();
         if name.is_empty() {
@@ -544,8 +564,8 @@ impl RouterState {
                 route: config_v2::V2Route { strategy, targets },
                 reasoning: None,
                 input: None,
-                thinking_level_map: None,
-                thinking_format: None,
+                thinking_level_map,
+                thinking_format,
                 display_name: None,
             },
         );

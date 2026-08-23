@@ -29,6 +29,8 @@ pub fn register_physical_models(
                 params: HashMap::new(),
                 context_window: None,
                 max_output_tokens: None,
+                thinking_level_map: None,
+                thinking_format: None,
             },
         );
         registered.push(id.clone());

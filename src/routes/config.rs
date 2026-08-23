@@ -138,6 +138,29 @@ pub(crate) async fn api_config_v2_providers_update(
 }
 
 /// 解析逻辑模型 body：name / strategy / targets / params。
+fn parse_thinking_fields(
+    payload: &Value,
+) -> (Option<HashMap<String, Option<String>>>, Option<String>) {
+    let level_map = payload.get("thinking_level_map").and_then(|v| {
+        if v.is_null() {
+            return None;
+        }
+        v.as_object().map(|obj| {
+            obj.iter()
+                .map(|(k, v)| {
+                    let wire = v.as_str().map(|s| s.to_string());
+                    (k.clone(), wire)
+                })
+                .collect::<HashMap<String, Option<String>>>()
+        })
+    });
+    let format = payload
+        .get("thinking_format")
+        .and_then(Value::as_str)
+        .map(|s| s.to_string());
+    (level_map, format)
+}
+
 fn parse_logical_model_body(
     payload: &Value,
 ) -> Result<
@@ -146,6 +169,8 @@ fn parse_logical_model_body(
         crate::config_v2::V2Strategy,
         HashMap<String, serde_json::Value>,
         Vec<crate::config_v2::V2Target>,
+        Option<HashMap<String, Option<String>>>,
+        Option<String>,
     ),
     String,
 > {
@@ -186,19 +211,35 @@ fn parse_logical_model_body(
                 .collect::<HashMap<_, _>>()
         })
         .unwrap_or_default();
-    Ok((name.to_string(), strategy, params, targets))
+    let (thinking_level_map, thinking_format) = parse_thinking_fields(payload);
+    Ok((
+        name.to_string(),
+        strategy,
+        params,
+        targets,
+        thinking_level_map,
+        thinking_format,
+    ))
 }
 
 pub(crate) async fn api_config_v2_logical_models_create(
     State(app): State<AppState>,
     Json(payload): Json<Value>,
 ) -> Response {
-    let (name, strategy, params, targets) = match parse_logical_model_body(&payload) {
-        Ok(parsed) => parsed,
-        Err(message) => return bad_request(&message),
-    };
+    let (name, strategy, params, targets, thinking_level_map, thinking_format) =
+        match parse_logical_model_body(&payload) {
+            Ok(parsed) => parsed,
+            Err(message) => return bad_request(&message),
+        };
     match app.state.lock() {
-        Ok(mut state) => match state.create_v2_logical_model(&name, strategy, params, targets) {
+        Ok(mut state) => match state.create_v2_logical_model(
+            &name,
+            strategy,
+            params,
+            targets,
+            thinking_level_map,
+            thinking_format,
+        ) {
             Ok(value) => json_status(StatusCode::OK, value),
             Err(err) => bad_request(&err.to_string()),
         },
@@ -210,12 +251,20 @@ pub(crate) async fn api_config_v2_logical_models_update(
     State(app): State<AppState>,
     Json(payload): Json<Value>,
 ) -> Response {
-    let (name, strategy, params, targets) = match parse_logical_model_body(&payload) {
-        Ok(parsed) => parsed,
-        Err(message) => return bad_request(&message),
-    };
+    let (name, strategy, params, targets, thinking_level_map, thinking_format) =
+        match parse_logical_model_body(&payload) {
+            Ok(parsed) => parsed,
+            Err(message) => return bad_request(&message),
+        };
     match app.state.lock() {
-        Ok(mut state) => match state.update_v2_logical_model(&name, strategy, params, targets) {
+        Ok(mut state) => match state.update_v2_logical_model(
+            &name,
+            strategy,
+            params,
+            targets,
+            thinking_level_map,
+            thinking_format,
+        ) {
             Ok(value) => json_status(StatusCode::OK, value),
             Err(err) => bad_request(&err.to_string()),
         },
@@ -552,6 +601,62 @@ pub(crate) async fn api_config_token_prices_apply_equivalents(
     with_state_json(&app, |state| {
         Ok(merge_ok(
             state.apply_price_to_equivalents(model, only_missing)?,
+        ))
+    })
+}
+
+pub(crate) async fn api_config_thinking_maps(State(app): State<AppState>) -> Response {
+    with_state_json(&app, |state| Ok(merge_ok(state.thinking_snapshot())))
+}
+
+pub(crate) async fn api_config_thinking_maps_update(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let Some(maps) = payload.get("maps").and_then(Value::as_array) else {
+        return bad_request("maps must be a list");
+    };
+    let mut parsed = Vec::new();
+    for item in maps {
+        let Some(model) = item.get("model").and_then(Value::as_str) else {
+            return bad_request("each map needs model (string)");
+        };
+        let level_map = item.get("thinking_level_map").and_then(|v| {
+            if v.is_null() {
+                return None;
+            }
+            v.as_object().map(|obj| {
+                obj.iter()
+                    .map(|(k, v)| {
+                        let wire = v.as_str().map(|s| s.to_string());
+                        (k.clone(), wire)
+                    })
+                    .collect::<HashMap<String, Option<String>>>()
+            })
+        });
+        let format = item
+            .get("thinking_format")
+            .and_then(Value::as_str)
+            .map(|s| s.to_string());
+        parsed.push((model.to_string(), level_map, format));
+    }
+    with_state_json(&app, |state| Ok(merge_ok(state.set_thinking_maps(parsed)?)))
+}
+
+pub(crate) async fn api_config_thinking_maps_apply_equivalents(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let Some(model) = payload.get("model").and_then(Value::as_str) else {
+        return bad_request("model (string) is required");
+    };
+    let only_missing = payload
+        .get("only_missing")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    with_state_json(&app, |state| {
+        Ok(merge_ok(
+            state.apply_thinking_to_equivalents(model, only_missing)?,
         ))
     })
 }

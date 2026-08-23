@@ -133,6 +133,183 @@ impl RouterState {
         json!({ "groups": file.groups, "config_path": self.model_equivalences.path.to_string_lossy() })
     }
 
+    // ---- Thinking maps (physical: provider/model) ----
+
+    pub fn thinking_snapshot(&mut self) -> Value {
+        let maps: Vec<Value> = self
+            .v2
+            .as_ref()
+            .map(|cfg| {
+                let mut out = Vec::new();
+                for (id, pm) in &cfg.models {
+                    out.push(json!({
+                        "model": id,
+                        "provider": pm.provider,
+                        "upstream_model": pm.upstream_model,
+                        "thinking_level_map": pm.thinking_level_map,
+                        "thinking_format": pm.thinking_format,
+                    }));
+                }
+                out.sort_by(|a, b| {
+                    a.get("model")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .cmp(b.get("model").and_then(Value::as_str).unwrap_or_default())
+                });
+                out
+            })
+            .unwrap_or_default();
+        // 兼容：若尚未有物理 thinking，附带 logical 回退值供前端对比
+        let logical_fallback: serde_json::Map<String, Value> = self
+            .v2
+            .as_ref()
+            .map(|cfg| {
+                cfg.logical_models
+                    .iter()
+                    .filter_map(|(name, lm)| {
+                        if lm.thinking_level_map.is_some() || lm.thinking_format.is_some() {
+                            Some((
+                                name.clone(),
+                                json!({
+                                    "thinking_level_map": lm.thinking_level_map,
+                                    "thinking_format": lm.thinking_format,
+                                }),
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        json!({
+            "maps": maps,
+            "logical_fallback": logical_fallback,
+            "config_path": crate::config_v2::V2_MODELS_PATH,
+        })
+    }
+
+    pub fn set_thinking_maps(
+        &mut self,
+        maps: Vec<(
+            String,
+            Option<std::collections::HashMap<String, Option<String>>>,
+            Option<String>,
+        )>,
+    ) -> anyhow::Result<Value> {
+        let known: HashSet<String> = self
+            .v2
+            .as_ref()
+            .map(|cfg| cfg.models.keys().cloned().collect())
+            .unwrap_or_default();
+        for (model, _, _) in &maps {
+            if !known.contains(model) {
+                anyhow::bail!("unknown physical model: {}", model);
+            }
+        }
+        let mut file = crate::config_v2::load_models_file(crate::config_v2::V2_MODELS_PATH)?;
+        for (model, level_map, format) in maps {
+            if let Some(pm) = file.models.get_mut(&model) {
+                pm.thinking_level_map = level_map;
+                pm.thinking_format = format;
+            }
+        }
+        crate::config_v2::write_models_file(crate::config_v2::V2_MODELS_PATH, &file)?;
+        self.v2 = crate::config_v2::load_v2_config().ok();
+        Ok(self.thinking_snapshot())
+    }
+
+    pub fn apply_thinking_to_equivalents(
+        &mut self,
+        model: &str,
+        only_missing: bool,
+    ) -> anyhow::Result<Value> {
+        let source = {
+            let cfg = self
+                .v2
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("v2 config not loaded"))?;
+            cfg.models
+                .get(model)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("unknown model: {}", model))?
+        };
+        let group_models: Vec<String> = {
+            let file = self.model_equivalences.get();
+            file.groups
+                .into_iter()
+                .find(|g| g.models.iter().any(|m| m == model))
+                .map(|g| g.models)
+                .unwrap_or_default()
+        };
+        if group_models.is_empty() {
+            anyhow::bail!("model is not in any equivalence group: {}", model);
+        }
+        let mut file = crate::config_v2::load_models_file(crate::config_v2::V2_MODELS_PATH)?;
+        let mut applied = Vec::new();
+        for target in group_models {
+            if target == model {
+                continue;
+            }
+            let Some(pm) = file.models.get_mut(&target) else {
+                // 等价组含未在 models.json 注册的物理 id：按需自动注册（与 logical target 同逻辑）
+                if let Some((provider, upstream)) = target.split_once('/') {
+                    let known_providers: HashSet<&str> = self
+                        .v2
+                        .as_ref()
+                        .map(|cfg| cfg.providers.keys().map(String::as_str).collect())
+                        .unwrap_or_default();
+                    if known_providers.contains(provider) {
+                        file.models.insert(
+                            target.clone(),
+                            crate::config_v2::V2PhysicalModel {
+                                provider: provider.to_string(),
+                                upstream_model: upstream.to_string(),
+                                family: None,
+                                params: HashMap::new(),
+                                context_window: None,
+                                max_output_tokens: None,
+                                thinking_level_map: source.thinking_level_map.clone(),
+                                thinking_format: source.thinking_format.clone(),
+                            },
+                        );
+                        applied.push(target);
+                        continue;
+                    }
+                }
+                continue;
+            };
+            if only_missing {
+                // 仅补空：已有显式 map/format 的目标跳过
+                let has_map = pm.thinking_level_map.is_some();
+                let has_format = pm.thinking_format.is_some();
+                if has_map && has_format {
+                    continue;
+                }
+                if !has_map {
+                    pm.thinking_level_map = source.thinking_level_map.clone();
+                }
+                if !has_format {
+                    pm.thinking_format = source.thinking_format.clone();
+                }
+            } else {
+                pm.thinking_level_map = source.thinking_level_map.clone();
+                pm.thinking_format = source.thinking_format.clone();
+            }
+            applied.push(target);
+        }
+        if applied.is_empty() {
+            anyhow::bail!("no equivalent models to apply (all already configured or no peers)");
+        }
+        crate::config_v2::write_models_file(crate::config_v2::V2_MODELS_PATH, &file)?;
+        self.v2 = crate::config_v2::load_v2_config().ok();
+        Ok(json!({
+            "applied_to": applied,
+            "source": model,
+            "thinking_maps": self.thinking_snapshot(),
+        }))
+    }
+
     pub fn set_equivalences(
         &mut self,
         groups: Vec<crate::json_config::EquivalenceGroup>,
