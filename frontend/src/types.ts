@@ -177,10 +177,27 @@ export type V2PhysicalModel = {
   max_output_tokens?: number | null;
 };
 
+export type ThinkingMapEntry = {
+  model: string;
+  provider: string;
+  upstream_model: string;
+  thinking_level_map: Record<string, string | null> | null;
+  thinking_format: string | null;
+};
+
+export type ThinkingMapsConfig = {
+  ok: boolean;
+  maps: ThinkingMapEntry[];
+  logical_fallback?: Record<string, { thinking_level_map?: Record<string, string | null> | null; thinking_format?: string | null }>;
+  config_path: string;
+};
+
 export type V2LogicalModel = {
   params: Record<string, unknown>;
   strategy: string;
   targets: Array<{ model: string; weight?: number | null }>;
+  thinking_level_map?: Record<string, string | null> | null;
+  thinking_format?: string | null;
 };
 
 export type V2Status = {

@@ -1,4 +1,4 @@
-import type { FilterState, KeyConfig, ModelAliasConfig, ModelEquivalencesConfig, ProviderConfig, ProviderModelsResponse, RouterCapabilities, StateResponse, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, WeightConfig } from './types';
+import type { FilterState, KeyConfig, ModelAliasConfig, ModelEquivalencesConfig, ProviderConfig, ProviderModelsResponse, RouterCapabilities, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, WeightConfig } from './types';
 
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
@@ -129,6 +129,23 @@ export const api = {
       body: JSON.stringify({ groups }),
     });
   },
+  thinkingMaps() {
+    return request<ThinkingMapsConfig>('/api/config/thinking-maps');
+  },
+  saveThinkingMaps(maps: Array<{ model: string; thinking_level_map: Record<string, string | null> | null; thinking_format: string | null }>) {
+    return request<ThinkingMapsConfig>('/api/config/thinking-maps', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maps }),
+    });
+  },
+  applyThinkingToEquivalents(model: string, onlyMissing = false) {
+    return request<{ ok: boolean; applied_to: string[]; thinking_maps: ThinkingMapsConfig }>('/api/config/thinking-maps/apply-equivalents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, only_missing: onlyMissing }),
+    });
+  },
   keys() {
     return request<KeyConfig>('/api/config/keys');
   },
@@ -159,14 +176,14 @@ export const api = {
       body: JSON.stringify({ provider }),
     });
   },
-  updateV2LogicalModel(name: string, body: { strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null }> }) {
+  updateV2LogicalModel(name: string, body: { strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null }>; thinking_level_map?: Record<string, string | null> | null; thinking_format?: string | null }) {
     return request<V2Status>('/api/config/v2/logical-models', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, ...body }),
     });
   },
-  createV2LogicalModel(body: { name: string; strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null }> }) {
+  createV2LogicalModel(body: { name: string; strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null }>; thinking_level_map?: Record<string, string | null> | null; thinking_format?: string | null }) {
     return request<V2Status>('/api/config/v2/logical-models', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

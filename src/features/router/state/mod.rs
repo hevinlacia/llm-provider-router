@@ -418,7 +418,9 @@ impl RouterState {
         group_by: &str,
         top: Option<usize>,
     ) -> anyhow::Result<Value> {
-        let mut payload = self.usage_store.series(period, start, end, bucket, group_by, top)?;
+        let mut payload = self
+            .usage_store
+            .series(period, start, end, bucket, group_by, top)?;
         // 附带总量以便前端同屏做份额、平均成本的小算术
         let prices = self.expanded_prices_for_cost();
         let mut snapshot = self.usage_store.snapshot(period, start, end)?;

@@ -176,7 +176,10 @@ fn is_standard_effort(s: &str) -> bool {
 /// - map 不含该档位：保持原值（透传）；
 /// - 非标档位（不在 OpenAI 规范内）：兜底按 xhigh 翻译（xhigh->max 等）。
 /// 当前 DSH 对 OpenAI 协议走 `reasoning_effort`，部分历史/他端可能用 `reasoning` 或 `thinking` 字符串形态，这里全兼容。
-fn translate_reasoning_effort(next: &mut Value, map: &std::collections::HashMap<String, Option<String>>) {
+fn translate_reasoning_effort(
+    next: &mut Value,
+    map: &std::collections::HashMap<String, Option<String>>,
+) {
     // 1) reasoning_effort（主链路：openai-completions）
     if let Some(effort) = next
         .get("reasoning_effort")
@@ -242,7 +245,11 @@ fn translate_reasoning_effort(next: &mut Value, map: &std::collections::HashMap<
         return;
     }
     // 3) thinking: 字符串形态（部分网关）
-    if let Some(effort) = next.get("thinking").and_then(Value::as_str).map(str::to_owned) {
+    if let Some(effort) = next
+        .get("thinking")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    {
         let key = effort.trim().to_ascii_lowercase();
         if let Some(entry) = map.get(&key) {
             match entry {

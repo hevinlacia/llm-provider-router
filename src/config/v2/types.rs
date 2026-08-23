@@ -85,6 +85,13 @@ pub struct V2PhysicalModel {
     /// 上游单次最大输出 tokens。缺省时取保守默认值。
     #[serde(default)]
     pub max_output_tokens: Option<u32>,
+    /// 思考强度映射（物理粒度）：标准档位 -> 上游 wire 值（None=不支持该档位）。
+    /// 为空时回退逻辑模型的 thinking_level_map。
+    #[serde(default)]
+    pub thinking_level_map: Option<HashMap<String, Option<String>>>,
+    /// 思考字段协议（reasoning_effort 等），物理粒度覆写。
+    #[serde(default)]
+    pub thinking_format: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

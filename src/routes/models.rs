@@ -17,7 +17,12 @@ pub(crate) async fn models(State(app): State<AppState>, headers: HeaderMap) -> R
         let caps = state.router_capabilities();
         let cap_map: std::collections::HashMap<
             String,
-            (Option<u32>, Option<u32>, Option<serde_json::Value>, Option<bool>),
+            (
+                Option<u32>,
+                Option<u32>,
+                Option<serde_json::Value>,
+                Option<bool>,
+            ),
         > = caps
             .get("models")
             .and_then(|v| v.as_array())
@@ -46,8 +51,10 @@ pub(crate) async fn models(State(app): State<AppState>, headers: HeaderMap) -> R
             .settings_aliases()
             .values()
             .map(|alias| {
-                let (cw, mo, input, reasoning) =
-                    cap_map.get(&alias.alias).cloned().unwrap_or((None, None, None, None));
+                let (cw, mo, input, reasoning) = cap_map
+                    .get(&alias.alias)
+                    .cloned()
+                    .unwrap_or((None, None, None, None));
                 let cw = cw.or(alias.context_window);
                 let mo = mo.or(alias.max_output_tokens);
                 // input/reasoning：优先 Router 下发的逻辑模型配置，次选 settings_aliases 的硬编码兜底。

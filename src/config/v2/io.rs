@@ -111,3 +111,7 @@ pub fn write_models_file(path: &str, file: &V2ModelsFile) -> anyhow::Result<()> 
     fs::write(Path::new(path), format!("{raw}\n"))?;
     Ok(())
 }
+
+pub fn load_models_file(path: &str) -> anyhow::Result<V2ModelsFile> {
+    read_json(path)
+}
