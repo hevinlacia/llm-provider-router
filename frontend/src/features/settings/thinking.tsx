@@ -114,27 +114,37 @@ export function ThinkingLevelMapPanel({ config, v2, equivalences, onChange, onSa
     ? <p className="muted small-text">逻辑池回退：{Object.entries(current.logical_fallback).map(([k, v]) => `${k}: ${JSON.stringify(v.thinking_level_map)} / ${v.thinking_format ?? 'null'}`).join(' · ')}</p>
     : null;
 
-  return <section className="card"><div className="section-title"><h2>Thinking Level Maps</h2><span className="muted">{current.config_path}</span></div>
-    <p className="muted">按供应商过滤的物理模型思考强度映射：标准档位 <code>off / minimal / low / medium / high / xhigh</code> → 上游 wire 值（如 DeepSeek <code>xhigh → max</code>）。留空=该档位透传/回退逻辑池，<code>null</code>=该档位上游不支持（删除字段）。每行可一键把映射同步给等价关系表中同组的其它供应商模型。</p>
+  return <section className="card settings-section thinking-section"><div className="section-title settings-title thinking-title"><div><h2>Thinking Level Maps</h2><p className="muted">按供应商过滤物理模型思考强度映射；每张卡对应一个模型。</p></div><span className="muted small-text config-path">{current.config_path}</span></div>
+    <div className="thinking-help-grid">
+      <p className="muted">标准档位 <code>off / minimal / low / medium / high / xhigh</code> → 上游 wire 值（如 DeepSeek <code>xhigh → max</code>）。</p>
+      <p className="muted">留空=透传/回退逻辑池；<code>null</code>=上游不支持并删除字段；可一键同步给同等价组模型。</p>
+    </div>
     {fallbackInfo}
-    <div className="toolbar" style={{ justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 12 }}>
-      <div className="field"><label>Supplier</label><select value={selectedProvider} onChange={(e) => setSelectedProvider(e.target.value)}><option value="__all__">All suppliers ({config.maps.length})</option>{providers.map((p) => <option key={p} value={p}>{p} ({counts[p] ?? 0})</option>)}</select></div>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-        <label className="muted small-text" style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={onlyMissing} onChange={(e) => setOnlyMissing(e.target.checked)} /> Only missing</label>
+    <div className="toolbar thinking-toolbar">
+      <div className="field thinking-filter"><label>Supplier</label><select value={selectedProvider} onChange={(e) => setSelectedProvider(e.target.value)}><option value="__all__">All suppliers ({config.maps.length})</option>{providers.map((p) => <option key={p} value={p}>{p} ({counts[p] ?? 0})</option>)}</select></div>
+      <div className="thinking-actions">
+        <span className="muted small-text">Showing {filtered.length} models</span>
+        <label className="muted small-text thinking-checkbox"><input type="checkbox" checked={onlyMissing} onChange={(e) => setOnlyMissing(e.target.checked)} /> Only missing</label>
         <button onClick={() => void save()}>Save Thinking Maps</button>
       </div>
     </div>
-    <div className="table-wrap"><table><thead><tr><th>Model</th><th>Group</th>{STANDARD_LEVELS.map((lv) => <th key={lv}>{lv}</th>)}<th>Format</th><th></th></tr></thead><tbody>{filtered.map((item) => {
+    <div className="thinking-map-list">{filtered.map((item) => {
       const group = modelToGroup.get(item.model);
-      return <tr key={item.model}><td className="strong-cell">{item.model}</td><td><span className="status">{group ?? '—'}</span></td>
-        {STANDARD_LEVELS.map((lv) => {
+      return <article className="thinking-model-card" key={item.model}>
+        <div className="thinking-model-head">
+          <div className="thinking-model-meta"><strong>{item.model}</strong><span className="status">{group ?? 'No group'}</span></div>
+          <div className="thinking-model-controls">
+            <label className="thinking-format"><span>Format</span><select value={item.thinking_format ?? ''} onChange={(e) => updateMap(item.model, 'thinking_format', e.target.value || null)}><option value="">— fallback</option><option value="reasoning_effort">reasoning_effort</option></select></label>
+            <button className="secondary compact-button" disabled={!group || pendingModel === item.model} onClick={() => void applyEquivalent(item.model)} title={group ? `Apply this map to all models in group \`${group}\` (${onlyMissing ? 'only missing' : 'overwrite'})` : 'Not in any equivalence group'}>{pendingModel === item.model ? 'Applying…' : 'Apply to equivalents'}</button>
+          </div>
+        </div>
+        <div className="thinking-level-grid">{STANDARD_LEVELS.map((lv) => {
           const v = thinkingWireFor(item, lv);
-          return <td key={lv}><input style={{ width: 88 }} value={v === '__null__' ? '' : v} placeholder={v === '__null__' ? 'null' : '—'} title={v === '__null__' ? 'null (不支持)' : undefined} onChange={(e) => updateMap(item.model, 'thinking_level_map', { level: lv, wire: e.target.value === '' && v === '__null__' ? '__null__' : e.target.value })} />
-            <button className="secondary" style={{ marginLeft: 4, padding: '2px 6px', fontSize: 11 }} title="Set null (unsupported)" onClick={() => updateMap(item.model, 'thinking_level_map', { level: lv, wire: '__null__' })}>∅</button></td>;
-        })}
-        <td><select value={item.thinking_format ?? ''} onChange={(e) => updateMap(item.model, 'thinking_format', e.target.value || null)}><option value="">—</option><option value="reasoning_effort">reasoning_effort</option></select></td>
-        <td><button className="secondary compact-button" disabled={!group || pendingModel === item.model} onClick={() => void applyEquivalent(item.model)} title={group ? `Apply this map to all models in group \`${group}\` (${onlyMissing ? 'only missing' : 'overwrite'})` : 'Not in any equivalence group'}>{pendingModel === item.model ? 'Applying…' : 'Apply to equivalents'}</button></td></tr>;
-    })}{!filtered.length && <tr><td colSpan={STANDARD_LEVELS.length + 4} className="muted">{selectedProvider === '__all__' ? 'No physical models (check models.json).' : `No models for supplier \`${selectedProvider}\`.`}</td></tr>}</tbody></table></div>
-    <p className="muted small-text" style={{ marginTop: 8 }}>Tip: 点 ∅ 将该档位设为 <code>null</code>（显式不支持，请求时删除字段）；清空输入框则删除该档位映射（回退逻辑池/透传）。Format 留空=回退逻辑池。</p>
+          const isNull = v === '__null__';
+          return <label className={`thinking-level-field ${isNull ? 'is-null' : ''}`} key={lv}><span>{lv}</span><div className="thinking-level-input"><input value={isNull ? '' : v} placeholder={isNull ? 'null' : '— fallback'} title={isNull ? 'null (不支持)' : undefined} onChange={(e) => updateMap(item.model, 'thinking_level_map', { level: lv, wire: e.target.value === '' && isNull ? '__null__' : e.target.value })} /><button className="secondary null-button" title="Set null (unsupported)" type="button" onClick={() => updateMap(item.model, 'thinking_level_map', { level: lv, wire: '__null__' })}>∅</button></div></label>;
+        })}</div>
+      </article>;
+    })}{!filtered.length && <div className="thinking-empty muted">{selectedProvider === '__all__' ? 'No physical models (check models.json).' : `No models for supplier \`${selectedProvider}\`.`}</div>}</div>
+    <p className="muted small-text thinking-tip">Tip: 点 ∅ 将该档位设为 <code>null</code>（显式不支持，请求时删除字段）；清空输入框则删除该档位映射（回退逻辑池/透传）。Format 留空=回退逻辑池。</p>
   </section>;
 }

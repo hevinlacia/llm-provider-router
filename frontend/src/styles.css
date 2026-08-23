@@ -384,7 +384,37 @@ td input[type="checkbox"] { width: auto; accent-color: var(--cyan); }
 .target-weight { color: #93c5fd; font-size: 11px; font-weight: 700; }
 .compact-button { padding: 7px 10px; font-size: .72rem; }
 
+.thinking-section { display: flex; flex-direction: column; gap: 14px; }
+.thinking-title { gap: 16px; margin-bottom: 0; }
+.config-path { max-width: min(520px, 100%); overflow-wrap: anywhere; text-align: right; }
+.thinking-help-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.thinking-help-grid p { background: rgba(0,0,0,.12); border: 1px solid rgba(148,163,184,.1); border-radius: 14px; line-height: 1.55; margin: 0; padding: 10px 12px; }
+.thinking-toolbar { align-items: flex-end; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin-top: 0; }
+.thinking-filter { min-width: 260px; }
+.thinking-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; justify-content: flex-end; }
+.thinking-checkbox { align-items: center; display: inline-flex; gap: 6px; }
+.thinking-checkbox input { width: auto; }
+.thinking-map-list { display: grid; gap: 12px; margin-top: 2px; }
+.thinking-model-card { background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.025)); border: 1px solid rgba(148,163,184,.14); border-radius: 18px; padding: 14px; }
+.thinking-model-card:hover { border-color: rgba(34,211,238,.28); box-shadow: 0 12px 34px rgba(8,13,24,.16); }
+.thinking-model-head { align-items: flex-start; display: flex; gap: 12px; justify-content: space-between; margin-bottom: 12px; }
+.thinking-model-meta { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.thinking-model-meta strong { color: #f8fafc; font: 800 .82rem var(--mono); overflow-wrap: anywhere; }
+.thinking-model-controls { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.thinking-format { align-items: center; display: inline-flex; gap: 7px; color: var(--muted); font: 800 .66rem var(--mono); text-transform: uppercase; }
+.thinking-format select { min-width: 160px; }
+.thinking-level-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.thinking-level-field { background: rgba(0,0,0,.14); border: 1px solid rgba(148,163,184,.11); border-radius: 14px; display: grid; gap: 7px; padding: 10px; }
+.thinking-level-field > span { color: var(--muted); font: 800 .66rem var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.thinking-level-field.is-null { border-color: rgba(245,158,11,.3); background: rgba(245,158,11,.08); }
+.thinking-level-input { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+.thinking-level-input input { min-width: 0; width: 100%; }
+.null-button { border-radius: 10px; min-width: 34px; padding: 7px 8px; }
+.thinking-empty { border: 1px dashed rgba(148,163,184,.24); border-radius: 16px; padding: 18px; text-align: center; }
+.thinking-tip { margin-top: 0; }
+
 @media (max-width: 1160px) { .panel-grid, .insights { grid-template-columns: 1fr; } .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .thinking-help-grid { grid-template-columns: 1fr; } .thinking-model-head { flex-direction: column; } .thinking-model-controls, .thinking-actions { justify-content: flex-start; } .config-path { text-align: left; } }
 @media (max-width: 980px) {
   .shell { grid-template-columns: 1fr; }
   .shell aside { position: relative; height: auto; flex-direction: row; align-items: center; overflow-x: auto; padding: 12px; }
