@@ -7,6 +7,7 @@ use crate::config::Settings;
 use crate::features::router::RouterState;
 use crate::search::SearchPool;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -23,6 +24,8 @@ impl AppState {
         // 全局使用浏览器 UA 以兼容该上游；OpenAI 兼容 API 不校验 UA，无副作用。
         let client = reqwest::Client::builder()
             .timeout(timeout)
+            .pool_idle_timeout(Duration::from_secs(30))
+            .tcp_keepalive(Duration::from_secs(30))
             .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
             .build()?;
         let state = Arc::new(Mutex::new(RouterState::new(settings.clone())?));
