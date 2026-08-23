@@ -1,0 +1,128 @@
+0 verbose cli /usr/bin/node /usr/bin/npm
+1 info using npm@12.0.2
+2 info using node@v26.7.0
+3 silly config load:file:/usr/lib/node_modules/npm/npmrc
+4 silly config load:file:/home/hevin/Developer/tools/llm-provider-router/frontend/.npmrc
+5 silly config load:file:/home/hevin/.npmrc
+6 silly config load:file:/etc/npmrc
+7 verbose title npm install
+8 verbose argv "--cache" "/home/hevin/Developer/tools/llm-provider-router/frontend/.npm-cache" "--prefix" "/home/hevin/Developer/tools/llm-provider-router/frontend" "install" "--loglevel" "verbose"
+9 verbose logfile logs-max:10 dir:/home/hevin/Developer/tools/llm-provider-router/frontend/.npm-cache/_logs/2026-08-23T07_09_17_085Z-
+10 verbose logfile /home/hevin/Developer/tools/llm-provider-router/frontend/.npm-cache/_logs/2026-08-23T07_09_17_085Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4395630592 maxSize:1098907648 maxEntrySize:549453824
+13 silly idealTree buildDeps
+14 silly reify moves {}
+15 silly audit bulk request {
+15 silly audit   '@emnapi/core': [ '1.11.1' ],
+15 silly audit   '@emnapi/runtime': [ '1.11.1' ],
+15 silly audit   '@emnapi/wasi-threads': [ '1.2.2' ],
+15 silly audit   '@napi-rs/wasm-runtime': [ '1.1.6' ],
+15 silly audit   '@oxc-project/types': [ '0.139.0' ],
+15 silly audit   '@rolldown/binding-android-arm64': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-darwin-arm64': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-darwin-x64': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-freebsd-x64': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-linux-arm-gnueabihf': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-linux-arm64-gnu': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-linux-arm64-musl': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-linux-ppc64-gnu': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-linux-s390x-gnu': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-linux-x64-gnu': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-linux-x64-musl': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-openharmony-arm64': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-wasm32-wasi': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-win32-arm64-msvc': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-win32-x64-msvc': [ '1.1.5' ],
+15 silly audit   '@rolldown/pluginutils': [ '1.0.1' ],
+15 silly audit   '@tybys/wasm-util': [ '0.10.3' ],
+15 silly audit   '@typescript/typescript-aix-ppc64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-darwin-arm64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-darwin-x64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-freebsd-arm64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-freebsd-x64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-arm': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-arm64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-loong64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-mips64el': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-ppc64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-riscv64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-s390x': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-x64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-netbsd-arm64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-netbsd-x64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-openbsd-arm64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-openbsd-x64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-sunos-x64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-win32-arm64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-win32-x64': [ '7.0.2' ],
+15 silly audit   '@vitejs/plugin-react': [ '6.0.4' ],
+15 silly audit   'detect-libc': [ '2.1.2' ],
+15 silly audit   fdir: [ '6.5.0' ],
+15 silly audit   fsevents: [ '2.3.3' ],
+15 silly audit   lightningcss: [ '1.33.0' ],
+15 silly audit   'lightningcss-android-arm64': [ '1.33.0' ],
+15 silly audit   'lightningcss-darwin-arm64': [ '1.33.0' ],
+15 silly audit   'lightningcss-darwin-x64': [ '1.33.0' ],
+15 silly audit   'lightningcss-freebsd-x64': [ '1.33.0' ],
+15 silly audit   'lightningcss-linux-arm-gnueabihf': [ '1.33.0' ],
+15 silly audit   'lightningcss-linux-arm64-gnu': [ '1.33.0' ],
+15 silly audit   'lightningcss-linux-arm64-musl': [ '1.33.0' ],
+15 silly audit   'lightningcss-linux-x64-gnu': [ '1.33.0' ],
+15 silly audit   'lightningcss-linux-x64-musl': [ '1.33.0' ],
+15 silly audit   'lightningcss-win32-arm64-msvc': [ '1.33.0' ],
+15 silly audit   'lightningcss-win32-x64-msvc': [ '1.33.0' ],
+15 silly audit   nanoid: [ '3.3.16' ],
+15 silly audit   picocolors: [ '1.1.1' ],
+15 silly audit   picomatch: [ '4.0.5' ],
+15 silly audit   postcss: [ '8.5.22' ],
+15 silly audit   react: [ '19.2.8' ],
+15 silly audit   'react-dom': [ '19.2.8' ],
+15 silly audit   rolldown: [ '1.1.5' ],
+15 silly audit   scheduler: [ '0.27.0' ],
+15 silly audit   'source-map-js': [ '1.2.1' ],
+15 silly audit   tinyglobby: [ '0.2.17' ],
+15 silly audit   tslib: [ '2.8.1' ],
+15 silly audit   typescript: [ '7.0.2' ],
+15 silly audit   vite: [ '8.1.5' ]
+15 silly audit }
+16 http fetch POST 200 https://registry.npmjs.org/-/npm/v1/security/advisories/bulk 511ms
+17 silly audit report {
+17 silly audit report   nanoid: [
+17 silly audit report     {
+17 silly audit report       id: 1139427,
+17 silly audit report       url: 'https://github.com/advisories/GHSA-2v37-7h3g-55p8',
+17 silly audit report       title: 'nanoid: custom generators can loop indefinitely when size is zero',
+17 silly audit report       severity: 'high',
+17 silly audit report       vulnerable_versions: '<3.3.18',
+17 silly audit report       cwe: [Array],
+17 silly audit report       cvss: [Object]
+17 silly audit report     }
+17 silly audit report   ],
+17 silly audit report   postcss: [
+17 silly audit report     {
+17 silly audit report       id: 1130709,
+17 silly audit report       url: 'https://github.com/advisories/GHSA-fxqj-rqcc-2cmp',
+17 silly audit report       title: 'PostCSS: incomplete fix of GHSA-6g55-p6wh-862q — attacker-controlled sourceMappingURL reads arbitrary .map files when `from` is unset',
+17 silly audit report       severity: 'moderate',
+17 silly audit report       vulnerable_versions: '<=8.5.22',
+17 silly audit report       cwe: [Array],
+17 silly audit report       cvss: [Object]
+17 silly audit report     }
+17 silly audit report   ]
+17 silly audit report }
+18 silly packumentCache corgi:https://registry.npmjs.org/nanoid cache-miss
+19 silly packumentCache corgi:https://registry.npmjs.org/postcss cache-miss
+20 http cache https://registry.npmjs.org/nanoid 5ms (cache hit)
+21 silly packumentCache corgi:https://registry.npmjs.org/nanoid set size:158420 disposed:false
+22 http cache https://registry.npmjs.org/postcss 6ms (cache hit)
+23 silly packumentCache corgi:https://registry.npmjs.org/postcss set size:355680 disposed:false
+24 silly packumentCache corgi:https://registry.npmjs.org/vite cache-miss
+25 http cache https://registry.npmjs.org/vite 3ms (cache hit)
+26 silly packumentCache corgi:https://registry.npmjs.org/vite set size:2298256 disposed:false
+27 verbose cwd /home/hevin/Developer
+28 verbose os Linux 7.2.0-1-cachyos
+29 verbose node v26.7.0
+30 verbose npm  v12.0.2
+31 verbose exit 0
+32 info ok

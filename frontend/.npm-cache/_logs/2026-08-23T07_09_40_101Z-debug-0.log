@@ -1,0 +1,18 @@
+0 verbose cli /usr/bin/node /usr/bin/npm
+1 info using npm@12.0.2
+2 info using node@v26.7.0
+3 silly config load:file:/usr/lib/node_modules/npm/npmrc
+4 silly config load:file:/home/hevin/Developer/tools/llm-provider-router/frontend/.npmrc
+5 silly config load:file:/home/hevin/.npmrc
+6 silly config load:file:/etc/npmrc
+7 verbose title npm config list
+8 verbose argv "--cache" "/home/hevin/Developer/tools/llm-provider-router/frontend/.npm-cache" "--prefix" "/home/hevin/Developer/tools/llm-provider-router/frontend" "config" "list"
+9 verbose logfile logs-max:10 dir:/home/hevin/Developer/tools/llm-provider-router/frontend/.npm-cache/_logs/2026-08-23T07_09_40_101Z-
+10 verbose logfile /home/hevin/Developer/tools/llm-provider-router/frontend/.npm-cache/_logs/2026-08-23T07_09_40_101Z-debug-0.log
+11 silly logfile done cleaning log files
+12 verbose cwd /home/hevin/Developer
+13 verbose os Linux 7.2.0-1-cachyos
+14 verbose node v26.7.0
+15 verbose npm  v12.0.2
+16 verbose exit 0
+17 info ok

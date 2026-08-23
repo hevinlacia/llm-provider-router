@@ -1,0 +1,212 @@
+0 verbose cli /usr/bin/node /usr/bin/npm
+1 info using npm@12.0.2
+2 info using node@v26.7.0
+3 silly config load:file:/usr/lib/node_modules/npm/npmrc
+4 silly config load:file:/home/hevin/Developer/tools/llm-provider-router/frontend/.npmrc
+5 silly config load:file:/home/hevin/.npmrc
+6 silly config load:file:/etc/npmrc
+7 verbose title npm install
+8 verbose argv "--cache" "/home/hevin/Developer/tools/llm-provider-router/frontend/.npm-cache" "--prefix" "/home/hevin/Developer/tools/llm-provider-router/frontend" "install"
+9 verbose logfile logs-max:10 dir:/home/hevin/Developer/tools/llm-provider-router/frontend/.npm-cache/_logs/2026-08-23T07_09_32_586Z-
+10 verbose logfile /home/hevin/Developer/tools/llm-provider-router/frontend/.npm-cache/_logs/2026-08-23T07_09_32_586Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4395630592 maxSize:1098907648 maxEntrySize:549453824
+13 silly idealTree buildDeps
+14 silly reify moves {}
+15 silly audit bulk request {
+15 silly audit   '@emnapi/core': [ '1.11.1' ],
+15 silly audit   '@emnapi/runtime': [ '1.11.1' ],
+15 silly audit   '@emnapi/wasi-threads': [ '1.2.2' ],
+15 silly audit   '@napi-rs/wasm-runtime': [ '1.1.6' ],
+15 silly audit   '@oxc-project/types': [ '0.139.0' ],
+15 silly audit   '@rolldown/binding-android-arm64': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-darwin-arm64': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-darwin-x64': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-freebsd-x64': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-linux-arm-gnueabihf': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-linux-arm64-gnu': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-linux-arm64-musl': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-linux-ppc64-gnu': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-linux-s390x-gnu': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-linux-x64-gnu': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-linux-x64-musl': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-openharmony-arm64': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-wasm32-wasi': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-win32-arm64-msvc': [ '1.1.5' ],
+15 silly audit   '@rolldown/binding-win32-x64-msvc': [ '1.1.5' ],
+15 silly audit   '@rolldown/pluginutils': [ '1.0.1' ],
+15 silly audit   '@tybys/wasm-util': [ '0.10.3' ],
+15 silly audit   '@typescript/typescript-aix-ppc64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-darwin-arm64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-darwin-x64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-freebsd-arm64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-freebsd-x64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-arm': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-arm64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-loong64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-mips64el': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-ppc64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-riscv64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-s390x': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-linux-x64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-netbsd-arm64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-netbsd-x64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-openbsd-arm64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-openbsd-x64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-sunos-x64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-win32-arm64': [ '7.0.2' ],
+15 silly audit   '@typescript/typescript-win32-x64': [ '7.0.2' ],
+15 silly audit   '@vitejs/plugin-react': [ '6.0.4' ],
+15 silly audit   'detect-libc': [ '2.1.2' ],
+15 silly audit   fdir: [ '6.5.0' ],
+15 silly audit   fsevents: [ '2.3.3' ],
+15 silly audit   lightningcss: [ '1.33.0' ],
+15 silly audit   'lightningcss-android-arm64': [ '1.33.0' ],
+15 silly audit   'lightningcss-darwin-arm64': [ '1.33.0' ],
+15 silly audit   'lightningcss-darwin-x64': [ '1.33.0' ],
+15 silly audit   'lightningcss-freebsd-x64': [ '1.33.0' ],
+15 silly audit   'lightningcss-linux-arm-gnueabihf': [ '1.33.0' ],
+15 silly audit   'lightningcss-linux-arm64-gnu': [ '1.33.0' ],
+15 silly audit   'lightningcss-linux-arm64-musl': [ '1.33.0' ],
+15 silly audit   'lightningcss-linux-x64-gnu': [ '1.33.0' ],
+15 silly audit   'lightningcss-linux-x64-musl': [ '1.33.0' ],
+15 silly audit   'lightningcss-win32-arm64-msvc': [ '1.33.0' ],
+15 silly audit   'lightningcss-win32-x64-msvc': [ '1.33.0' ],
+15 silly audit   nanoid: [ '3.3.16' ],
+15 silly audit   picocolors: [ '1.1.1' ],
+15 silly audit   picomatch: [ '4.0.5' ],
+15 silly audit   postcss: [ '8.5.22' ],
+15 silly audit   react: [ '19.2.8' ],
+15 silly audit   'react-dom': [ '19.2.8' ],
+15 silly audit   rolldown: [ '1.1.5' ],
+15 silly audit   scheduler: [ '0.27.0' ],
+15 silly audit   'source-map-js': [ '1.2.1' ],
+15 silly audit   tinyglobby: [ '0.2.17' ],
+15 silly audit   tslib: [ '2.8.1' ],
+15 silly audit   typescript: [ '7.0.2' ],
+15 silly audit   vite: [ '8.1.5' ]
+15 silly audit }
+16 http cache vite@https://registry.npmjs.org/vite/-/vite-8.1.5.tgz 0ms (cache hit)
+17 http cache typescript@https://registry.npmjs.org/typescript/-/typescript-7.0.2.tgz 0ms (cache hit)
+18 http cache tinyglobby@https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz 0ms (cache hit)
+19 http cache scheduler@https://registry.npmjs.org/scheduler/-/scheduler-0.27.0.tgz 0ms (cache hit)
+20 http cache rolldown@https://registry.npmjs.org/rolldown/-/rolldown-1.1.5.tgz 0ms (cache hit)
+21 http cache react-dom@https://registry.npmjs.org/react-dom/-/react-dom-19.2.8.tgz 0ms (cache hit)
+22 http cache react@https://registry.npmjs.org/react/-/react-19.2.8.tgz 0ms (cache hit)
+23 http cache postcss@https://registry.npmjs.org/postcss/-/postcss-8.5.22.tgz 0ms (cache hit)
+24 http cache picomatch@https://registry.npmjs.org/picomatch/-/picomatch-4.0.5.tgz 0ms (cache hit)
+25 http cache source-map-js@https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz 0ms (cache hit)
+26 http cache nanoid@https://registry.npmjs.org/nanoid/-/nanoid-3.3.16.tgz 0ms (cache hit)
+27 http cache lightningcss-linux-x64-gnu@https://registry.npmjs.org/lightningcss-linux-x64-gnu/-/lightningcss-linux-x64-gnu-1.33.0.tgz 0ms (cache hit)
+28 http cache lightningcss@https://registry.npmjs.org/lightningcss/-/lightningcss-1.33.0.tgz 0ms (cache hit)
+29 http cache fdir@https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz 0ms (cache hit)
+30 http cache detect-libc@https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz 0ms (cache hit)
+31 http cache @typescript/typescript-linux-x64@https://registry.npmjs.org/@typescript/typescript-linux-x64/-/typescript-linux-x64-7.0.2.tgz 0ms (cache hit)
+32 http cache @vitejs/plugin-react@https://registry.npmjs.org/@vitejs/plugin-react/-/plugin-react-6.0.4.tgz 0ms (cache hit)
+33 http cache @rolldown/pluginutils@https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz 0ms (cache hit)
+34 http cache @rolldown/binding-linux-x64-gnu@https://registry.npmjs.org/@rolldown/binding-linux-x64-gnu/-/binding-linux-x64-gnu-1.1.5.tgz 0ms (cache hit)
+35 http cache @oxc-project/types@https://registry.npmjs.org/@oxc-project/types/-/types-0.139.0.tgz 0ms (cache hit)
+36 http cache picocolors@https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz 0ms (cache hit)
+37 silly tarball no local data for vite@https://registry.npmjs.org/vite/-/vite-8.1.5.tgz. Extracting by manifest.
+38 silly tarball no local data for typescript@https://registry.npmjs.org/typescript/-/typescript-7.0.2.tgz. Extracting by manifest.
+39 silly tarball no local data for tinyglobby@https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz. Extracting by manifest.
+40 silly tarball no local data for scheduler@https://registry.npmjs.org/scheduler/-/scheduler-0.27.0.tgz. Extracting by manifest.
+41 silly tarball no local data for rolldown@https://registry.npmjs.org/rolldown/-/rolldown-1.1.5.tgz. Extracting by manifest.
+42 silly tarball no local data for react-dom@https://registry.npmjs.org/react-dom/-/react-dom-19.2.8.tgz. Extracting by manifest.
+43 silly tarball no local data for react@https://registry.npmjs.org/react/-/react-19.2.8.tgz. Extracting by manifest.
+44 silly tarball no local data for postcss@https://registry.npmjs.org/postcss/-/postcss-8.5.22.tgz. Extracting by manifest.
+45 silly tarball no local data for picomatch@https://registry.npmjs.org/picomatch/-/picomatch-4.0.5.tgz. Extracting by manifest.
+46 silly tarball no local data for source-map-js@https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz. Extracting by manifest.
+47 silly tarball no local data for nanoid@https://registry.npmjs.org/nanoid/-/nanoid-3.3.16.tgz. Extracting by manifest.
+48 silly tarball no local data for lightningcss-linux-x64-gnu@https://registry.npmjs.org/lightningcss-linux-x64-gnu/-/lightningcss-linux-x64-gnu-1.33.0.tgz. Extracting by manifest.
+49 silly tarball no local data for lightningcss@https://registry.npmjs.org/lightningcss/-/lightningcss-1.33.0.tgz. Extracting by manifest.
+50 silly tarball no local data for fdir@https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz. Extracting by manifest.
+51 silly tarball no local data for detect-libc@https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz. Extracting by manifest.
+52 silly tarball no local data for @typescript/typescript-linux-x64@https://registry.npmjs.org/@typescript/typescript-linux-x64/-/typescript-linux-x64-7.0.2.tgz. Extracting by manifest.
+53 silly tarball no local data for @vitejs/plugin-react@https://registry.npmjs.org/@vitejs/plugin-react/-/plugin-react-6.0.4.tgz. Extracting by manifest.
+54 silly tarball no local data for @rolldown/pluginutils@https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz. Extracting by manifest.
+55 silly tarball no local data for @rolldown/binding-linux-x64-gnu@https://registry.npmjs.org/@rolldown/binding-linux-x64-gnu/-/binding-linux-x64-gnu-1.1.5.tgz. Extracting by manifest.
+56 silly tarball no local data for @oxc-project/types@https://registry.npmjs.org/@oxc-project/types/-/types-0.139.0.tgz. Extracting by manifest.
+57 silly tarball no local data for picocolors@https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz. Extracting by manifest.
+58 http fetch POST 200 https://registry.npmjs.org/-/npm/v1/security/advisories/bulk 628ms
+59 silly audit report {
+59 silly audit report   nanoid: [
+59 silly audit report     {
+59 silly audit report       id: 1139427,
+59 silly audit report       url: 'https://github.com/advisories/GHSA-2v37-7h3g-55p8',
+59 silly audit report       title: 'nanoid: custom generators can loop indefinitely when size is zero',
+59 silly audit report       severity: 'high',
+59 silly audit report       vulnerable_versions: '<3.3.18',
+59 silly audit report       cwe: [Array],
+59 silly audit report       cvss: [Object]
+59 silly audit report     }
+59 silly audit report   ],
+59 silly audit report   postcss: [
+59 silly audit report     {
+59 silly audit report       id: 1130709,
+59 silly audit report       url: 'https://github.com/advisories/GHSA-fxqj-rqcc-2cmp',
+59 silly audit report       title: 'PostCSS: incomplete fix of GHSA-6g55-p6wh-862q — attacker-controlled sourceMappingURL reads arbitrary .map files when `from` is unset',
+59 silly audit report       severity: 'moderate',
+59 silly audit report       vulnerable_versions: '<=8.5.22',
+59 silly audit report       cwe: [Array],
+59 silly audit report       cvss: [Object]
+59 silly audit report     }
+59 silly audit report   ]
+59 silly audit report }
+60 silly packumentCache corgi:https://registry.npmjs.org/nanoid cache-miss
+61 silly packumentCache corgi:https://registry.npmjs.org/postcss cache-miss
+62 http cache https://registry.npmjs.org/postcss 4ms (cache hit)
+63 silly packumentCache corgi:https://registry.npmjs.org/postcss set size:355680 disposed:false
+64 http cache https://registry.npmjs.org/nanoid 6ms (cache hit)
+65 silly packumentCache corgi:https://registry.npmjs.org/nanoid set size:158420 disposed:false
+66 silly packumentCache corgi:https://registry.npmjs.org/vite cache-miss
+67 http cache https://registry.npmjs.org/vite 4ms (cache hit)
+68 silly packumentCache corgi:https://registry.npmjs.org/vite set size:2298256 disposed:false
+69 http fetch GET 200 https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz 796ms (cache miss)
+70 http fetch GET 200 https://registry.npmjs.org/nanoid/-/nanoid-3.3.16.tgz 797ms (cache miss)
+71 http fetch GET 200 https://registry.npmjs.org/postcss/-/postcss-8.5.22.tgz 801ms (cache miss)
+72 http fetch GET 200 https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz 824ms (cache miss)
+73 http fetch GET 200 https://registry.npmjs.org/scheduler/-/scheduler-0.27.0.tgz 951ms (cache miss)
+74 http fetch GET 200 https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz 969ms (cache miss)
+75 http fetch GET 200 https://registry.npmjs.org/picomatch/-/picomatch-4.0.5.tgz 971ms (cache miss)
+76 http fetch GET 200 https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz 977ms (cache miss)
+77 http fetch GET 200 https://registry.npmjs.org/react/-/react-19.2.8.tgz 987ms (cache miss)
+78 http fetch GET 200 https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz 989ms (cache miss)
+79 http fetch GET 200 https://registry.npmjs.org/@vitejs/plugin-react/-/plugin-react-6.0.4.tgz 989ms (cache miss)
+80 http fetch GET 200 https://registry.npmjs.org/lightningcss/-/lightningcss-1.33.0.tgz 991ms (cache miss)
+81 http fetch GET 200 https://registry.npmjs.org/rolldown/-/rolldown-1.1.5.tgz 1021ms (cache miss)
+82 http fetch GET 200 https://registry.npmjs.org/vite/-/vite-8.1.5.tgz 1033ms (cache miss)
+83 http fetch GET 200 https://registry.npmjs.org/react-dom/-/react-dom-19.2.8.tgz 1056ms (cache miss)
+84 http fetch GET 200 https://registry.npmjs.org/lightningcss-linux-x64-gnu/-/lightningcss-linux-x64-gnu-1.33.0.tgz 1066ms (cache miss)
+85 http fetch GET 200 https://registry.npmjs.org/typescript/-/typescript-7.0.2.tgz 1088ms (cache miss)
+86 http fetch GET 200 https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz 1120ms (cache miss)
+87 http fetch GET 200 https://registry.npmjs.org/@oxc-project/types/-/types-0.139.0.tgz 1128ms (cache miss)
+88 http fetch GET 200 https://registry.npmjs.org/@rolldown/binding-linux-x64-gnu/-/binding-linux-x64-gnu-1.1.5.tgz 1348ms (cache miss)
+89 http fetch GET 200 https://registry.npmjs.org/@typescript/typescript-linux-x64/-/typescript-linux-x64-7.0.2.tgz 1367ms (cache miss)
+90 silly ADD node_modules/vite
+91 silly ADD node_modules/typescript
+92 silly ADD node_modules/tinyglobby
+93 silly ADD node_modules/source-map-js
+94 silly ADD node_modules/scheduler
+95 silly ADD node_modules/rolldown
+96 silly ADD node_modules/react-dom
+97 silly ADD node_modules/react
+98 silly ADD node_modules/postcss
+99 silly ADD node_modules/picomatch
+100 silly ADD node_modules/picocolors
+101 silly ADD node_modules/nanoid
+102 silly ADD node_modules/lightningcss-linux-x64-gnu
+103 silly ADD node_modules/lightningcss
+104 silly ADD node_modules/fdir
+105 silly ADD node_modules/detect-libc
+106 silly ADD node_modules/@vitejs/plugin-react
+107 silly ADD node_modules/@typescript/typescript-linux-x64
+108 silly ADD node_modules/@rolldown/pluginutils
+109 silly ADD node_modules/@rolldown/binding-linux-x64-gnu
+110 silly ADD node_modules/@oxc-project/types
+111 verbose cwd /home/hevin/Developer
+112 verbose os Linux 7.2.0-1-cachyos
+113 verbose node v26.7.0
+114 verbose npm  v12.0.2
+115 verbose exit 0
+116 info ok
