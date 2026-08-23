@@ -37,6 +37,8 @@ pub(crate) async fn stream_upstream_route(
         });
     let stream = async_stream::stream! {
         let mut last_error: Option<String> = None;
+        let mut total_tried: usize = 0;
+        let mut failed_alias: String = aliases.first().map(|a| a.alias.clone()).unwrap_or_else(|| "router".to_string());
         for base_alias in aliases {
             let alias = match alias_with_runtime_weights_locked(&app, &base_alias) {
                 Ok(alias) => alias,
@@ -65,6 +67,8 @@ pub(crate) async fn stream_upstream_route(
                     }
                 };
                 tried.insert(key.name.clone());
+                total_tried += 1;
+                failed_alias = alias.alias.clone();
                 let key_value = match upstream_key_value_locked(&app, &key) {
                     Ok(value) => value,
                     Err(message) => {
@@ -74,21 +78,65 @@ pub(crate) async fn stream_upstream_route(
                 };
                 let Some(key_value) = key_value else {
                     record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None);
+                    last_error = Some(format!("missing key value for {}", usage_key_name(&app, &key)));
                     continue;
                 };
-                let response = app
-                    .client
-                    .post(format!("{}/chat/completions", alias.base_url.trim_end_matches('/')))
-                    .bearer_auth(key_value)
-                    .header(CONTENT_TYPE, "application/json")
-                    .json(&upstream_payload)
-                    .send()
-                    .await;
+                let mut response: Option<reqwest::Response> = None;
+                let mut last_exc: Option<String> = None;
+                for attempt in 0..2 {
+                    match app
+                        .client
+                        .post(format!("{}/chat/completions", alias.base_url.trim_end_matches('/')))
+                        .bearer_auth(key_value.clone())
+                        .header(CONTENT_TYPE, "application/json")
+                        .json(&upstream_payload)
+                        .send()
+                        .await
+                    {
+                        Ok(resp) => {
+                            response = Some(resp);
+                            break;
+                        }
+                        Err(exc) => {
+                            let retryable = exc.is_connect() || exc.is_timeout() || exc.is_request();
+                            last_exc = Some(exc.to_string());
+                            if attempt == 0 && retryable {
+                                if crate::diag::diag_enabled(&app.settings) {
+                                    crate::diag::append(
+                                        &app.settings,
+                                        "upstream.retry_pool_idle",
+                                        serde_json::json!({
+                                            "alias": alias.alias,
+                                            "provider": alias.provider(),
+                                            "key": usage_key_name(&app, &key),
+                                            "attempt": attempt + 1,
+                                            "error": last_exc,
+                                        }),
+                                    );
+                                }
+                                continue;
+                            }
+                            break;
+                        }
+                    }
+                }
                 let response = match response {
-                    Ok(response) => response,
-                    Err(exc) => {
+                    Some(r) => r,
+                    None => {
                         record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None);
-                        last_error = Some(exc.to_string());
+                        last_error = Some(last_exc.unwrap_or_else(|| "upstream connect error".to_string()));
+                        if crate::diag::diag_enabled(&app.settings) {
+                            crate::diag::append(
+                                &app.settings,
+                                "upstream.connect_error",
+                                serde_json::json!({
+                                    "alias": alias.alias,
+                                    "provider": alias.provider(),
+                                    "key": usage_key_name(&app, &key),
+                                    "error": last_error,
+                                }),
+                            );
+                        }
                         continue;
                     }
                 };
@@ -171,7 +219,11 @@ pub(crate) async fn stream_upstream_route(
             }
         }
         if let Some(error) = last_error {
-            yield Ok(Bytes::from(stream_error_event("router", 0, &error)));
+            // 之前写死 "router"/0 会让 `all 0 upstream keys failed for router`
+            // 误导为“路由配置为空”；现用真实 alias + 累计 tried。
+            let shown = if total_tried > 0 { total_tried } else { 1 };
+            let alias = if total_tried > 0 { failed_alias } else { "router".to_string() };
+            yield Ok(Bytes::from(stream_error_event(&alias, shown, &error)));
         }
     };
     // 流式响应头：取首选候选的窗口作为保守提示（精确命中窗口由非流式头提供；流式下在连接建立前无法确定最终命中）

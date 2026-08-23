@@ -59,20 +59,54 @@ pub(crate) async fn call_upstream(
             continue;
         };
 
-        let response = app
-            .client
-            .post(format!(
-                "{}/chat/completions",
-                alias.base_url.trim_end_matches('/')
-            ))
-            .bearer_auth(key_value)
-            .header(CONTENT_TYPE, "application/json")
-            .json(&payload)
-            .send()
-            .await;
+        // 闲置后首包的连接池脏连接（hyper pool idle 90s vs 服务端已 FIN）会以
+        // reqwest::Error(is_connect || is_timeout) 形式失败；对同一 key 立即重建
+        // 连接重试一次，避免把整池 key 轮一遍全记 599。
+        let mut response: Option<reqwest::Response> = None;
+        let mut last_exc: Option<String> = None;
+        for attempt in 0..2 {
+            match app
+                .client
+                .post(format!(
+                    "{}/chat/completions",
+                    alias.base_url.trim_end_matches('/')
+                ))
+                .bearer_auth(key_value.clone())
+                .header(CONTENT_TYPE, "application/json")
+                .json(&payload)
+                .send()
+                .await
+            {
+                Ok(resp) => {
+                    response = Some(resp);
+                    break;
+                }
+                Err(exc) => {
+                    let retryable = exc.is_connect() || exc.is_timeout() || exc.is_request();
+                    last_exc = Some(exc.to_string());
+                    if attempt == 0 && retryable {
+                        if crate::diag::diag_enabled(&app.settings) {
+                            crate::diag::append(
+                                &app.settings,
+                                "upstream.retry_pool_idle",
+                                serde_json::json!({
+                                    "alias": alias.alias,
+                                    "provider": alias.provider(),
+                                    "key": usage_key_name(&app, &key),
+                                    "attempt": attempt + 1,
+                                    "error": last_exc,
+                                }),
+                            );
+                        }
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
         let response = match response {
-            Ok(response) => response,
-            Err(_) => {
+            Some(r) => r,
+            None => {
                 record_usage(
                     &app.state,
                     &alias.alias,
@@ -80,6 +114,18 @@ pub(crate) async fn call_upstream(
                     599,
                     None,
                 );
+                if crate::diag::diag_enabled(&app.settings) {
+                    crate::diag::append(
+                        &app.settings,
+                        "upstream.connect_error",
+                        serde_json::json!({
+                            "alias": alias.alias,
+                            "provider": alias.provider(),
+                            "key": usage_key_name(&app, &key),
+                            "error": last_exc.unwrap_or_default(),
+                        }),
+                    );
+                }
                 continue;
             }
         };
