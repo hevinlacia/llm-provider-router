@@ -1,0 +1,35 @@
+src/routes/config.rs
+  1e9c50c70db5ab82 598-638,640-652
+src/routes/mod.rs
+  1e9c50c70db5ab82 119-121
+src/features/router/probe.rs
+  1e9c50c70db5ab82 1-338
+src/features/router/mod.rs
+  1e9c50c70db5ab82 18
+frontend/src/features/settings/supplierModels.tsx
+  1e9c50c70db5ab82 4,139-140,204-218,247,253,257,260,268-278,341
+frontend/src/api.ts
+  1e9c50c70db5ab82 1,132-136
+frontend/src/types.ts
+  1e9c50c70db5ab82 179-189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "6b96ac82050f287e9876d7b5993a1c4e843d25a9",
+  "prompts": {
+    "1e9c50c70db5ab82": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a03348-7faf-7d8e-8e0a-64e09bfcc0d8",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 465,
+      "total_deletions": 15,
+      "accepted_lines": 450,
+      "overriden_lines": 1
+    }
+  }
+}
