@@ -108,25 +108,12 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
             get(config::api_config_token_prices).put(config::api_config_token_prices_update),
         )
         .route(
-            "/api/config/token-prices/apply-equivalents",
-            post(config::api_config_token_prices_apply_equivalents),
-        )
-        .route(
             "/api/config/thinking-maps",
             get(config::api_config_thinking_maps).put(config::api_config_thinking_maps_update),
         )
         .route(
             "/api/config/v2/physical-models",
             put(config::api_config_physical_models_update),
-        )
-        .route(
-            "/api/config/thinking-maps/apply-equivalents",
-            post(config::api_config_thinking_maps_apply_equivalents),
-        )
-        .route(
-            "/api/config/model-equivalences",
-            get(config::api_config_model_equivalences)
-                .put(config::api_config_model_equivalences_update),
         )
         .route(
             "/api/config/keys",
