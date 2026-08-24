@@ -12,7 +12,6 @@ pub const DEFAULT_API_KEYS_PATH: &str = "config/api-keys.json";
 pub const DEFAULT_TOKEN_PRICE_CONFIG_PATH: &str = "config/token-prices.json";
 pub const DEFAULT_MODEL_ALIAS_CONFIG_PATH: &str = "config/custom-model-aliases.json";
 pub const DEFAULT_SEARCH_PROVIDERS_PATH: &str = "config/search-providers.json";
-pub const DEFAULT_MODEL_EQUIVALENCES_PATH: &str = "config/model-equivalences.json";
 pub const DEFAULT_USAGE_DB_PATH: &str = "~/.local/state/llm-provider-router/usage.sqlite3";
 pub const DEFAULT_STATE_DB_PATH: &str = "~/.local/state/llm-provider-router/state.sqlite3";
 pub const DEFAULT_DIAG_DIR: &str = "~/.local/state/llm-provider-router/logs";
@@ -229,7 +228,6 @@ pub struct Settings {
     pub token_price_config_path: String,
     pub model_alias_config_path: String,
     pub search_providers_path: String,
-    pub model_equivalences_path: String,
     /// 供应商模型列表持久化路径（设置界面“查看供应商详情”缓存）。
     pub provider_models_path: String,
     pub auth_invalid_freeze_seconds: f64,
@@ -298,10 +296,6 @@ pub fn load_settings() -> anyhow::Result<Settings> {
         search_providers_path: env_or(
             "LLM_PROVIDER_ROUTER_SEARCH_PROVIDERS_PATH",
             DEFAULT_SEARCH_PROVIDERS_PATH,
-        ),
-        model_equivalences_path: env_or(
-            "LLM_PROVIDER_ROUTER_MODEL_EQUIVALENCES_PATH",
-            DEFAULT_MODEL_EQUIVALENCES_PATH,
         ),
         provider_models_path: env_or(
             "LLM_PROVIDER_ROUTER_PROVIDER_MODELS_PATH",

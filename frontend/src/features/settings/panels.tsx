@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../api';
-import type { CustomModelAlias, KeyConfig, ModelAliasConfig, ModelEquivalencesConfig, ProviderConfig, TokenPriceConfig, V2Status, WeightConfig } from '../../types';
+import type { CustomModelAlias, KeyConfig, ModelAliasConfig, ProviderConfig, WeightConfig } from '../../types';
 
 export function ModelAliasesPanel({ config, onChange, onSaved, onError }: { config: ModelAliasConfig | null; onChange: (value: ModelAliasConfig) => void; onSaved: (value: ModelAliasConfig) => void; onError: (value: string) => void }) {
   if (!config) return <section className="card"><h2>Custom Model Aliases</h2><p className="muted">Loading model aliases...</p></section>;
@@ -132,113 +132,6 @@ export function WeightsPanel({ config, onChange, onSaved, onError }: { config: W
   }
 
   return <section className="card"><div className="section-title"><h2>Key Weights</h2><span className="muted">{current.config_path}</span></div><p className="muted">Global weights apply to every pool. Pool-specific weights override global values; weight 0 disables that key for routing.</p>{!current.supports_pool_weights && <p className="muted small-text">Pool-specific controls will appear after the router backend is restarted with the latest build.</p>}<section className="toolbar weight-filter"><div className="field"><label>Scope</label><select value={selectedPool} onChange={(event) => setSelectedPool(event.target.value)}><option value="__global__">Global pool weights</option>{current.supports_pool_weights && current.pools.map((pool) => <option key={pool} value={pool}>{pool}</option>)}</select></div>{selectedPool !== '__global__' && current.supports_pool_weights && <button className="secondary" onClick={() => void applyGlobalToPool()}>Apply Global to Pool</button>}</section><table><thead><tr><th>Key</th><th>Enabled</th><th>Weight</th>{selectedPool !== '__global__' && <th>Global</th>}<th>Source</th><th>Probability</th></tr></thead><tbody>{rows.map((row) => { const weight = getWeight(row.name, row.default_weight); const poolOverride = selectedPool !== '__global__' ? poolWeights[row.name] : undefined; const source = selectedPool === '__global__' ? 'Global' : poolOverride === undefined ? 'Global' : 'Pool override'; return <tr key={row.name} className={weight <= 0 ? 'disabled-row' : ''}><td>{row.name}<div className="muted small-text">{[row.provider, row.billing_type === 'payg' ? 'PAYG' : row.billing_type ? 'Subscription' : ''].filter(Boolean).join(' · ')}</div></td><td><input type="checkbox" checked={weight > 0} onChange={(event) => { const fallback = Math.max(1, selectedPool === '__global__' ? row.default_weight : current.global_weights[row.name] ?? row.default_weight); setWeight(row.name, event.target.checked ? fallback : 0); }} /></td><td><input className="weight-input" type="number" min="0" step="1" value={weight} onChange={(event) => setWeight(row.name, Number(event.target.value) || 0)} /></td>{selectedPool !== '__global__' && <td>{current.global_weights[row.name] ?? row.default_weight}</td>}<td>{source}</td><td>{total > 0 && weight > 0 ? `${((Math.max(0, weight) / total) * 100).toFixed(1)}%` : '0.0%'}</td></tr>; })}</tbody></table>{!rows.length && <p className="muted">No keys assigned to this scope.</p>}<div className="toolbar"><button onClick={() => void save()}>Save Weights</button></div></section>;
-}
-
-export function TokenPricesPanel({ config, v2, equivalences, onChange, onSaved, onError }: { config: TokenPriceConfig | null; v2: V2Status | null; equivalences: ModelEquivalencesConfig | null; onChange: (value: TokenPriceConfig) => void; onSaved: (value: TokenPriceConfig) => void; onError: (value: string) => void }) {
-  const providers = useMemo(() => Object.keys(v2?.providers ?? {}).sort(), [v2]);
-  const [selectedProvider, setSelectedProvider] = useState<string>('__all__');
-  const [pendingEquiv, setPendingEquiv] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (providers.length && selectedProvider !== '__all__' && !providers.includes(selectedProvider)) {
-      setSelectedProvider('__all__');
-    }
-  }, [providers, selectedProvider]);
-
-  const modelToGroup = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const g of equivalences?.groups ?? []) for (const model of g.models) m.set(model, g.id);
-    return m;
-  }, [equivalences]);
-
-  const filtered = useMemo(() => {
-    if (!config) return [];
-    const items = config.models;
-    if (selectedProvider === '__all__') return [...items].sort((a, b) => a.model.localeCompare(b.model));
-    return [...items].filter((item) => item.model.startsWith(`${selectedProvider}/`)).sort((a, b) => a.model.localeCompare(b.model));
-  }, [config, selectedProvider]);
-
-  const indexByModel = useMemo(() => {
-    const map = new Map<string, number>();
-    (config?.models ?? []).forEach((item, idx) => map.set(item.model, idx));
-    return map;
-  }, [config]);
-
-  // All hooks must run on every render. `counts` was previously declared
-  // after the `if (!config) return` early-return, which caused a hook-order
-  // mismatch: first render (config=null) ran 7 hooks, subsequent render
-  // (config=TokenPriceConfig) ran 8 hooks → React minified error #310
-  // (Rendered more hooks than during the previous render) and a blank
-  // settings page. Keep this hook above the early-return.
-  const counts = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const p of providers) map[p] = (config?.models ?? []).filter((m) => m.model.startsWith(`${p}/`)).length;
-    return map;
-  }, [config, providers]);
-
-  if (!config) return <section className="card"><h2>Token Prices</h2><p className="muted">Loading token prices...</p></section>;
-  const current = config;
-
-  function update(model: string, patch: Partial<TokenPriceConfig['models'][number]>) {
-    const idx = indexByModel.get(model);
-    if (idx === undefined) return;
-    const models = [...current.models];
-    models[idx] = { ...models[idx], ...patch };
-    onChange({ ...current, models });
-  }
-
-  async function save() {
-    try { onSaved(await api.saveTokenPrices(current.models)); } catch (err) { onError(err instanceof Error ? err.message : String(err)); }
-  }
-
-  async function applyEquivalent(model: string) {
-    setPendingEquiv(model);
-    try {
-      const res = await api.applyPriceToEquivalents(model, false);
-      onSaved(res.token_prices);
-    } catch (err) {
-      onError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setPendingEquiv(null);
-    }
-  }
-
-  return <section className="card"><div className="section-title"><h2>Token Prices</h2><span className="muted">{current.config_path}</span></div><p className="muted">仅展示模型池引用的供应商真实模型（<code>provider/model</code>）。右侧切换供应商，下方列出该供应商的模型；每行可一键把价格同步给等价关系表中同组的其它供应商模型。</p>
-    <div className="toolbar" style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
-      <div className="field"><label>Supplier</label><select value={selectedProvider} onChange={(e) => setSelectedProvider(e.target.value)}><option value="__all__">All suppliers ({config.models.length})</option>{providers.map((p) => <option key={p} value={p}>{p} ({counts[p] ?? 0})</option>)}</select></div>
-      <button onClick={() => void save()}>Save Token Prices</button>
-    </div>
-    <div className="table-wrap"><table><thead><tr><th>Model</th><th>Equiv. Group</th><th>Input Uncached / 1M</th><th>Input Cached / 1M</th><th>Output / 1M</th><th></th></tr></thead><tbody>{filtered.map((item) => {
-      const group = modelToGroup.get(item.model);
-      return <tr key={item.model}><td className="strong-cell">{item.model}</td><td><span className="status">{group ?? '—'}</span></td><td><input className="price-input" type="number" min="0" step="0.000001" value={item.input_uncached_per_million} onChange={(e) => update(item.model, { input_uncached_per_million: Number(e.target.value) || 0 })} /></td><td><input className="price-input" type="number" min="0" step="0.000001" value={item.input_cached_per_million} onChange={(e) => update(item.model, { input_cached_per_million: Number(e.target.value) || 0 })} /></td><td><input className="price-input" type="number" min="0" step="0.000001" value={item.output_per_million} onChange={(e) => update(item.model, { output_per_million: Number(e.target.value) || 0 })} /></td><td><button className="secondary compact-button" disabled={!group || pendingEquiv === item.model} onClick={() => void applyEquivalent(item.model)} title={group ? `Apply this price to all models in group \`${group}\`` : 'Not in any equivalence group'}>{pendingEquiv === item.model ? 'Applying…' : 'Apply to equivalents'}</button></td></tr>;
-    })}{!filtered.length && <tr><td colSpan={6} className="muted">{selectedProvider === '__all__' ? 'No real models found (check logical-models / models.json).' : `No real models for supplier \`${selectedProvider}\`.`}</td></tr>}</tbody></table></div></section>;
-}
-
-export function ModelEquivalencesPanel({ config, onSaved, onError }: { config: ModelEquivalencesConfig | null; onSaved: (value: ModelEquivalencesConfig) => void; onError: (value: string) => void }) {
-  const [draft, setDraft] = useState<ModelEquivalencesConfig>(config ?? { ok: true, groups: [], config_path: '' });
-  useEffect(() => { if (config) setDraft(config); }, [config]);
-  if (!config) return <section className="card"><h2>Model Equivalences</h2><p className="muted">Loading equivalences...</p></section>;
-  function updateGroup(idx: number, patch: Partial<ModelEquivalencesConfig['groups'][number]>) {
-    const groups = [...draft.groups];
-    groups[idx] = { ...groups[idx], ...patch };
-    setDraft({ ...draft, groups });
-  }
-  function addGroup() {
-    setDraft({ ...draft, groups: [...draft.groups, { id: '', display_name: '', models: [] }] });
-  }
-  function removeGroup(idx: number) {
-    setDraft({ ...draft, groups: draft.groups.filter((_, i) => i !== idx) });
-  }
-  async function save() {
-    const groups = draft.groups.map((g) => ({ ...g, id: g.id.trim(), display_name: g.display_name.trim(), models: g.models.map((m) => m.trim()).filter(Boolean) }));
-    if (groups.some((g) => !g.id || !g.display_name)) { onError('Each group needs id and display_name'); return; }
-    const ids = groups.map((g) => g.id);
-    if (new Set(ids).size !== ids.length) { onError('Duplicate group id'); return; }
-    try { onSaved(await api.saveEquivalences(groups)); } catch (err) { onError(err instanceof Error ? err.message : String(err)); }
-  }
-  return <section className="card"><div className="section-title"><h2>Model Equivalences</h2><span className="muted">{draft.config_path}</span></div><p className="muted">等价关系表：同一组的多个 <code>provider/model</code> 视为同一模型，Token Prices 可一键把价格同步给组内其它供应商版本。后续你可在设置页直接增删改。</p>
-    {draft.groups.map((g, idx) => <div key={idx} className="route-row" style={{ marginBottom: 12 }}><div style={{ display: 'grid', gridTemplateColumns: '180px 1fr auto', gap: 12, alignItems: 'end' }}><div className="field"><label>Group ID</label><input value={g.id} onChange={(e) => updateGroup(idx, { id: e.target.value })} placeholder="e.g. deepseek-v4-flash" /></div><div className="field"><label>Display Name</label><input value={g.display_name} onChange={(e) => updateGroup(idx, { display_name: e.target.value })} placeholder="e.g. DeepSeek V4 Flash" /></div><button className="secondary compact-button" onClick={() => removeGroup(idx)}>Delete Group</button></div><div className="field" style={{ marginTop: 10 }}><label>Models (provider/model, comma or newline separated)</label><textarea rows={2} style={{ width: '100%', padding: '8px 10px', borderRadius: 10, border: '1px solid #334155', background: '#111827', color: '#e5e7eb' }} value={g.models.join(', ')} onChange={(e) => updateGroup(idx, { models: e.target.value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean) })} placeholder="ark/deepseek-v4-flash-260801, deepseek-official/deepseek-v4-flash" /></div></div>)}
-    <div className="toolbar"><button className="secondary" onClick={addGroup}>Add Group</button><button onClick={() => void save()}>Save Equivalences</button></div></section>;
 }
 
 export function KeysPanel({ config, onSaved, onError }: { config: KeyConfig | null; onSaved: (value: KeyConfig) => void; onError: (value: string) => void }) {

@@ -91,20 +91,16 @@ export type ModelAliasConfig = {
 };
 
 
-export type TokenPriceConfig = {
-  ok: boolean;
-  models: Array<{
-    model: string;
-    input_uncached_per_million: number;
-    input_cached_per_million: number;
-    output_per_million: number;
-  }>;
-  config_path: string;
+export type TokenPrice = {
+  model: string;
+  input_uncached_per_million: number;
+  input_cached_per_million: number;
+  output_per_million: number;
 };
 
-export type ModelEquivalencesConfig = {
+export type TokenPriceConfig = {
   ok: boolean;
-  groups: Array<{ id: string; display_name: string; models: string[] }>;
+  models: TokenPrice[];
   config_path: string;
 };
 

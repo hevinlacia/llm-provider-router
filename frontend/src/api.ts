@@ -1,4 +1,4 @@
-import type { FilterState, KeyConfig, ModelAliasConfig, ModelEquivalencesConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderConfig, ProviderModelsResponse, RouterCapabilities, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, WeightConfig } from './types';
+import type { FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderConfig, ProviderModelsResponse, RouterCapabilities, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, WeightConfig } from './types';
 
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
@@ -110,23 +110,6 @@ export const api = {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ models }),
-    });
-  },
-  applyPriceToEquivalents(model: string, onlyMissing = false) {
-    return request<{ ok: boolean; applied_to: string[]; token_prices: TokenPriceConfig }>('/api/config/token-prices/apply-equivalents', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, only_missing: onlyMissing }),
-    });
-  },
-  equivalences() {
-    return request<ModelEquivalencesConfig>('/api/config/model-equivalences');
-  },
-  saveEquivalences(groups: ModelEquivalencesConfig['groups']) {
-    return request<ModelEquivalencesConfig>('/api/config/model-equivalences', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groups }),
     });
   },
   thinkingMaps() {

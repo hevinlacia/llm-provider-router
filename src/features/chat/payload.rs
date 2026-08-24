@@ -51,7 +51,6 @@ pub(crate) fn prepare_upstream_payload(payload: &Value, alias: &ModelAlias) -> V
             token_price_config_path: "".into(),
             model_alias_config_path: "".into(),
             search_providers_path: "".into(),
-            model_equivalences_path: "".into(),
             provider_models_path: "".into(),
             auth_invalid_freeze_seconds: 0.0,
             v2_config_enabled: false,

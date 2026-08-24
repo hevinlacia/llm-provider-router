@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api';
 import { formatWindow } from '../../lib/format';
-import type { PhysicalModelPatch, V2PhysicalModel, V2Status } from '../../types';
+import type { PhysicalModelPatch, TokenPrice, TokenPriceConfig, V2PhysicalModel, V2Status } from '../../types';
 
 const STANDARD_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 
-/** 推荐方案：一个物理模型的完整能力参数组合，动态收集（保存时自动入库，按内容去重）。 */
+/** 推荐方案：一个物理模型的完整配置组合（能力参数 + token 价格），动态收集（保存时自动入库，按内容去重）。 */
 type Preset = {
   id: string;
-  label: string;
   source: string;
   updated_at: number;
   context_window?: number | null;
@@ -16,6 +15,9 @@ type Preset = {
   supports_image?: boolean | null;
   thinking_level_map?: Record<string, string | null> | null;
   thinking_format?: string | null;
+  input_uncached_per_million?: number | null;
+  input_cached_per_million?: number | null;
+  output_per_million?: number | null;
 };
 
 const PRESETS_KEY = 'lpr-supplier-model-presets';
@@ -46,13 +48,15 @@ function presetId(p: Preset): string {
     p.supports_image ?? null,
     p.thinking_level_map ?? null,
     p.thinking_format ?? null,
+    p.input_uncached_per_million ?? null,
+    p.input_cached_per_million ?? null,
+    p.output_per_million ?? null,
   ]);
 }
 
 function collectPreset(source: string, draft: Draft): Preset {
   return {
     id: '',
-    label: '',
     source,
     updated_at: Date.now(),
     context_window: draft.context_window,
@@ -60,6 +64,9 @@ function collectPreset(source: string, draft: Draft): Preset {
     supports_image: draft.supports_image,
     thinking_level_map: draft.thinking_level_map,
     thinking_format: draft.thinking_format,
+    input_uncached_per_million: draft.input_uncached_per_million,
+    input_cached_per_million: draft.input_cached_per_million,
+    output_per_million: draft.output_per_million,
   };
 }
 
@@ -69,15 +76,26 @@ type Draft = {
   supports_image?: boolean | null;
   thinking_level_map: Record<string, string | null> | null;
   thinking_format: string | null;
+  input_uncached_per_million?: number | null;
+  input_cached_per_million?: number | null;
+  output_per_million?: number | null;
 };
 
-function modelToDraft(model: V2PhysicalModel | undefined): Draft {
+function priceFor(model: string, prices: TokenPrice[] | undefined): TokenPrice | undefined {
+  return prices?.find((p) => p.model === model);
+}
+
+function modelToDraft(model: V2PhysicalModel | undefined, prices: TokenPrice[] | undefined): Draft {
+  const price = priceFor(model?.id ?? '', prices);
   return {
     context_window: model?.context_window ?? null,
     max_output_tokens: model?.max_output_tokens ?? null,
     supports_image: model?.supports_image ?? null,
     thinking_level_map: (model?.thinking_level_map as Record<string, string | null> | null | undefined) ?? null,
     thinking_format: (model?.thinking_format as string | null | undefined) ?? null,
+    input_uncached_per_million: price?.input_uncached_per_million ?? null,
+    input_cached_per_million: price?.input_cached_per_million ?? null,
+    output_per_million: price?.output_per_million ?? null,
   };
 }
 
@@ -99,8 +117,18 @@ function thinkingSummary(map: Record<string, string | null> | null): string {
   return entries.map(([lv, wire]) => `${lv}→${wire ?? '∅'}`).join(' ');
 }
 
-export function SupplierModelConfigPanel({ v2, onSaved, onError }: {
+function priceSummary(price: TokenPrice | undefined): string {
+  if (!price) return '—';
+  const parts: string[] = [];
+  if (price.input_uncached_per_million > 0) parts.push(`in ${price.input_uncached_per_million}`);
+  if (price.input_cached_per_million > 0) parts.push(`cache ${price.input_cached_per_million}`);
+  if (price.output_per_million > 0) parts.push(`out ${price.output_per_million}`);
+  return parts.length ? parts.join(' · ') : '0';
+}
+
+export function SupplierModelConfigPanel({ v2, tokenPrices, onSaved, onError }: {
   v2: V2Status | null;
+  tokenPrices: TokenPriceConfig | null;
   onSaved: (value: V2Status) => void;
   onError: (value: string) => void;
 }) {
@@ -118,6 +146,7 @@ export function SupplierModelConfigPanel({ v2, onSaved, onError }: {
   if (!v2) return <section className="card settings-section"><h2>Supplier Model Config</h2><p className="muted">Loading supplier model configuration...</p></section>;
   if (!v2.v2_enabled) return <section className="card settings-section"><h2>Supplier Model Config</h2><p className="muted">Layered routing disabled (set LLM_PROVIDER_ROUTER_V2=1 to enable).</p></section>;
 
+  const prices = tokenPrices?.models ?? [];
   const detailModels = selectedProvider === '__all__'
     ? new Set<string>()
     : new Set(v2.providers?.[selectedProvider]?.models ?? []);
@@ -156,7 +185,15 @@ export function SupplierModelConfigPanel({ v2, onSaved, onError }: {
 
   async function patchModel(model: V2PhysicalModel, draft: Draft) {
     try {
-      onSaved(await api.savePhysicalModels([draftToPatch(model.id, draft)]));
+      // 能力参数 → models.json；token 价格 → token-prices.json（同一模型一次保存）
+      const saved = await api.savePhysicalModels([draftToPatch(model.id, draft)]);
+      await api.saveTokenPrices([{
+        model: model.id,
+        input_uncached_per_million: draft.input_uncached_per_million ?? 0,
+        input_cached_per_million: draft.input_cached_per_million ?? 0,
+        output_per_million: draft.output_per_million ?? 0,
+      }]);
+      onSaved(saved);
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
     }
@@ -164,7 +201,7 @@ export function SupplierModelConfigPanel({ v2, onSaved, onError }: {
 
   return <>
     <section className="card settings-section thinking-section">
-      <div className="section-title settings-title thinking-title"><div><h2>Supplier Model Config</h2><p className="muted">按供应商配置物理模型能力参数（上下文 / 输出 / 图片 / 思考档位映射）。逻辑模型自动取池内最低参数，不再单独配置。</p></div><span className="muted small-text config-path">config/models.json</span></div>
+      <div className="section-title settings-title thinking-title"><div><h2>Supplier Model Config</h2><p className="muted">按供应商配置物理模型能力参数（上下文 / 输出 / 图片 / 思考档位映射 / Token 价格）。逻辑模型自动取池内最低参数，不再单独配置。</p></div><span className="muted small-text config-path">config/models.json</span></div>
       <div className="toolbar thinking-toolbar">
         <div className="field thinking-filter"><label>Supplier</label>
           <select value={selectedProvider} onChange={(e) => setSelectedProvider(e.target.value)}>
@@ -178,33 +215,36 @@ export function SupplierModelConfigPanel({ v2, onSaved, onError }: {
         </div>
       </div>
       <div className="table-wrap"><table className="settings-table supplier-models-table">
-        <thead><tr><th>Model</th><th>Context</th><th>Output</th><th>Image</th><th>Thinking map</th><th></th></tr></thead>
+        <thead><tr><th>Model</th><th>Context</th><th>Output</th><th>Image</th><th>Thinking map</th><th>Token Price</th><th></th></tr></thead>
         <tbody>{rows.map((row) => {
           const m = row.model;
           const map = (m?.thinking_level_map as Record<string, string | null> | null | undefined) ?? null;
+          const price = priceFor(row.key, prices);
           return <tr key={row.key} className={!m ? 'supplier-unregistered-row' : ''}>
             <td className="strong-cell">{row.upstream}{!m && <span className="status warn" style={{ marginLeft: 8 }}>unregistered</span>}</td>
             <td className="muted small-text">{m?.context_window ? formatWindow(m.context_window) : '—'}</td>
             <td className="muted small-text">{m?.max_output_tokens ? formatWindow(m.max_output_tokens) : '—'}</td>
             <td>{m?.supports_image ? <span className="status ok">image</span> : m ? <span className="muted small-text">text</span> : <span className="muted small-text">—</span>}</td>
             <td className="muted small-text thinking-summary-cell">{thinkingSummary(map)}</td>
+            <td className="muted small-text thinking-summary-cell">{priceSummary(price)}</td>
             <td><div className="row-actions"><button className="secondary compact-button" onClick={() => setEditing(m ?? { id: `${selectedProvider}/${row.upstream}`, provider: selectedProvider, upstream_model: row.upstream, params: {}, context_window: null, max_output_tokens: null, supports_image: null })}>{m ? 'Configure' : 'Register & Configure'}</button></div></td>
           </tr>;
-        })}{!rows.length && <tr><td colSpan={6} className="muted">{selectedProvider === '__all__' ? 'No physical models configured yet.' : `No models for supplier \`${selectedProvider}\` yet. Click Refresh to pull from upstream, or register a model via Model Pools.`}</td></tr>}</tbody>
+        })}{!rows.length && <tr><td colSpan={7} className="muted">{selectedProvider === '__all__' ? 'No physical models configured yet.' : `No models for supplier \`${selectedProvider}\` yet. Click Refresh to pull from upstream, or register a model via Model Pools.`}</td></tr>}</tbody>
       </table></div>
-      <p className="muted small-text thinking-tip">Tip: 上下文/输出在 models.json 上声明后，Context Negotiation 会把逻辑模型（含模型池）的对外能力按「池内最低参数」聚合。图片支持参与输入模态协商。</p>
+      <p className="muted small-text thinking-tip">Tip: 上下文/输出在 models.json 上声明后，Context Negotiation 会把逻辑模型（含模型池）的对外能力按「池内最低参数」聚合。图片支持参与输入模态协商。Token 价格随配置弹窗一并保存。</p>
     </section>
-    {editing && <ModelConfigModal model={editing} onCancel={() => setEditing(null)} onSaved={async (draft) => { await patchModel(editing, draft); setEditing(null); }} onError={onError} />}
+    {editing && <ModelConfigModal model={editing} prices={prices} onCancel={() => setEditing(null)} onSaved={async (draft) => { await patchModel(editing, draft); setEditing(null); }} onError={onError} />}
   </>;
 }
 
-function ModelConfigModal({ model, onCancel, onSaved, onError }: {
+function ModelConfigModal({ model, prices, onCancel, onSaved, onError }: {
   model: V2PhysicalModel;
+  prices: TokenPrice[];
   onCancel: () => void;
   onSaved: (draft: Draft) => void | Promise<void>;
   onError: (value: string) => void;
 }) {
-  const [draft, setDraft] = useState<Draft>(() => modelToDraft(model));
+  const [draft, setDraft] = useState<Draft>(() => modelToDraft(model, prices));
   const [presets, setPresets] = useState<Preset[]>(() => loadPresets());
   const [saving, setSaving] = useState(false);
   function update(level: string, raw: string) {
@@ -227,13 +267,16 @@ function ModelConfigModal({ model, onCancel, onSaved, onError }: {
       supports_image: preset.supports_image ?? null,
       thinking_level_map: preset.thinking_level_map ?? null,
       thinking_format: preset.thinking_format ?? null,
+      input_uncached_per_million: preset.input_uncached_per_million ?? null,
+      input_cached_per_million: preset.input_cached_per_million ?? null,
+      output_per_million: preset.output_per_million ?? null,
     });
   }
 
   async function save() {
     setSaving(true);
     try {
-      // 动态收集推荐方案：保存成功即把该组合入库（按内容去重，label 取上次来源）
+      // 动态收集推荐方案：保存成功即把该组合入库（按内容去重）
       const nextPresets = [...presets];
       const cand = collectPreset(model.upstream_model, draft);
       const id = presetId(cand);
@@ -282,6 +325,12 @@ function ModelConfigModal({ model, onCancel, onSaved, onError }: {
           <option value="reasoning_effort">reasoning_effort</option>
         </select>
       </div>
+    </div>
+    <h4>Token 价格 <span className="muted small-text">/ 1M tokens</span></h4>
+    <div className="modal-config-grid">
+      <div className="field"><label>Input Uncached / 1M</label><input type="number" min="0" step="0.000001" value={draft.input_uncached_per_million ?? ''} placeholder="0" onChange={(e) => setDraft({ ...draft, input_uncached_per_million: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) || 0 })} /></div>
+      <div className="field"><label>Input Cached / 1M</label><input type="number" min="0" step="0.000001" value={draft.input_cached_per_million ?? ''} placeholder="0" onChange={(e) => setDraft({ ...draft, input_cached_per_million: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) || 0 })} /></div>
+      <div className="field"><label>Output / 1M</label><input type="number" min="0" step="0.000001" value={draft.output_per_million ?? ''} placeholder="0" onChange={(e) => setDraft({ ...draft, output_per_million: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) || 0 })} /></div>
     </div>
     <h4>思考档位映射 <span className="muted small-text">标准档位 → 上游 wire 值（留空=透传，∅=不支持）</span></h4>
     <div className="thinking-level-grid">{STANDARD_LEVELS.map((lv) => {

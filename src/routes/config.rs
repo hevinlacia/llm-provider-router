@@ -538,24 +538,6 @@ pub(crate) async fn api_config_token_prices_update(
     with_state_json(&app, |state| Ok(merge_ok(state.set_token_prices(prices)?)))
 }
 
-pub(crate) async fn api_config_token_prices_apply_equivalents(
-    State(app): State<AppState>,
-    Json(payload): Json<Value>,
-) -> Response {
-    let Some(model) = payload.get("model").and_then(Value::as_str) else {
-        return bad_request("model (string) is required");
-    };
-    let only_missing = payload
-        .get("only_missing")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    with_state_json(&app, |state| {
-        Ok(merge_ok(
-            state.apply_price_to_equivalents(model, only_missing)?,
-        ))
-    })
-}
-
 pub(crate) async fn api_config_thinking_maps(State(app): State<AppState>) -> Response {
     with_state_json(&app, |state| Ok(merge_ok(state.thinking_snapshot())))
 }
@@ -645,53 +627,6 @@ pub(crate) async fn api_config_thinking_maps_update(
         parsed.push((model.to_string(), level_map, format));
     }
     with_state_json(&app, |state| Ok(merge_ok(state.set_thinking_maps(parsed)?)))
-}
-
-pub(crate) async fn api_config_thinking_maps_apply_equivalents(
-    State(app): State<AppState>,
-    Json(payload): Json<Value>,
-) -> Response {
-    let Some(model) = payload.get("model").and_then(Value::as_str) else {
-        return bad_request("model (string) is required");
-    };
-    let only_missing = payload
-        .get("only_missing")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    with_state_json(&app, |state| {
-        Ok(merge_ok(
-            state.apply_thinking_to_equivalents(model, only_missing)?,
-        ))
-    })
-}
-
-pub(crate) async fn api_config_model_equivalences(State(app): State<AppState>) -> Response {
-    with_state_json(&app, |state| Ok(merge_ok(state.equivalences_snapshot())))
-}
-
-pub(crate) async fn api_config_model_equivalences_update(
-    State(app): State<AppState>,
-    Json(payload): Json<Value>,
-) -> Response {
-    let Some(groups) = payload.get("groups").and_then(Value::as_array) else {
-        return bad_request("groups must be a list");
-    };
-    let parsed: Vec<crate::json_config::EquivalenceGroup> = groups
-        .iter()
-        .filter_map(|g| {
-            Some(crate::json_config::EquivalenceGroup {
-                id: g.get("id")?.as_str()?.to_string(),
-                display_name: g.get("display_name")?.as_str()?.to_string(),
-                models: g
-                    .get("models")?
-                    .as_array()?
-                    .iter()
-                    .filter_map(|m| m.as_str().map(|s| s.to_string()))
-                    .collect(),
-            })
-        })
-        .collect();
-    with_state_json(&app, |state| Ok(merge_ok(state.set_equivalences(parsed)?)))
 }
 
 pub(crate) async fn api_config_keys(State(app): State<AppState>) -> Response {

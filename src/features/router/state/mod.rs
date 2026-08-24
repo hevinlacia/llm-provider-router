@@ -14,8 +14,8 @@ use crate::features::router::costing::{apply_costs, default_token_prices};
 use crate::features::router::freeze::key_state_id;
 use crate::features::router::selection::weighted_pick;
 use crate::json_config::{
-    ApiKeysStore, CustomKeyPoolConfig, KeyWeightConfig, ModelAliasConfig, ModelEquivalencesConfig,
-    ProviderConfig, TokenPriceConfig,
+    ApiKeysStore, CustomKeyPoolConfig, KeyWeightConfig, ModelAliasConfig, ProviderConfig,
+    TokenPriceConfig,
 };
 use crate::state_store::{now_seconds, StateStore};
 use crate::usage_store::UsageStore;
@@ -69,7 +69,6 @@ pub struct RouterState {
     custom_key_config: CustomKeyPoolConfig,
     token_price_config: TokenPriceConfig,
     model_alias_config: ModelAliasConfig,
-    model_equivalences: ModelEquivalencesConfig,
     api_keys_store: ApiKeysStore,
     /// v2 分层配置（加载失败为 None，回退旧逻辑）。
     v2: Option<config_v2::V2Config>,
@@ -103,7 +102,6 @@ impl RouterState {
             ProviderConfig::new(&settings.provider_config_path, default_provider_base_urls());
         let mut custom_key_config = CustomKeyPoolConfig::new(&settings.custom_key_config_path);
         let model_alias_config = ModelAliasConfig::new(&settings.model_alias_config_path);
-        let model_equivalences = ModelEquivalencesConfig::new(&settings.model_equivalences_path);
         let token_price_config =
             TokenPriceConfig::new(&settings.token_price_config_path, default_token_prices());
         let api_keys_store = ApiKeysStore::new(&settings.api_keys_path);
@@ -188,7 +186,6 @@ impl RouterState {
             custom_key_config,
             token_price_config,
             model_alias_config,
-            model_equivalences,
             api_keys_store,
             v2,
         };
