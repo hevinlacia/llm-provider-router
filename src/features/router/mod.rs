@@ -15,6 +15,7 @@
 
 pub(crate) mod costing;
 pub(crate) mod freeze;
+pub(crate) mod probe;
 pub(crate) mod selection;
 pub(crate) mod state;
 #[cfg(test)]

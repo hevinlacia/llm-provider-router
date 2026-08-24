@@ -116,6 +116,10 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
             put(config::api_config_physical_models_update),
         )
         .route(
+            "/api/config/v2/physical-models/probe",
+            post(config::api_config_physical_models_probe),
+        )
+        .route(
             "/api/config/keys",
             get(config::api_config_keys)
                 .put(config::api_config_keys_update)

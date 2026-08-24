@@ -459,3 +459,5 @@ td input[type="checkbox"] { width: auto; accent-color: var(--cyan); }
 .preset-chip:hover { border-color: rgba(34,211,238,.4); color: #e0f2fe; }
 .preset-chip-title { font: 800 .72rem var(--mono); }
 .preset-chip-detail { font: 700 .64rem var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
+.probe-notes { display: flex; flex-direction: column; gap: 3px; background: rgba(34,211,238,.06); border: 1px solid rgba(34,211,238,.22); border-radius: 10px; padding: 8px 10px; margin-bottom: 10px; }
+.probe-notes .muted { line-height: 1.5; }
