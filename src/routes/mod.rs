@@ -15,12 +15,17 @@ pub(crate) mod usage;
 
 use crate::app::AppState;
 use crate::config::Settings;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post, put};
 use axum::Router;
 use serde::Deserialize;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
+
+/// 请求体上限：图片以 base64 内嵌 JSON（约 1.37x 原始大小），2MB 默认限制会直接 413。
+/// 64MB 可容纳数张大图；链路上 front-proxy 同样放开（见 front_proxy.rs）。
+const BODY_LIMIT: usize = 64 * 1024 * 1024;
 
 pub(crate) use chat::validate_auth;
 
@@ -136,6 +141,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         .route("/v1/chat/completions", post(chat::chat_completions))
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
         .fallback(get(usage::dashboard))
+        .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(app_state);
 
     let addr: SocketAddr = format!("{}:{}", settings.host, settings.port).parse()?;
