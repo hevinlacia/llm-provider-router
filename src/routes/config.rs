@@ -595,6 +595,61 @@ pub(crate) async fn api_config_physical_models_update(
     with_state_json(&app, |state| Ok(state.set_physical_models(parsed)?))
 }
 
+/// 探测物理模型能力边界（上下文 / 最大输出 / 图片）。
+/// body: `{ provider, upstream }`。每次探测对每个维度恰好发 1 个请求（不做重试/递增/二分）。
+pub(crate) async fn api_config_physical_models_probe(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let Some(provider) = payload.get("provider").and_then(Value::as_str) else {
+        return bad_request("provider (string) is required");
+    };
+    let Some(upstream) = payload.get("upstream").and_then(Value::as_str) else {
+        return bad_request("upstream (string) is required");
+    };
+    if provider.trim().is_empty() || upstream.trim().is_empty() {
+        return bad_request("provider and upstream must not be empty");
+    }
+
+    // 取 provider 的 base_url + enabled key 的 env_var（先锁拿配置，再释放锁发请求）
+    let (base_url, env_vars) = {
+        let guard = app.state.lock();
+        match guard {
+            Ok(state) => match state.v2_provider_probe(provider) {
+                Some(info) => info,
+                None => return bad_request(&format!("unknown provider: {}", provider)),
+            },
+            Err(_) => return internal_error("router state lock poisoned"),
+        }
+    };
+
+    // 从环境变量读 key 值（不读取/打印真实 key）
+    let api_key = env_vars
+        .iter()
+        .find_map(|env_var| std::env::var(env_var).ok().filter(|v| !v.is_empty()));
+    let Some(api_key) = api_key else {
+        return bad_request(&format!(
+            "no enabled API key for provider `{}` (checked env vars: {})",
+            provider,
+            env_vars.join(", ")
+        ));
+    };
+
+    let outcome =
+        crate::features::router::probe::probe_model(&app.client, &base_url, &api_key, upstream)
+            .await;
+    let response = json!({
+        "ok": true,
+        "provider": provider,
+        "upstream": upstream,
+        "context_window": outcome.context_window,
+        "max_output_tokens": outcome.max_output_tokens,
+        "supports_image": outcome.supports_image,
+        "notes": outcome.notes,
+    });
+    json_status(StatusCode::OK, response)
+}
+
 pub(crate) async fn api_config_thinking_maps_update(
     State(app): State<AppState>,
     Json(payload): Json<Value>,

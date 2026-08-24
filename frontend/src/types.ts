@@ -176,6 +176,17 @@ export type V2PhysicalModel = {
   thinking_format?: string | null;
 };
 
+/** 物理模型能力探测结果（POST /api/config/v2/physical-models/probe） */
+export type ProbeResult = {
+  ok: boolean;
+  provider: string;
+  upstream: string;
+  context_window: number | null;
+  max_output_tokens: number | null;
+  supports_image: boolean | null;
+  notes: string[];
+};
+
 /** 供应商模型配置面板：物理模型完整能力参数补丁 */
 export type PhysicalModelPatch = {
   model: string;
