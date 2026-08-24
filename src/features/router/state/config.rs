@@ -12,6 +12,17 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::env;
 
+/// 物理模型配置补丁（供应商模型配置面板保存）：None 字段保持原值不变。
+#[derive(Clone, Debug)]
+pub struct PhysicalModelPatch {
+    pub model: String,
+    pub context_window: Option<u32>,
+    pub max_output_tokens: Option<u32>,
+    pub supports_image: Option<bool>,
+    pub thinking_level_map: Option<Option<HashMap<String, Option<String>>>>,
+    pub thinking_format: Option<Option<String>>,
+}
+
 impl RouterState {
     pub fn effective_key_weights(&mut self, pool: &str) -> HashMap<String, i64> {
         self.sync_custom_key_weight_defaults();
@@ -159,32 +170,8 @@ impl RouterState {
                 out
             })
             .unwrap_or_default();
-        // 兼容：若尚未有物理 thinking，附带 logical 回退值供前端对比
-        let logical_fallback: serde_json::Map<String, Value> = self
-            .v2
-            .as_ref()
-            .map(|cfg| {
-                cfg.logical_models
-                    .iter()
-                    .filter_map(|(name, lm)| {
-                        if lm.thinking_level_map.is_some() || lm.thinking_format.is_some() {
-                            Some((
-                                name.clone(),
-                                json!({
-                                    "thinking_level_map": lm.thinking_level_map,
-                                    "thinking_format": lm.thinking_format,
-                                }),
-                            ))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
         json!({
             "maps": maps,
-            "logical_fallback": logical_fallback,
             "config_path": crate::config_v2::V2_MODELS_PATH,
         })
     }
@@ -217,6 +204,72 @@ impl RouterState {
         crate::config_v2::write_models_file(crate::config_v2::V2_MODELS_PATH, &file)?;
         self.v2 = crate::config_v2::load_v2_config().ok();
         Ok(self.thinking_snapshot())
+    }
+
+    /// 批量保存物理模型完整配置（供应商模型配置面板）：
+    /// context_window / max_output_tokens / supports_image / thinking_level_map / thinking_format。
+    /// 只更新传入字段；未提供的字段保持不变（物理模型是能力参数的唯一持有者）。
+    /// 未注册的 `provider/upstream` 模型（来自 detail 列表）自动注册（provider 已知时）。
+    pub fn set_physical_models(
+        &mut self,
+        models: Vec<PhysicalModelPatch>,
+    ) -> anyhow::Result<Value> {
+        let cfg = self
+            .v2
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("v2 config not loaded"))?;
+        let known: HashSet<String> = cfg.models.keys().cloned().collect();
+        let mut file = crate::config_v2::load_models_file(crate::config_v2::V2_MODELS_PATH)?;
+        for patch in &models {
+            if known.contains(&patch.model) {
+                continue;
+            }
+            // 自动注册：`provider/upstream` 且 provider 已知
+            let Some((provider, upstream)) = patch.model.split_once('/') else {
+                anyhow::bail!("unknown physical model: {}", patch.model);
+            };
+            if !cfg.providers.contains_key(provider) {
+                anyhow::bail!("unknown physical model: {}", patch.model);
+            }
+            file.models.insert(
+                patch.model.clone(),
+                crate::config_v2::V2PhysicalModel {
+                    provider: provider.to_string(),
+                    upstream_model: upstream.to_string(),
+                    family: None,
+                    params: HashMap::new(),
+                    context_window: None,
+                    max_output_tokens: None,
+                    supports_image: None,
+                    thinking_level_map: None,
+                    thinking_format: None,
+                },
+            );
+        }
+        for patch in models {
+            let Some(pm) = file.models.get_mut(&patch.model) else {
+                continue;
+            };
+            if patch.context_window.is_some() {
+                pm.context_window = patch.context_window;
+            }
+            if patch.max_output_tokens.is_some() {
+                pm.max_output_tokens = patch.max_output_tokens;
+            }
+            if patch.supports_image.is_some() {
+                pm.supports_image = patch.supports_image;
+            }
+            if patch.thinking_level_map.is_some() {
+                pm.thinking_level_map = patch.thinking_level_map.clone().flatten();
+            }
+            if patch.thinking_format.is_some() {
+                pm.thinking_format = patch.thinking_format.clone().flatten();
+            }
+        }
+        crate::config_v2::write_models_file(crate::config_v2::V2_MODELS_PATH, &file)?;
+        self.v2 = crate::config_v2::load_v2_config().ok();
+        Ok(self.v2_status())
     }
 
     pub fn apply_thinking_to_equivalents(
@@ -269,6 +322,7 @@ impl RouterState {
                                 params: HashMap::new(),
                                 context_window: None,
                                 max_output_tokens: None,
+                                supports_image: None,
                                 thinking_level_map: source.thinking_level_map.clone(),
                                 thinking_format: source.thinking_format.clone(),
                             },

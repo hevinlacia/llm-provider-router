@@ -441,3 +441,21 @@ td input[type="checkbox"] { width: auto; accent-color: var(--cyan); }
 .trend-legend-dots { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
 .legend-dot { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font: 700 12px var(--mono); }
 .legend-dot i { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
+
+/* ---------- supplier model config (供应商模型配置) ---------- */
+.supplier-models-table { table-layout: auto; }
+.supplier-models-table th:nth-child(2), .supplier-models-table th:nth-child(3) { width: 110px; }
+.supplier-models-table td.strong-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+.supplier-unregistered-row td { opacity: .72; }
+.thinking-summary-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
+.modal-config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+
+.preset-block { margin-bottom: 14px; }
+.preset-block h4 { display: flex; align-items: baseline; gap: 8px; }
+.preset-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; max-height: 150px; overflow: auto; }
+.preset-chip { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 3px; background: rgba(0,0,0,.18); border: 1px solid rgba(148,163,184,.16); border-radius: 12px; color: #cbd5e1; padding: 8px 11px; cursor: pointer; text-align: left; max-width: 260px; }
+.preset-chip:hover { border-color: rgba(34,211,238,.4); color: #e0f2fe; }
+.preset-chip-title { font: 800 .72rem var(--mono); }
+.preset-chip-detail { font: 700 .64rem var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }

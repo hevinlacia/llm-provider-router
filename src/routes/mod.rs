@@ -15,7 +15,7 @@ pub(crate) mod usage;
 
 use crate::app::AppState;
 use crate::config::Settings;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::Router;
 use serde::Deserialize;
 use std::net::SocketAddr;
@@ -114,6 +114,10 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         .route(
             "/api/config/thinking-maps",
             get(config::api_config_thinking_maps).put(config::api_config_thinking_maps_update),
+        )
+        .route(
+            "/api/config/v2/physical-models",
+            put(config::api_config_physical_models_update),
         )
         .route(
             "/api/config/thinking-maps/apply-equivalents",

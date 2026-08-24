@@ -23,14 +23,15 @@ pub use fold::fold_to_aliases;
 pub use io::load_v2_config_from;
 pub use io::{
     load_logical_models_file, load_models_file, load_provider_models_file, load_providers_file,
-    load_v2_config, load_virtual_models_file, write_logical_models_file, write_models_file,
-    write_provider_models_file, write_providers_file, write_virtual_models_file,
+    load_v2_config, load_virtual_models_file, migrate_legacy_logical_caps,
+    write_logical_models_file, write_models_file, write_provider_models_file, write_providers_file,
+    write_virtual_models_file,
 };
 pub use mutate::{register_physical_models, rename_provider_in_logical, rename_provider_in_models};
 pub use resolve::{resolve_targets, TargetCandidate};
 pub use types::{
-    ProviderModelsEntry, V2Config, V2Key, V2LogicalModel, V2LogicalModelsFile, V2ModelsFile,
-    V2PhysicalModel, V2Provider, V2Route, V2Strategy, V2Target, V2_LOGICAL_MODELS_PATH,
-    V2_MODELS_PATH, V2_PROVIDERS_PATH, V2_VIRTUAL_MODELS_PATH,
+    ProviderModelsEntry, V2Config, V2Key, V2LogicalModel, V2PhysicalModel, V2Provider, V2Route,
+    V2Strategy, V2Target, V2_LOGICAL_MODELS_PATH, V2_MODELS_PATH, V2_PROVIDERS_PATH,
+    V2_VIRTUAL_MODELS_PATH,
 };
 pub use validate::is_provider_scoped_virtual;
