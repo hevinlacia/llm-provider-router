@@ -71,15 +71,9 @@ pub fn fold_to_aliases(cfg: &V2Config) -> anyhow::Result<HashMap<String, ModelAl
             retry,
         );
         alias_obj = alias_obj.with_windows(model.context_window, model.max_output_tokens);
-        // 思考强度：物理优先，缺省回退逻辑池
-        let thinking_map = model
-            .thinking_level_map
-            .clone()
-            .or_else(|| lm.thinking_level_map.clone());
-        let thinking_fmt = model
-            .thinking_format
-            .clone()
-            .or_else(|| lm.thinking_format.clone());
+        // 思考强度：能力参数只属于物理模型，逻辑模型不再持有（池聚合见 router_capabilities）
+        let thinking_map = model.thinking_level_map.clone();
+        let thinking_fmt = model.thinking_format.clone();
         alias_obj = alias_obj.with_thinking(thinking_map, thinking_fmt);
         aliases.insert(alias.clone(), alias_obj);
     }

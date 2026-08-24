@@ -22,4 +22,5 @@ mod tests;
 pub(crate) mod util;
 
 pub use freeze::maybe_freeze_key;
+pub(crate) use state::config::PhysicalModelPatch;
 pub use state::{NoAvailableKeyError, RouterState};

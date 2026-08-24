@@ -85,13 +85,6 @@ export function LogicalModelEditor({ name, logical, candidates, isNew = false, o
   const [targets, setTargets] = useState<Array<{ model: string; weight: string }>>(() =>
     logical.targets.map((t) => ({ model: t.model, weight: t.weight != null ? String(t.weight) : '' })),
   );
-  const [thinkingLevelMap, setThinkingLevelMap] = useState<Record<string, string | null> | null>(
-    () => (logical.thinking_level_map as Record<string, string | null> | undefined) ?? null,
-  );
-  const [thinkingFormat, setThinkingFormat] = useState<string | null>(
-    () => (logical.thinking_format as string | null | undefined) ?? null,
-  );
-  const [showThinking, setShowThinking] = useState(() => Boolean(logical.thinking_level_map || logical.thinking_format));
   function updateTarget(index: number, patch: Partial<{ model: string; weight: string }>) {
     const next = [...targets];
     next[index] = { ...next[index], ...patch };
@@ -109,16 +102,11 @@ export function LogicalModelEditor({ name, logical, candidates, isNew = false, o
       return;
     }
     const parsed = cleaned.map((t) => ({ model: t.model.trim(), weight: t.weight.trim() === '' ? null : Math.max(0, Number(t.weight) || 0) }));
-    const thinkingPayload: { thinking_level_map?: Record<string, string | null> | null; thinking_format?: string | null } = {};
-    if (showThinking) {
-      thinkingPayload.thinking_level_map = thinkingLevelMap;
-      thinkingPayload.thinking_format = thinkingFormat;
-    }
     try {
       if (isNew) {
-        onSaved(await api.createV2LogicalModel({ name: poolName.trim(), strategy, targets: parsed, ...thinkingPayload }));
+        onSaved(await api.createV2LogicalModel({ name: poolName.trim(), strategy, targets: parsed }));
       } else {
-        onSaved(await api.updateV2LogicalModel(poolName.trim(), { strategy, targets: parsed, ...thinkingPayload }));
+        onSaved(await api.updateV2LogicalModel(poolName.trim(), { strategy, targets: parsed }));
       }
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
@@ -141,30 +129,6 @@ export function LogicalModelEditor({ name, logical, candidates, isNew = false, o
       {targets.map((t, i) => <tr key={i}><td><input list={datalistId} value={t.model} placeholder="e.g. openai-relay/grok-4.6 (physical), a pool name, or a virtual model" onChange={(event) => updateTarget(i, { model: event.target.value })} /></td><td><input className="weight-input" type="number" min="0" value={t.weight} placeholder="optional" onChange={(event) => updateTarget(i, { weight: event.target.value })} /></td><td><button className="secondary" onClick={() => removeTarget(i)}>Delete</button></td></tr>)}
     </tbody></table></div>
     <button className="secondary" onClick={addTarget}>Add Target</button>
-    <div style={{ marginTop: 16, borderTop: '1px solid #1f2937', paddingTop: 12 }}>
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer' }}><input type="checkbox" checked={showThinking} onChange={(e) => setShowThinking(e.target.checked)} /><span>Thinking fallback（逻辑池回退映射，物理未配置时生效）</span></label>
-      {showThinking && <div style={{ marginTop: 10 }}>
-        <p className="muted small-text">标准档位 → 上游 wire 值；留空该行档位=不写入（透传），<code>null</code>=不支持。物理层已配置则优先物理。</p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 8 }}>
-          {(['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const).map((lv) => {
-            const v = thinkingLevelMap?.[lv];
-            const display = v === null ? '' : v === undefined ? '' : String(v);
-            const isNull = v === null;
-            return <div key={lv} className="field"><label>{lv}{isNull ? ' (null)' : ''}</label><div style={{ display: 'flex', gap: 4 }}><input value={display} placeholder={isNull ? 'null' : '—'} title={isNull ? 'null (不支持)' : undefined} onChange={(e) => {
-              const raw = e.target.value;
-              if (raw === '' && isNull) return; // keep null until cleared via ∅ toggle
-              setThinkingLevelMap((prev) => {
-                const next = { ...(prev ?? {}) } as Record<string, string | null>;
-                if (raw.trim() === '') delete next[lv];
-                else next[lv] = raw.trim();
-                return Object.keys(next).length ? next : null;
-              });
-            }} /><button className="secondary" style={{ padding: '4px 8px', fontSize: 11 }} title="Set null (unsupported)" onClick={() => setThinkingLevelMap((prev) => ({ ...(prev ?? {}), [lv]: null }))}>∅</button>{isNull && <button className="secondary" style={{ padding: '4px 8px', fontSize: 11 }} onClick={() => setThinkingLevelMap((prev) => { const n = { ...(prev ?? {}) }; delete n[lv]; return Object.keys(n).length ? n : null; })}>✕</button>}</div></div>;
-          })}
-        </div>
-        <div className="field" style={{ marginTop: 10 }}><label>Format</label><select value={thinkingFormat ?? ''} onChange={(e) => setThinkingFormat(e.target.value || null)}><option value="">— (inherit)</option><option value="reasoning_effort">reasoning_effort</option></select></div>
-      </div>}
-    </div>
     <div className="toolbar"><button className="secondary" onClick={onCancel}>Cancel</button><button onClick={() => void save()}>{isNew ? 'Create' : 'Save'}</button></div>
   </div></div>;
 }

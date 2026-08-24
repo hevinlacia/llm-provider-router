@@ -7,10 +7,6 @@ use crate::state_store::now_seconds;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
-fn orig_has_null_for(k: &str, map: Option<&HashMap<String, Option<String>>>) -> bool {
-    map.and_then(|m| m.get(k)).is_some_and(|v| v.is_none())
-}
-
 impl RouterState {
     /// v2 折叠视图：每个逻辑模型取主目标（route.targets[0]）折叠为 ModelAlias，
     /// 再接入 custom model aliases（运行时 API 手动新增的扁平逻辑模型）。
@@ -193,6 +189,7 @@ impl RouterState {
                 "params": pm.params,
                 "context_window": pm.context_window,
                 "max_output_tokens": pm.max_output_tokens,
+                "supports_image": pm.supports_image,
             }));
         }
         models.sort_by(|a, b| {
@@ -278,9 +275,43 @@ impl RouterState {
             let mut available_mo: Vec<u32> = Vec::new();
             let mut all_cw: Vec<u32> = Vec::new();
             let mut all_mo: Vec<u32> = Vec::new();
+            // 能力聚合（池取最低/最保守）：supports_image / reasoning / thinking map
+            let mut any_supports_image: bool = false;
+            let mut all_supports_image: bool = true;
+            let mut any_reasoning_map: bool = false;
+            let mut all_reasoning_map: bool = true;
+            let mut formats: Vec<String> = Vec::new();
+            let mut level_maps: Vec<HashMap<String, Option<String>>> = Vec::new();
             for cand in &candidates {
                 let cw = cand.model.context_window;
                 let mo = cand.model.max_output_tokens;
+                // 物理 id：尝试从 cfg.models 反查，否则用 upstream；能力参数从物理模型读
+                let physical_id = cfg
+                    .models
+                    .iter()
+                    .find(|(_, pm)| {
+                        pm.provider == cand.model.provider()
+                            && cand.model.upstream_model() == pm.upstream_model
+                    })
+                    .map(|(id, _)| id.clone())
+                    .unwrap_or_else(|| {
+                        format!("{}/{}", cand.model.provider(), cand.model.upstream_model())
+                    });
+                let pm = cfg.models.get(&physical_id);
+                let supports_image = pm.and_then(|p| p.supports_image).unwrap_or(false);
+                any_supports_image |= supports_image;
+                all_supports_image &= supports_image;
+                let has_reasoning_map = pm
+                    .and_then(|p| p.thinking_level_map.as_ref())
+                    .is_some_and(|m| !m.is_empty());
+                any_reasoning_map |= has_reasoning_map;
+                all_reasoning_map &= has_reasoning_map;
+                if let Some(fmt) = pm.and_then(|p| p.thinking_format.clone()) {
+                    formats.push(fmt);
+                }
+                if let Some(map) = pm.and_then(|p| p.thinking_level_map.clone()) {
+                    level_maps.push(map);
+                }
                 // 可用：至少一个 key 未冻结且权重>0
                 let available = cand.model.keys.iter().any(|k| {
                     let kid = format!("{}/{}", k.provider, k.name);
@@ -299,24 +330,13 @@ impl RouterState {
                         available_mo.push(v);
                     }
                 }
-                // 物理 id：尝试从 cfg.models 反查，否则用 upstream
-                let physical_id = cfg
-                    .models
-                    .iter()
-                    .find(|(_, pm)| {
-                        pm.provider == cand.model.provider()
-                            && cand.model.upstream_model() == pm.upstream_model
-                    })
-                    .map(|(id, _)| id.clone())
-                    .unwrap_or_else(|| {
-                        format!("{}/{}", cand.model.provider(), cand.model.upstream_model())
-                    });
                 targets_json.push(json!({
                     "id": physical_id,
                     "provider": cand.model.provider(),
                     "upstream_model": cand.model.upstream_model(),
                     "context_window": cw,
                     "max_output_tokens": mo,
+                    "supports_image": supports_image,
                     "available": available,
                     "weight": cand.weight,
                 }));
@@ -331,39 +351,45 @@ impl RouterState {
             } else {
                 all_mo.into_iter().min()
             };
-            // 对外暴露的 thinking_level_map 统一为 OpenAI 标准身份映射（xhigh:xhigh），
-            // 真实上游方言（xhigh->max）保留在内部 fold 的 ModelAlias，翻译在 Router 内完成。
-            let exposed_map = if lm.thinking_level_map.is_some() {
+            // 能力聚合（池取最低/最保守）：
+            // - input/supports_image：所有候选都支持图片才对外声明图片模态。
+            // - reasoning：所有候选都配置了非空思考映射才对外声明推理。
+            // - thinking_level_map：取所有候选映射的公共档位交集（任一候选不支持则该档位不暴露），
+            //   对外统一为 OpenAI 标准身份映射（xhigh:xhigh），真实上游方言保留在内部 fold。
+            // - thinking_format：取第一个非空候选（无交集语义，仅协议名）。
+            let input_modes = if any_supports_image && all_supports_image {
+                vec!["text".to_string(), "image".to_string()]
+            } else {
+                vec!["text".to_string()]
+            };
+            let reasoning = any_reasoning_map && all_reasoning_map;
+            let exposed_map = if level_maps.is_empty() {
+                None
+            } else {
                 let mut m = std::collections::HashMap::new();
                 for k in ["minimal", "low", "medium", "high", "xhigh"] {
-                    if lm
-                        .thinking_level_map
-                        .as_ref()
-                        .is_some_and(|orig| orig.contains_key(k))
-                    {
-                        let wire = if orig_has_null_for(k, lm.thinking_level_map.as_ref()) {
-                            None
-                        } else {
-                            Some(k.to_string())
-                        };
-                        m.insert(k.to_string(), wire);
+                    let all_support = level_maps
+                        .iter()
+                        .all(|orig| matches!(orig.get(k), Some(Some(_))));
+                    let any_declared = level_maps.iter().any(|orig| orig.contains_key(k));
+                    // 仅当所有候选都声明且都支持该档位才暴露；任一候选不支持则整体不暴露
+                    if any_declared && all_support {
+                        m.insert(k.to_string(), Some(k.to_string()));
                     }
                 }
-                // 仅当原 map 非空才暴露；保持与原有 null 语义兼容
                 if m.is_empty() {
                     None
                 } else {
                     Some(serde_json::to_value(&m).unwrap())
                 }
-            } else {
-                None
             };
+            let thinking_format = formats.first().cloned();
             let mut entry = json!({
                 "id": alias,
                 "name": lm.display_name.clone().unwrap_or_else(|| alias.clone()),
                 "display_name": lm.display_name.clone(),
-                "reasoning": lm.reasoning,
-                "input": lm.input.clone(),
+                "reasoning": reasoning,
+                "input": input_modes,
                 "strategy": strategy,
                 "effective": {
                     "contextWindow": eff_cw,
@@ -374,7 +400,7 @@ impl RouterState {
             if let Some(v) = exposed_map {
                 entry["thinking_level_map"] = v;
             }
-            if let Some(tf) = lm.thinking_format.clone() {
+            if let Some(tf) = thinking_format {
                 entry["thinking_format"] = json!(tf);
             }
             models_out.push(entry);
@@ -480,7 +506,8 @@ impl RouterState {
         Ok(self.v2_status())
     }
 
-    /// 编辑 v2 逻辑模型：路由策略 + 目标（物理模型或嵌套逻辑模型）+ 思考强度回退。
+    /// 编辑 v2 逻辑模型：路由策略 + 目标（物理模型或嵌套逻辑模型）。
+    /// 能力参数（上下文/输出/图片/思考映射）只属于物理模型，逻辑模型聚合见 router_capabilities。
     /// 写回 `logical-models.json` 后热加载并返回最新视图。
     pub fn update_v2_logical_model(
         &mut self,
@@ -488,8 +515,6 @@ impl RouterState {
         strategy: config_v2::V2Strategy,
         params: HashMap<String, serde_json::Value>,
         targets: Vec<config_v2::V2Target>,
-        thinking_level_map: Option<HashMap<String, Option<String>>>,
-        thinking_format: Option<String>,
     ) -> anyhow::Result<Value> {
         if name.trim().is_empty() {
             anyhow::bail!("logical model name must not be empty");
@@ -513,13 +538,6 @@ impl RouterState {
         lm.route.strategy = strategy;
         lm.route.targets = targets;
         lm.params = params;
-        // 思考强度：None=不覆写（保留原值），Some(None/值)=显式清空/覆写
-        if thinking_level_map.is_some() {
-            lm.thinking_level_map = thinking_level_map;
-        }
-        if thinking_format.is_some() {
-            lm.thinking_format = thinking_format;
-        }
         config_v2::write_logical_models_file(config_v2::V2_LOGICAL_MODELS_PATH, &logical)?;
         self.reload_v2();
         Ok(self.v2_status())
@@ -533,8 +551,6 @@ impl RouterState {
         strategy: config_v2::V2Strategy,
         params: HashMap<String, serde_json::Value>,
         targets: Vec<config_v2::V2Target>,
-        thinking_level_map: Option<HashMap<String, Option<String>>>,
-        thinking_format: Option<String>,
     ) -> anyhow::Result<Value> {
         let name = name.trim();
         if name.is_empty() {
@@ -562,10 +578,6 @@ impl RouterState {
             config_v2::V2LogicalModel {
                 params,
                 route: config_v2::V2Route { strategy, targets },
-                reasoning: None,
-                input: None,
-                thinking_level_map,
-                thinking_format,
                 display_name: None,
             },
         );
@@ -715,6 +727,11 @@ impl RouterState {
     /// 重新加载 v2 配置（供应商编辑写回后热生效）。
     fn reload_v2(&mut self) {
         if self.settings.v2_config_enabled {
+            // 逻辑模型不再持有能力参数；编辑回写后如残留 legacy 字段（旧版本文件）一并迁移。
+            let _ = config_v2::migrate_legacy_logical_caps(
+                config_v2::V2_MODELS_PATH,
+                config_v2::V2_LOGICAL_MODELS_PATH,
+            );
             self.v2 = config_v2::load_v2_config().ok();
         }
     }

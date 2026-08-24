@@ -24,10 +24,10 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::env;
 
-mod config;
+pub(crate) mod config;
 mod keys;
 mod routing;
-mod v2;
+pub(crate) mod v2;
 
 #[derive(Clone, Debug)]
 pub struct FrozenKey {

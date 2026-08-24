@@ -1,6 +1,7 @@
 //! v2 配置测试。
 
 use super::resolve::merge_params;
+use super::types::{V2LogicalModelsFile, V2ModelsFile};
 use super::*;
 use std::collections::HashMap;
 use std::fs;
@@ -491,4 +492,97 @@ fn rename_provider_updates_models_and_logical_references() {
         .targets;
     assert_eq!(targets[0].model, "ark-renamed/deepseek-v4-flash-260801");
     assert_eq!(targets[1].model, "deepseek-official/deepseek-v4-flash");
+}
+
+#[test]
+fn migrate_legacy_logical_caps_sinks_to_physical_and_cleans_logical() {
+    let dir = std::env::temp_dir().join(format!("lpr-v2-test-{}-migrate", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    let models_path = write_temp(
+        &dir,
+        "models.json",
+        r#"{
+              "models": {
+                "ark/deepseek-v4-pro": { "provider": "ark", "upstream_model": "deepseek-v4-pro", "context_window": 950000, "max_output_tokens": 384000 },
+                "openai-relay/gpt-5.6-luna": { "provider": "openai-relay", "upstream_model": "gpt-5.6-luna", "context_window": 600000, "max_output_tokens": 200000 },
+                "ark/minimax-m3": { "provider": "ark", "upstream_model": "minimax-m3", "context_window": 600000, "max_output_tokens": 128000 }
+              }
+            }"#,
+    );
+    let logical_path = write_temp(
+        &dir,
+        "logical.json",
+        r#"{
+              "logical_models": {
+                "deepseek-v4-pro-auto": {
+                  "route": { "strategy": "priority", "targets": [ { "model": "ark/deepseek-v4-pro" } ] },
+                  "reasoning": true,
+                  "input": ["text"],
+                  "thinking_level_map": { "minimal": null, "xhigh": "max", "low": null, "high": "high", "medium": null },
+                  "thinking_format": null
+                },
+                "gpt-low-latest-auto": {
+                  "route": { "strategy": "priority", "targets": [ { "model": "openai-relay/gpt-5.6-luna" } ] },
+                  "reasoning": true,
+                  "input": ["text", "image"],
+                  "thinking_level_map": { "high": "high", "xhigh": "xhigh" },
+                  "thinking_format": "reasoning_effort"
+                },
+                "picture-model-auto": {
+                  "route": { "strategy": "priority", "targets": [ { "model": "ark/minimax-m3" } ] },
+                  "reasoning": false,
+                  "input": ["text", "image"],
+                  "thinking_level_map": null,
+                  "thinking_format": null
+                }
+              }
+            }"#,
+    );
+    let migrated = super::migrate_legacy_logical_caps(&models_path, &logical_path).unwrap();
+    assert!(migrated);
+
+    let models: V2ModelsFile =
+        serde_json::from_str(&fs::read_to_string(&models_path).unwrap()).unwrap();
+    // deepseek: thinking map 下沉，无 image
+    let ds = &models.models["ark/deepseek-v4-pro"];
+    assert_eq!(
+        ds.thinking_level_map.as_ref().unwrap()["xhigh"],
+        Some("max".to_string())
+    );
+    assert_eq!(
+        ds.thinking_level_map.as_ref().unwrap()["high"],
+        Some("high".to_string())
+    );
+    assert!(ds.supports_image.is_none());
+    // gpt: thinking map + format + image 下沉
+    let gpt = &models.models["openai-relay/gpt-5.6-luna"];
+    assert_eq!(
+        gpt.thinking_level_map.as_ref().unwrap()["xhigh"],
+        Some("xhigh".to_string())
+    );
+    assert_eq!(gpt.thinking_format.as_deref(), Some("reasoning_effort"));
+    assert_eq!(gpt.supports_image, Some(true));
+    // minimax: 仅 image 下沉，thinking map 保持 None
+    let mm = &models.models["ark/minimax-m3"];
+    assert!(mm.thinking_level_map.is_none());
+    assert_eq!(mm.supports_image, Some(true));
+
+    let logical: V2LogicalModelsFile =
+        serde_json::from_str(&fs::read_to_string(&logical_path).unwrap()).unwrap();
+    for lm in logical.logical_models.values() {
+        assert!(lm.display_name.is_none() || true);
+    }
+    // legacy 字段已清理（结构体没有这些字段，验证原始 JSON 不再含 key）
+    let raw: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&logical_path).unwrap()).unwrap();
+    for lm in raw["logical_models"].as_object().unwrap().values() {
+        assert!(!lm.as_object().unwrap().contains_key("thinking_level_map"));
+        assert!(!lm.as_object().unwrap().contains_key("thinking_format"));
+        assert!(!lm.as_object().unwrap().contains_key("reasoning"));
+        assert!(!lm.as_object().unwrap().contains_key("input"));
+    }
+
+    // 幂等：再次运行无变更
+    let again = super::migrate_legacy_logical_caps(&models_path, &logical_path).unwrap();
+    assert!(!again);
 }

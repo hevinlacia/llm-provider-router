@@ -175,6 +175,27 @@ export type V2PhysicalModel = {
   params: Record<string, unknown>;
   context_window?: number | null;
   max_output_tokens?: number | null;
+  supports_image?: boolean | null;
+  thinking_level_map?: Record<string, string | null> | null;
+  thinking_format?: string | null;
+};
+
+/** 供应商模型配置面板：物理模型完整能力参数补丁 */
+export type PhysicalModelPatch = {
+  model: string;
+  context_window?: number | null;
+  max_output_tokens?: number | null;
+  supports_image?: boolean | null;
+  thinking_level_map?: Record<string, string | null> | null;
+  thinking_format?: string | null;
+};
+
+export type PhysicalModelsConfig = {
+  ok: boolean;
+  v2_enabled: boolean;
+  providers?: Record<string, V2ProviderStatus>;
+  models?: V2PhysicalModel[];
+  logical_models?: Record<string, V2LogicalModel>;
 };
 
 export type ThinkingMapEntry = {
@@ -188,7 +209,6 @@ export type ThinkingMapEntry = {
 export type ThinkingMapsConfig = {
   ok: boolean;
   maps: ThinkingMapEntry[];
-  logical_fallback?: Record<string, { thinking_level_map?: Record<string, string | null> | null; thinking_format?: string | null }>;
   config_path: string;
 };
 
@@ -196,8 +216,7 @@ export type V2LogicalModel = {
   params: Record<string, unknown>;
   strategy: string;
   targets: Array<{ model: string; weight?: number | null }>;
-  thinking_level_map?: Record<string, string | null> | null;
-  thinking_format?: string | null;
+  display_name?: string | null;
 };
 
 export type V2Status = {

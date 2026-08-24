@@ -1,4 +1,4 @@
-import type { FilterState, KeyConfig, ModelAliasConfig, ModelEquivalencesConfig, ProviderConfig, ProviderModelsResponse, RouterCapabilities, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, WeightConfig } from './types';
+import type { FilterState, KeyConfig, ModelAliasConfig, ModelEquivalencesConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderConfig, ProviderModelsResponse, RouterCapabilities, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, WeightConfig } from './types';
 
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
@@ -139,6 +139,13 @@ export const api = {
       body: JSON.stringify({ maps }),
     });
   },
+  savePhysicalModels(models: PhysicalModelPatch[]) {
+    return request<PhysicalModelsConfig>('/api/config/v2/physical-models', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ models }),
+    });
+  },
   applyThinkingToEquivalents(model: string, onlyMissing = false) {
     return request<{ ok: boolean; applied_to: string[]; thinking_maps: ThinkingMapsConfig }>('/api/config/thinking-maps/apply-equivalents', {
       method: 'POST',
@@ -176,14 +183,14 @@ export const api = {
       body: JSON.stringify({ provider }),
     });
   },
-  updateV2LogicalModel(name: string, body: { strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null }>; thinking_level_map?: Record<string, string | null> | null; thinking_format?: string | null }) {
+  updateV2LogicalModel(name: string, body: { strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null }> }) {
     return request<V2Status>('/api/config/v2/logical-models', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, ...body }),
     });
   },
-  createV2LogicalModel(body: { name: string; strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null }>; thinking_level_map?: Record<string, string | null> | null; thinking_format?: string | null }) {
+  createV2LogicalModel(body: { name: string; strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null }> }) {
     return request<V2Status>('/api/config/v2/logical-models', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

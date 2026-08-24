@@ -85,8 +85,10 @@ pub struct V2PhysicalModel {
     /// 上游单次最大输出 tokens。缺省时取保守默认值。
     #[serde(default)]
     pub max_output_tokens: Option<u32>,
+    /// 是否支持图片输入（视觉模态）。
+    #[serde(default)]
+    pub supports_image: Option<bool>,
     /// 思考强度映射（物理粒度）：标准档位 -> 上游 wire 值（None=不支持该档位）。
-    /// 为空时回退逻辑模型的 thinking_level_map。
     #[serde(default)]
     pub thinking_level_map: Option<HashMap<String, Option<String>>>,
     /// 思考字段协议（reasoning_effort 等），物理粒度覆写。
@@ -159,18 +161,6 @@ pub struct V2LogicalModel {
     #[serde(default)]
     pub params: HashMap<String, serde_json::Value>,
     pub route: V2Route,
-    /// 展示/协商用：是否支持 reasoning/thinking（Pi 侧 registerProvider 透传）。
-    #[serde(default)]
-    pub reasoning: Option<bool>,
-    /// 输入模态：如 ["text"] 或 ["text","image"]。
-    #[serde(default)]
-    pub input: Option<Vec<String>>,
-    /// Pi 侧 thinkingLevelMap（如 reasoning 模型的 high->high 映射）。
-    #[serde(default)]
-    pub thinking_level_map: Option<HashMap<String, Option<String>>>,
-    /// Pi compat.thinkingFormat（如 openai 侧 reasoning_effort）。
-    #[serde(default)]
-    pub thinking_format: Option<String>,
     /// 人类可读展示名。
     #[serde(default)]
     pub display_name: Option<String>,
