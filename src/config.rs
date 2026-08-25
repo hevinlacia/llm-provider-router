@@ -228,6 +228,9 @@ pub struct Settings {
     pub token_price_config_path: String,
     pub model_alias_config_path: String,
     pub search_providers_path: String,
+    /// 运行期刷新 key 用的 env 文件（如 systemd environment.d 生成的 agent-env.conf）；
+    /// 设置后 `/api/config/reload-env` 可重读该文件并把变量 set_var 进当前进程环境。
+    pub env_file_path: Option<String>,
     /// 供应商模型列表持久化路径（设置界面“查看供应商详情”缓存）。
     pub provider_models_path: String,
     pub auth_invalid_freeze_seconds: f64,
@@ -297,6 +300,9 @@ pub fn load_settings() -> anyhow::Result<Settings> {
             "LLM_PROVIDER_ROUTER_SEARCH_PROVIDERS_PATH",
             DEFAULT_SEARCH_PROVIDERS_PATH,
         ),
+        env_file_path: env::var("LLM_PROVIDER_ROUTER_ENV_FILE")
+            .ok()
+            .filter(|value| !value.is_empty()),
         provider_models_path: env_or(
             "LLM_PROVIDER_ROUTER_PROVIDER_MODELS_PATH",
             "config/provider-models.json",

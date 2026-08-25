@@ -777,6 +777,10 @@ pub(crate) async fn api_config_keys_add(
     })
 }
 
+pub(crate) async fn api_config_reload_env(State(app): State<AppState>) -> Response {
+    with_state_json(&app, |state| state.reload_env())
+}
+
 pub(crate) async fn api_config_search_providers(State(app): State<AppState>) -> Response {
     match app.search_pool.lock() {
         Ok(mut pool) => {

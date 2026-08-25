@@ -738,7 +738,7 @@ impl RouterState {
     }
 
     /// 重新加载 v2 配置（供应商编辑写回后热生效）。
-    fn reload_v2(&mut self) {
+    pub(super) fn reload_v2(&mut self) {
         if self.settings.v2_config_enabled {
             // 逻辑模型不再持有能力参数；编辑回写后如残留 legacy 字段（旧版本文件）一并迁移。
             let _ = config_v2::migrate_legacy_logical_caps(
