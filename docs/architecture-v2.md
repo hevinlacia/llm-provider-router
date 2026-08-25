@@ -286,3 +286,18 @@ fn resolve(alias, session):
 3. `deepseek-v4-flash-auto`：保留 "260801" 固定版本逻辑（ark 上游固定指向 260801）。
 4. key 白名单：取消，key 只与供应商关联。
 5. key `enabled`（启用/停用）：写回 `providers.json` 持久化。
+
+---
+
+## 10. 运行期 env 刷新（reload-env）
+
+`POST /api/config/reload-env` 让运行中的 backend 无需重启即读到新增/更新的
+provider key：
+
+- 配置：`LLM_PROVIDER_ROUTER_ENV_FILE`（systemd 单元里设为
+  `~/.config/environment.d/agent-env.conf`，即 vault 维护的合并 env 文件）。
+- 行为：重读该文件并 `std::env::set_var` 每个 `KEY=value` 到当前进程环境，
+  再 `reload_v2()` 重读 providers-v2.json 等配置，使新 key/provider 即时生效。
+  key 值在路由时 live `env::var`，因此无需重启。
+- 入口：front-proxy 8789 的 fallback 会把该请求转发到活跃 backend；
+  vault 的「刷新环境变量」在 import-environment 之后自动调用它。
