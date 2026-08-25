@@ -1,0 +1,25 @@
+systemd/llm-provider-router-backend@.service
+  00b9a5dc863cf252 12,15-16
+docs/architecture-v2.md
+  00b9a5dc863cf252 289-303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "55851e5528376b383e25849e730ce86b49579565",
+  "prompts": {
+    "00b9a5dc863cf252": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a037d5-ab7b-7f09-8388-f1e15750c08b",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 18,
+      "total_deletions": 1,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
