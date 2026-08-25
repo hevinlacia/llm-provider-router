@@ -7,7 +7,8 @@
 //! - `keys`：key 引用与物理引用推导
 
 use crate::config::{
-    aliases, default_key_weights, default_provider_base_urls, KeyRef, ModelAlias, Settings,
+    aliases, default_key_weights, default_provider_base_urls, expand_path, KeyRef, ModelAlias,
+    Settings,
 };
 use crate::config_v2;
 use crate::features::router::costing::{apply_costs, default_token_prices};
@@ -190,6 +191,47 @@ impl RouterState {
             v2,
         };
         Ok(state)
+    }
+
+    /// 运行期重读 env 文件（如 systemd environment.d 生成的 agent-env.conf）并把变量
+    /// 注入当前进程环境，使新增/更新的 provider key 无需重启即可被
+    /// `upstream_key_value` 读到（key 值在路由时 live `env::var`）。
+    /// 同时重读 v2 配置，让 providers-v2.json 里新增的 key/provider 即时生效。
+    /// 未配置 `LLM_PROVIDER_ROUTER_ENV_FILE` 时返回空结果（不报错）。
+    pub fn reload_env(&mut self) -> anyhow::Result<serde_json::Value> {
+        let Some(path) = self.settings.env_file_path.clone() else {
+            return Ok(serde_json::json!({
+                "reloaded": 0,
+                "path": "",
+                "message": "LLM_PROVIDER_ROUTER_ENV_FILE not configured",
+            }));
+        };
+        let expanded = expand_path(&path);
+        let content = std::fs::read_to_string(&expanded)
+            .map_err(|e| anyhow::anyhow!("read env file {}: {e}", expanded.display()))?;
+        let mut imported = 0usize;
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') || !line.contains('=') {
+                continue;
+            }
+            let (key, value) = match line.split_once('=') {
+                Some(pair) => pair,
+                None => continue,
+            };
+            let key = key.trim();
+            if key.is_empty() {
+                continue;
+            }
+            std::env::set_var(key, value.trim());
+            imported += 1;
+        }
+        // 重读 v2 配置：新增的 key/provider 即时生效。
+        self.reload_v2();
+        Ok(serde_json::json!({
+            "reloaded": imported,
+            "path": expanded.display().to_string(),
+        }))
     }
 
     pub fn cleanup(&mut self) -> anyhow::Result<()> {

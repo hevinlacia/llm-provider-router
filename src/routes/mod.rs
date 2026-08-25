@@ -126,6 +126,10 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
                 .post(config::api_config_keys_add),
         )
         .route(
+            "/api/config/reload-env",
+            post(config::api_config_reload_env),
+        )
+        .route(
             "/api/config/search-providers",
             get(config::api_config_search_providers)
                 .put(config::api_config_search_providers_update),
