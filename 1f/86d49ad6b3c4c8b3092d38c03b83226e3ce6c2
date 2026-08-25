@@ -1,0 +1,37 @@
+src/routes/config.rs
+  1e9c50c70db5ab82 58-66,73-76,106-111,121,126-131,146,151-157,302,636-637,660-667
+frontend/src/features/settings/editors.tsx
+  1e9c50c70db5ab82 11,25,55,57,66-67
+frontend/src/features/settings/v2.tsx
+  1e9c50c70db5ab82 36
+src/config/v2/types.rs
+  1e9c50c70db5ab82 63-66
+src/features/router/state/v2.rs
+  1e9c50c70db5ab82 169,417-418,434-438,448,467-469,492,510-512
+src/features/router/probe.rs
+  1e9c50c70db5ab82 8,26-43,71-102,144-335,499-500,517-528,594-620
+frontend/src/types.ts
+  1e9c50c70db5ab82 157-158
+frontend/src/api.ts
+  1e9c50c70db5ab82 162,169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "1f86d49ad6b3c4c8b3092d38c03b83226e3ce6c2",
+  "prompts": {
+    "1e9c50c70db5ab82": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a03348-7faf-7d8e-8e0a-64e09bfcc0d8",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 375,
+      "total_deletions": 43,
+      "accepted_lines": 360,
+      "overriden_lines": 0
+    }
+  }
+}
