@@ -127,35 +127,47 @@ async function fetchCaps(): Promise<CapModel[] | null> {
   return null;
 }
 
-async function sync(pi: ExtensionAPI) {
+async function sync(pi: ExtensionAPI, force = false) {
   const caps = await fetchCaps();
   if (!caps?.length) return;
-  // 仅当 effective 窗口变化或有新模型时才重注册，避免无谓抖动
-  let changed = Object.keys(currentModels).length !== caps.length;
-  if (!changed) {
-    for (const m of caps) {
-      const prev = currentModels[m.id];
-      const cw = m.effective?.contextWindow ?? m.context_window ?? m.contextWindow;
-      const mt = m.effective?.maxTokens ?? m.max_output_tokens ?? m.maxTokens;
-      const pcw = prev?.effective?.contextWindow ?? prev?.context_window ?? (prev as unknown as { contextWindow?: number })?.contextWindow;
-      const pmt = prev?.effective?.maxTokens ?? prev?.max_output_tokens ?? (prev as unknown as { maxTokens?: number })?.maxTokens;
-      if (pcw !== cw || pmt !== mt || prev?.reasoning !== m.reasoning) {
-        changed = true;
-        break;
+  if (!force) {
+    // 仅当 effective 窗口 / 推理 / 图片能力变化或有新模型时才重注册，避免无谓抖动
+    let changed = Object.keys(currentModels).length !== caps.length;
+    if (!changed) {
+      for (const m of caps) {
+        const prev = currentModels[m.id];
+        const cw = m.effective?.contextWindow ?? m.context_window ?? m.contextWindow;
+        const mt = m.effective?.maxTokens ?? m.max_output_tokens ?? m.maxTokens;
+        const pcw = prev?.effective?.contextWindow ?? prev?.context_window ?? (prev as unknown as { contextWindow?: number })?.contextWindow;
+        const pmt = prev?.effective?.maxTokens ?? prev?.max_output_tokens ?? (prev as unknown as { maxTokens?: number })?.maxTokens;
+        // 图片能力动态协商：input 变化（Router 侧调整 supports_image / 可图片目标）必须触发重注册
+        const inputKey = (v: CapModel | undefined) =>
+          ((Array.isArray(v?.input) ? v!.input : []) as string[]).slice().sort().join("|");
+        if (pcw !== cw || pmt !== mt || prev?.reasoning !== m.reasoning || inputKey(prev) !== inputKey(m)) {
+          changed = true;
+          break;
+        }
       }
     }
+    if (!changed) return;
   }
-  if (changed) registerFromCaps(pi, caps);
+  registerFromCaps(pi, caps);
 }
 
 export default async function (pi: ExtensionAPI) {
   // async factory 阻塞到首次拉取完成，首个 session 的模型列表即为准
-  await sync(pi);
+  // /new 会创建全新 ModelRuntime/Runner，模块级 currentModels 仍有缓存但新 Runner 为空，必须强制重注册
+  await sync(pi, true);
 
   timer = setInterval(() => void sync(pi), POLL_MS);
   if (timer && typeof (timer as unknown as { unref?: () => void }).unref === "function") {
     (timer as unknown as { unref: () => void }).unref!();
   }
+
+  // /new /resume /fork 都会进新 Runner，startup 外的 session_start 强制重注册兜底
+  pi.on("session_start", (event) => {
+    if (event.reason !== "startup") void sync(pi, true);
+  });
 
   pi.on("model_select", () => void sync(pi));
 

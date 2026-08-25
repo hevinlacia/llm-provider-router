@@ -37,6 +37,7 @@ fn test_settings() -> Settings {
         diag_max_bytes: 10 * 1024 * 1024,
         diag_max_files: 0,
         diag_sample_every: 1,
+        env_file_path: None,
     }
 }
 
@@ -307,4 +308,34 @@ fn order_targets_weighted_session_sticky_and_fallback_sorted() {
     let mut sorted = rest.clone();
     sorted.sort_by(|x, y| y.cmp(x));
     assert_eq!(rest, sorted, "回退应按 weight 降序");
+}
+
+#[test]
+fn reload_env_reads_env_file_and_injects_vars() {
+    let dir = tempfile::tempdir().unwrap();
+    let env_file = dir.path().join("agent-env.conf");
+    fs::write(
+        &env_file,
+        "# comment line\n\nAGENT_TEST_RELOAD_KEY=reload-value\nOTHER_KEY=\n",
+    )
+    .unwrap();
+
+    let settings = Settings {
+        env_file_path: Some(env_file.to_str().unwrap().to_string()),
+        ..test_settings()
+    };
+    let mut state = RouterState::new(settings).unwrap();
+
+    let result = state.reload_env().unwrap();
+    let reloaded = result.get("reloaded").and_then(|v| v.as_u64()).unwrap();
+    // 跳过注释/空行/空值行（OTHER_KEY= 空值仍计入）
+    assert!(
+        reloaded >= 1,
+        "expected at least 1 var imported, got {reloaded}"
+    );
+    assert_eq!(
+        std::env::var("AGENT_TEST_RELOAD_KEY").as_deref().ok(),
+        Some("reload-value")
+    );
+    std::env::remove_var("AGENT_TEST_RELOAD_KEY");
 }
