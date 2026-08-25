@@ -55,13 +55,25 @@ pub(crate) async fn api_config_v2(State(app): State<AppState>) -> Response {
 /// 供新增/编辑供应商 handler 复用，错误返回可直接透传给 bad_request 的文案。
 fn parse_v2_provider_body(
     provider: &serde_json::Map<String, serde_json::Value>,
-) -> Result<(String, String, HashMap<String, crate::config_v2::V2Key>), String> {
+) -> Result<
+    (
+        String,
+        String,
+        Option<String>,
+        HashMap<String, crate::config_v2::V2Key>,
+    ),
+    String,
+> {
     let Some(new_name) = provider.get("name").and_then(Value::as_str) else {
         return Err("provider.name (string) is required".to_string());
     };
     let Some(base_url) = provider.get("base_url").and_then(Value::as_str) else {
         return Err("provider.base_url (string) is required".to_string());
     };
+    let anthropic_base_url = provider
+        .get("anthropic_base_url")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let mut keys = HashMap::new();
     if let Some(key_objs) = provider.get("keys").and_then(Value::as_object) {
         for (name, value) in key_objs {
@@ -91,7 +103,12 @@ fn parse_v2_provider_body(
             );
         }
     }
-    Ok((new_name.to_string(), base_url.to_string(), keys))
+    Ok((
+        new_name.to_string(),
+        base_url.to_string(),
+        anthropic_base_url,
+        keys,
+    ))
 }
 
 pub(crate) async fn api_config_v2_providers_create(
@@ -101,15 +118,17 @@ pub(crate) async fn api_config_v2_providers_create(
     let Some(provider) = payload.get("provider").and_then(Value::as_object) else {
         return bad_request("provider (object) is required");
     };
-    let (name, base_url, keys) = match parse_v2_provider_body(provider) {
+    let (name, base_url, anthropic_base_url, keys) = match parse_v2_provider_body(provider) {
         Ok(parsed) => parsed,
         Err(message) => return bad_request(&message),
     };
     match app.state.lock() {
-        Ok(mut state) => match state.create_v2_provider(&name, &base_url, keys) {
-            Ok(value) => json_status(StatusCode::OK, value),
-            Err(err) => bad_request(&err.to_string()),
-        },
+        Ok(mut state) => {
+            match state.create_v2_provider(&name, &base_url, anthropic_base_url, keys) {
+                Ok(value) => json_status(StatusCode::OK, value),
+                Err(err) => bad_request(&err.to_string()),
+            }
+        }
         Err(_) => internal_error("router state lock poisoned"),
     }
 }
@@ -124,15 +143,18 @@ pub(crate) async fn api_config_v2_providers_update(
     let Some(provider) = payload.get("provider").and_then(Value::as_object) else {
         return bad_request("provider (object) is required");
     };
-    let (new_name, base_url, keys) = match parse_v2_provider_body(provider) {
+    let (new_name, base_url, anthropic_base_url, keys) = match parse_v2_provider_body(provider) {
         Ok(parsed) => parsed,
         Err(message) => return bad_request(&message),
     };
     match app.state.lock() {
-        Ok(mut state) => match state.update_v2_provider(old_name, &new_name, &base_url, keys) {
-            Ok(value) => json_status(StatusCode::OK, value),
-            Err(err) => bad_request(&err.to_string()),
-        },
+        Ok(mut state) => {
+            match state.update_v2_provider(old_name, &new_name, &base_url, anthropic_base_url, keys)
+            {
+                Ok(value) => json_status(StatusCode::OK, value),
+                Err(err) => bad_request(&err.to_string()),
+            }
+        }
         Err(_) => internal_error("router state lock poisoned"),
     }
 }
@@ -277,7 +299,7 @@ pub(crate) async fn api_config_v2_provider_models(
         Ok(state) => state.v2_provider_probe(&name),
         Err(_) => return internal_error("router state lock poisoned"),
     };
-    let Some((base_url, env_vars)) = probe else {
+    let Some((base_url, _anthropic_base_url, env_vars)) = probe else {
         return json_status(
             StatusCode::NOT_FOUND,
             json!({
@@ -611,8 +633,8 @@ pub(crate) async fn api_config_physical_models_probe(
         return bad_request("provider and upstream must not be empty");
     }
 
-    // 取 provider 的 base_url + enabled key 的 env_var（先锁拿配置，再释放锁发请求）
-    let (base_url, env_vars) = {
+    // 取 provider 的 base_url / anthropic_base_url / enabled key 的 env_var（先锁拿配置，再释放锁发请求）
+    let (base_url, anthropic_base_url, env_vars) = {
         let guard = app.state.lock();
         match guard {
             Ok(state) => match state.v2_provider_probe(provider) {
@@ -635,9 +657,14 @@ pub(crate) async fn api_config_physical_models_probe(
         ));
     };
 
-    let outcome =
-        crate::features::router::probe::probe_model(&app.client, &base_url, &api_key, upstream)
-            .await;
+    let outcome = crate::features::router::probe::probe_model(
+        &app.client,
+        &base_url,
+        anthropic_base_url.as_deref(),
+        &api_key,
+        upstream,
+    )
+    .await;
     let response = json!({
         "ok": true,
         "provider": provider,

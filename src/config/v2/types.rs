@@ -60,6 +60,10 @@ pub struct V2Retry {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct V2Provider {
     pub base_url: String,
+    /// Anthropic 兼容 API 端点（可选）。供应商同时提供 Anthropic 协议时配置，
+    /// 模型能力探测优先走 Anthropic `/v1/models`（返回精确 context_window，零成本）。
+    #[serde(default)]
+    pub anthropic_base_url: Option<String>,
     #[serde(default)]
     pub retry: Option<V2Retry>,
     pub keys: HashMap<String, V2Key>,
