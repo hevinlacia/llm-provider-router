@@ -154,6 +154,8 @@ export type V2KeyStatus = {
 
 export type V2ProviderStatus = {
   base_url: string;
+  /** Anthropic 兼容 API 端点（可选）：供应商同时提供 Anthropic 协议时配置，能力探测优先走它 */
+  anthropic_base_url?: string | null;
   key_total: number;
   key_enabled: number;
   key_frozen: number;

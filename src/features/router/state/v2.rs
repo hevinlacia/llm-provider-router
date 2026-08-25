@@ -166,6 +166,7 @@ impl RouterState {
                 name.clone(),
                 json!({
                     "base_url": prov.base_url,
+                    "anthropic_base_url": prov.anthropic_base_url,
                     "key_total": prov.keys.len(),
                     "key_enabled": enabled.len(),
                     "key_frozen": frozen_count,
@@ -413,8 +414,8 @@ impl RouterState {
         })
     }
 
-    /// v2 供应商探测信息：base_url + enabled key 的 env_var 列表（用于拉取 /models）。
-    pub fn v2_provider_probe(&self, name: &str) -> Option<(String, Vec<String>)> {
+    /// v2 供应商探测信息：base_url + anthropic_base_url + enabled key 的 env_var 列表（用于拉取 /models 或能力探测）。
+    pub fn v2_provider_probe(&self, name: &str) -> Option<(String, Option<String>, Vec<String>)> {
         let cfg = self.v2.as_ref()?;
         let provider = cfg.providers.get(name)?;
         let mut env_vars: Vec<String> = provider
@@ -430,7 +431,11 @@ impl RouterState {
                 .map(|key| key.env_var.clone())
                 .collect();
         }
-        Some((provider.base_url.clone(), env_vars))
+        Some((
+            provider.base_url.clone(),
+            provider.anthropic_base_url.clone(),
+            env_vars,
+        ))
     }
 
     /// 编辑 v2 供应商：改名 / base_url / keys（新增、删除、启用停用）。
@@ -440,6 +445,7 @@ impl RouterState {
         old_name: &str,
         new_name: &str,
         base_url: &str,
+        anthropic_base_url: Option<String>,
         keys: HashMap<String, config_v2::V2Key>,
     ) -> anyhow::Result<Value> {
         if new_name.trim().is_empty() {
@@ -458,6 +464,9 @@ impl RouterState {
             .remove(old_name)
             .ok_or_else(|| anyhow::anyhow!("provider {old_name} not found"))?;
         provider.base_url = base_url.trim().to_string();
+        provider.anthropic_base_url = anthropic_base_url
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         provider.keys = keys;
         providers.providers.insert(new_name.to_string(), provider);
         config_v2::write_providers_file(config_v2::V2_PROVIDERS_PATH, &providers)?;
@@ -480,6 +489,7 @@ impl RouterState {
         &mut self,
         name: &str,
         base_url: &str,
+        anthropic_base_url: Option<String>,
         keys: HashMap<String, config_v2::V2Key>,
     ) -> anyhow::Result<Value> {
         let name = name.trim();
@@ -497,6 +507,9 @@ impl RouterState {
             name.to_string(),
             config_v2::V2Provider {
                 base_url: base_url.trim().to_string(),
+                anthropic_base_url: anthropic_base_url
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty()),
                 retry: None,
                 keys,
             },

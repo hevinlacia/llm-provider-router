@@ -8,6 +8,7 @@ type KeyDraft = { name: string; env_var: string; weight: number; billing_type: s
 type ProviderDraft = {
   name: string;
   base_url: string;
+  anthropic_base_url?: string | null;
   keys: Record<string, { env_var: string; weight: number; billing_type: string; enabled: boolean }>;
 };
 
@@ -21,6 +22,7 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
 }) {
   const [name, setName] = useState(providerName);
   const [baseUrl, setBaseUrl] = useState(provider.base_url);
+  const [anthropicBaseUrl, setAnthropicBaseUrl] = useState(provider.anthropic_base_url ?? '');
   const [keys, setKeys] = useState<KeyDraft[]>(() =>
     Object.entries(provider.keys).map(([k, v]) => ({ name: k, env_var: v.env_var, weight: v.weight, billing_type: v.billing_type, enabled: v.enabled })),
   );
@@ -50,9 +52,9 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
     }
     try {
       if (isNew) {
-        onSaved(await api.createV2Provider({ name: name.trim(), base_url: baseUrl.trim(), keys: keyMap }));
+        onSaved(await api.createV2Provider({ name: name.trim(), base_url: baseUrl.trim(), anthropic_base_url: anthropicBaseUrl.trim() || null, keys: keyMap }));
       } else {
-        onSaved(await api.updateV2Provider(providerName, { name: name.trim(), base_url: baseUrl.trim(), keys: keyMap }));
+        onSaved(await api.updateV2Provider(providerName, { name: name.trim(), base_url: baseUrl.trim(), anthropic_base_url: anthropicBaseUrl.trim() || null, keys: keyMap }));
       }
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
@@ -61,7 +63,8 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
   return <div className="modal-overlay" onClick={onCancel}><div className="modal" onClick={(event) => event.stopPropagation()}>
     <h3>{isNew ? 'Add Provider' : `Edit Provider: ${providerName}`}</h3>
     <div className="field"><label>Name</label><input value={name} onChange={(event) => setName(event.target.value)} /></div>
-    <div className="field"><label>Base URL</label><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></div>
+    <div className="field"><label>Base URL (OpenAI-compatible)</label><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" /></div>
+    <div className="field"><label>Anthropic Base URL <span className="muted small-text">（可选）供应商同时提供 Anthropic 兼容 API 时填写；能力探测将优先走 Anthropic /v1/models 获取精确 context_window</span></label><input value={anthropicBaseUrl} onChange={(event) => setAnthropicBaseUrl(event.target.value)} placeholder="https://api.anthropic.com（留空则用 OpenAI 兼容探测）" /></div>
     <h4>Keys</h4>
     <div className="table-wrap"><table><thead><tr><th>Key</th><th>Env Var</th><th>Weight</th><th>Billing</th><th>Enabled</th><th></th></tr></thead><tbody>
       {keys.map((k, i) => <tr key={i}><td><input value={k.name} onChange={(event) => updateKey(i, { name: event.target.value })} /></td><td><input className="env-input" value={k.env_var} onChange={(event) => updateKey(i, { env_var: event.target.value })} /></td><td><input className="weight-input" type="number" min="0" step="1" value={k.weight} onChange={(event) => updateKey(i, { weight: Number(event.target.value) || 0 })} /></td><td><select value={k.billing_type} onChange={(event) => updateKey(i, { billing_type: event.target.value })}><option value="subscription">subscription</option><option value="payg">payg</option></select></td><td><input type="checkbox" checked={k.enabled} onChange={(event) => updateKey(i, { enabled: event.target.checked })} /></td><td><button className="secondary" onClick={() => removeKey(i)}>Delete</button></td></tr>)}
