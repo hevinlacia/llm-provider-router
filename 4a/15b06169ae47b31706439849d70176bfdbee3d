@@ -1,0 +1,37 @@
+src/config.rs
+  00b9a5dc863cf252 231-233,303-305
+src/routes/mod.rs
+  00b9a5dc863cf252 128-129,131
+src/features/router/state/mod.rs
+  00b9a5dc863cf252 10-11,196-234
+src/routes/config.rs
+  00b9a5dc863cf252 780-783
+src/features/chat/payload.rs
+  00b9a5dc863cf252 61
+.env.example
+  00b9a5dc863cf252 16-18
+src/features/router/tests.rs
+  00b9a5dc863cf252 40
+src/features/router/state/v2.rs
+  00b9a5dc863cf252 741
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "4a15b06169ae47b31706439849d70176bfdbee3d",
+  "prompts": {
+    "00b9a5dc863cf252": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a037d5-ab7b-7f09-8388-f1e15750c08b",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 60,
+      "total_deletions": 3,
+      "accepted_lines": 62,
+      "overriden_lines": 1
+    }
+  }
+}
