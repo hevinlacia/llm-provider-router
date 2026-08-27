@@ -135,10 +135,12 @@ impl UsageStore {
         period: &str,
         start: Option<&str>,
         end: Option<&str>,
+        key_names: Option<&[String]>,
     ) -> anyhow::Result<Value> {
         let started_at = self.started_at()?;
         let (range_start, range_end) = resolve_time_range(period, start, end);
-        let (where_sql, args) = time_filter_sql(range_start, range_end);
+        let (where_sql, args) =
+            apply_key_filter(time_filter_sql(range_start, range_end), key_names);
         Ok(json!({
             "started_at": started_at as i64,
             "uptime_seconds": (now_seconds() - started_at).max(0.0) as i64,
@@ -161,8 +163,8 @@ impl UsageStore {
             "by_model": self.grouped("model", &where_sql, &args)?,
             "by_key": self.grouped("key_name", &where_sql, &args)?,
             "by_status": self.grouped("status_code", &where_sql, &args)?,
-            "by_day": self.timeseries("day", range_start, range_end)?,
-            "by_month": self.timeseries("month", range_start, range_end)?,
+            "by_day": self.timeseries("day", &where_sql, &args)?,
+            "by_month": self.timeseries("month", &where_sql, &args)?,
             "db_path": self.db_path,
         }))
     }
@@ -170,6 +172,7 @@ impl UsageStore {
     /// Series: 小时/天维度的可视趋势；支持按 model/key_name 分组，按维度 topN 兜底聚合为"other"。
     ///
     /// 用途：新增用量分析页的“供应商/模型 token 曲线”主数据源；不破坏 snapshot 契约。
+    #[allow(clippy::too_many_arguments)]
     pub fn series(
         &self,
         period: &str,
@@ -178,6 +181,7 @@ impl UsageStore {
         bucket: &str,
         group_by: &str,
         top: Option<usize>,
+        key_names: Option<&[String]>,
     ) -> anyhow::Result<Value> {
         let (range_start, range_end) = resolve_time_range(period, start, end);
         let bucket_expr = match bucket {
@@ -192,7 +196,8 @@ impl UsageStore {
             _ => "model",
         };
         // 预计算真实 range 起止的 unix 秒（考虑 period 隐含的相对 range）
-        let (where_sql, where_args) = time_filter_sql(range_start, range_end);
+        let (where_sql, where_args) =
+            apply_key_filter(time_filter_sql(range_start, range_end), key_names);
         // 拉分维时序
         let series = self.grouped_series(&bucket_expr, group_col, &where_sql, &where_args)?;
         // 维度合并：topN=0 表示全保留；否则取 total_tokens 最高的 N 个，其余归 other
@@ -342,10 +347,9 @@ impl UsageStore {
     fn timeseries(
         &self,
         bucket: &str,
-        start: Option<f64>,
-        end: Option<f64>,
+        where_sql: &str,
+        args: &[SqlValue],
     ) -> anyhow::Result<HashMap<String, Bucket>> {
-        let (where_sql, args) = time_filter_sql(start, end);
         let format_expr = if bucket == "day" { "%Y-%m-%d" } else { "%Y-%m" };
         let query = format!(
             r#"
@@ -363,7 +367,7 @@ impl UsageStore {
             ORDER BY name
             "#,
         );
-        self.grouped_timeseries(&query, &args)
+        self.grouped_timeseries(&query, args)
     }
 
     fn grouped_timeseries(
@@ -520,6 +524,35 @@ fn fill_zero_buckets(
     series
 }
 
+/// 在现有时间过滤 SQL 上追加 `key_name IN (...)` 过滤（供应商维度明细下钻用）。
+/// `None` 表示不过滤；`Some(空)` 表示指定了供应商但无匹配 key，应过滤为空集。
+fn apply_key_filter(
+    (where_sql, args): (String, Vec<SqlValue>),
+    key_names: Option<&[String]>,
+) -> (String, Vec<SqlValue>) {
+    let Some(key_names) = key_names else {
+        return (where_sql, args);
+    };
+    let mut where_sql = where_sql;
+    let mut args = args;
+    if key_names.is_empty() {
+        where_sql = if where_sql.is_empty() {
+            "WHERE 1 = 0".to_string()
+        } else {
+            format!("{} AND 1 = 0", where_sql.trim())
+        };
+        return (where_sql, args);
+    }
+    let placeholders = key_names.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let conjunction = if where_sql.is_empty() { "WHERE" } else { "AND" };
+    where_sql = format!(
+        "{} {conjunction} key_name IN ({placeholders})",
+        where_sql.trim()
+    );
+    args.extend(key_names.iter().cloned().map(SqlValue::Text));
+    (where_sql.trim().to_string(), args)
+}
+
 fn ensure_column(
     conn: &Connection,
     table: &str,
@@ -648,7 +681,7 @@ mod tests {
         store.record("glm-latest-auto", "hevin", 200, None).unwrap();
         store.record("glm-latest-auto", "hevin", 599, None).unwrap();
 
-        let snapshot = store.snapshot("all", None, None).unwrap();
+        let snapshot = store.snapshot("all", None, None, None).unwrap();
 
         assert!(snapshot["by_status"].get("200").is_some());
         assert!(snapshot["by_status"].get("599").is_some());
@@ -667,10 +700,49 @@ mod tests {
             .record("glm-latest-auto", "hevin", 200, Some(&usage))
             .unwrap();
 
-        let snapshot = store.snapshot("all", None, None).unwrap();
+        let snapshot = store.snapshot("all", None, None, None).unwrap();
 
         assert_eq!(snapshot["total"]["cached_tokens"], 40);
         assert_eq!(snapshot["total"]["prompt_uncached_tokens"], 60);
         assert_eq!(snapshot["total"]["completion_tokens"], 25);
+    }
+
+    #[test]
+    fn series_filters_by_provider_key_names() {
+        let store = UsageStore::new(":memory:").unwrap();
+        store
+            .record("glm-latest-auto", "providerA/key1", 200, None)
+            .unwrap();
+        store
+            .record("glm-latest-auto", "providerA/key2", 200, None)
+            .unwrap();
+        store
+            .record("deepseek-chat", "providerB/key3", 200, None)
+            .unwrap();
+
+        let keys = vec!["providerA/key1".to_string(), "providerA/key2".to_string()];
+        let series = store
+            .series("all", None, None, "day", "key", Some(0), Some(&keys))
+            .unwrap();
+        let obj = series["series"].as_object().unwrap();
+
+        assert!(obj.contains_key("providerA/key1"));
+        assert!(obj.contains_key("providerA/key2"));
+        assert!(!obj.contains_key("providerB/key3"));
+    }
+
+    #[test]
+    fn series_empty_key_filter_returns_empty() {
+        let store = UsageStore::new(":memory:").unwrap();
+        store
+            .record("glm-latest-auto", "providerA/key1", 200, None)
+            .unwrap();
+
+        let series = store
+            .series("all", None, None, "day", "key", Some(0), Some(&[]))
+            .unwrap();
+        let obj = series["series"].as_object().unwrap();
+
+        assert!(obj.is_empty());
     }
 }

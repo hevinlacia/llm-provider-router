@@ -230,6 +230,27 @@ button.secondary:hover { background: rgba(255,255,255,.09); }
 button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
 button.ghost:hover { color: var(--text); background: rgba(255,255,255,.05); border-color: var(--border); }
 
+/* ---------- view toggle (segmented) ---------- */
+.segmented {
+  display: inline-flex;
+  gap: 4px;
+  background: rgba(255,255,255,.045);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px;
+}
+.segmented button {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 12px;
+  font: 800 .72rem var(--mono);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.segmented button:hover { background: rgba(255,255,255,.06); color: var(--text); transform: none; border-color: transparent; }
+.segmented button.active { background: rgba(34,211,238,.16); border-color: rgba(34,211,238,.4); color: #fff; }
+
 .card, .panel {
   border: 1px solid var(--border);
   border-radius: 24px;

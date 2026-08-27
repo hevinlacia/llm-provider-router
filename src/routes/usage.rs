@@ -47,6 +47,12 @@ pub(crate) async fn api_usage_series(
     Query(query): Query<UsageSeriesQuery>,
 ) -> Response {
     with_state_json(&app, |state| {
+        // 供应商维度明细下钻：把 provider 解析成该供应商名下的 key 名集合再过滤
+        let key_names = query
+            .provider
+            .as_deref()
+            .filter(|p| !p.is_empty())
+            .map(|p| state.key_names_for_provider(p));
         state.usage_series(
             &query.period,
             query.start.as_deref(),
@@ -54,6 +60,7 @@ pub(crate) async fn api_usage_series(
             &query.bucket,
             &query.group_by,
             query.top,
+            key_names.as_deref(),
         )
     })
 }

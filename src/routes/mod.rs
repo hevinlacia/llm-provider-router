@@ -48,6 +48,7 @@ pub struct UsageSeriesQuery {
     #[serde(default = "default_series_group_by")]
     pub group_by: String,
     pub top: Option<usize>,
+    pub provider: Option<String>,
 }
 
 fn default_period() -> String {
