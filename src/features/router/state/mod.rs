@@ -436,18 +436,33 @@ impl RouterState {
         self.usage_store.reset()
     }
 
+    /// 解析某供应商下所有 key 名（供 usage series 按供应商过滤）。
+    /// v2 模式 key 名带 `provider/key` 前缀、以 KeyRef.provider 归属；非 v2 用原始 key 名。
+    pub fn key_names_for_provider(&mut self, provider: &str) -> Vec<String> {
+        let refs = if self.v2.is_some() {
+            self.v2_key_refs()
+        } else {
+            self.all_key_refs()
+        };
+        refs.into_iter()
+            .filter(|k| k.provider.eq_ignore_ascii_case(provider))
+            .map(|k| k.name)
+            .collect()
+    }
+
     pub fn usage_snapshot(
         &mut self,
         period: &str,
         start: Option<&str>,
         end: Option<&str>,
     ) -> anyhow::Result<Value> {
-        let mut snapshot = self.usage_store.snapshot(period, start, end)?;
+        let mut snapshot = self.usage_store.snapshot(period, start, end, None)?;
         let prices = self.expanded_prices_for_cost();
         apply_costs(&mut snapshot, &prices);
         Ok(snapshot)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn usage_series(
         &mut self,
         period: &str,
@@ -456,13 +471,14 @@ impl RouterState {
         bucket: &str,
         group_by: &str,
         top: Option<usize>,
+        key_names: Option<&[String]>,
     ) -> anyhow::Result<Value> {
         let mut payload = self
             .usage_store
-            .series(period, start, end, bucket, group_by, top)?;
-        // 附带总量以便前端同屏做份额、平均成本的小算术
+            .series(period, start, end, bucket, group_by, top, key_names)?;
+        // 附带总量（与时间/供应商过滤一致）以便前端同屏做份额、平均成本的小算术
         let prices = self.expanded_prices_for_cost();
-        let mut snapshot = self.usage_store.snapshot(period, start, end)?;
+        let mut snapshot = self.usage_store.snapshot(period, start, end, key_names)?;
         apply_costs(&mut snapshot, &prices);
         if let Some(obj) = payload.as_object_mut() {
             obj.insert("total".to_string(), snapshot["total"].clone());

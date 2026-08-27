@@ -61,6 +61,7 @@ export const api = {
     bucket?: UsageSeriesBucket;
     group_by?: UsageSeriesGroupBy;
     top?: number;
+    provider?: string;
   }) {
     const q = new URLSearchParams();
     if (params.period) q.set('period', params.period);
@@ -69,6 +70,7 @@ export const api = {
     if (params.bucket) q.set('bucket', params.bucket);
     if (params.group_by) q.set('group_by', params.group_by);
     if (params.top != null) q.set('top', String(params.top));
+    if (params.provider) q.set('provider', params.provider);
     const qs = q.toString();
     return request<UsageSeriesResponse>(`/api/usage/series${qs ? `?${qs}` : ''}`);
   },

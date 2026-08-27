@@ -1,5 +1,5 @@
 use axum::body::{Body, Bytes};
-use axum::extract::{Path, State};
+use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
@@ -15,6 +15,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 
 const DEFAULT_ACTIVE_BACKEND_FILE: &str = "~/.local/state/llm-provider-router/active-backend.json";
+
+/// 请求体上限：`Bytes` extractor 全量缓冲，默认仅 2MB，内嵌 base64 图片的 chat 请求会直接 413。
+/// 与后端 routes/mod.rs 的 BODY_LIMIT 保持一致，链路两侧都放开。
+const BODY_LIMIT: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Backend {
@@ -37,6 +41,7 @@ pub async fn serve() -> anyhow::Result<()> {
         .route("/_proxy/health", get(proxy_health))
         .route("/_proxy/active/{slot}", post(set_active))
         .fallback(any(proxy))
+        .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(state);
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
     let listener = TcpListener::bind(addr).await?;

@@ -146,34 +146,51 @@ export function AnalyticsPage() {
   const [metric, setMetric] = useState<UsageSeriesMetric>('total_tokens');
   const [top, setTop] = useState(6);
   const [providers, setProviders] = useState<Record<string, string>>({});
+  const [providerList, setProviderList] = useState<string[]>([]);
+  const [view, setView] = useState<'all' | 'single'>('all');
+  const [provider, setProvider] = useState('');
   const [data, setData] = useState<UsageSeriesResponse | null>(null);
   const [error, setError] = useState('');
   const [queryKey, setQueryKey] = useState('');
 
+  // 单供应商模式下只允许按 Key / Model 分线（一个供应商内再按供应商分组无意义）
+  const effectiveGroupBy: UsageSeriesGroupBy =
+    view === 'single' && groupBy === 'provider' ? 'key' : groupBy;
+
   const load = useCallback(async () => {
     try {
-      const [series, keyCfg] = await Promise.all([
-        api.usageSeries({
-          period: filters.period,
-          start: filters.start || undefined,
-          end: filters.end || undefined,
-          bucket,
-          group_by: groupBy,
-          top,
-        }),
-        api.keys().catch(() => null as unknown as KeyConfig),
-      ]);
+      const keyCfg = await api.keys().catch(() => null as unknown as KeyConfig);
       if (keyCfg) {
         const m: Record<string, string> = {};
-        for (const k of keyCfg.keys ?? []) m[k.name] = k.provider;
+        const set = new Set<string>();
+        for (const k of keyCfg.keys ?? []) {
+          m[k.name] = k.provider;
+          if (k.provider) set.add(k.provider);
+        }
         setProviders(m);
+        setProviderList(Array.from(set).sort());
       }
+      // 单供应商视角下未选择供应商时暂不拉取 series，等待选择
+      if (view === 'single' && !provider) {
+        setData(null);
+        setError('');
+        return;
+      }
+      const series = await api.usageSeries({
+        period: filters.period,
+        start: filters.start || undefined,
+        end: filters.end || undefined,
+        bucket,
+        group_by: effectiveGroupBy,
+        top,
+        provider: view === 'single' ? provider : undefined,
+      });
       setData(series);
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [filters, bucket, groupBy, top]);
+  }, [filters, bucket, effectiveGroupBy, top, view, provider]);
 
   useEffect(() => {
     void load();
@@ -189,7 +206,7 @@ export function AnalyticsPage() {
     if (!data) return [];
 
     // provider 分组：把原始 key_name 折到 provider
-    if (groupBy === 'provider') {
+    if (effectiveGroupBy === 'provider') {
       const byProvider: Record<string, Record<string, Bucket>> = {};
       for (const [rawKey, buckets] of Object.entries(rawSeries)) {
         const prov = providerOf(rawKey, providers);
@@ -242,7 +259,7 @@ export function AnalyticsPage() {
     });
     entries.sort((a, b) => b.total - a.total);
     return entries;
-  }, [data, rawSeries, providers, groupBy, top]);
+  }, [data, rawSeries, providers, effectiveGroupBy, top]);
 
   const totalTokens = data?.total.total_tokens ?? 0;
   const totalCost = data?.total_cost.total_cost ?? 0;
@@ -269,11 +286,15 @@ export function AnalyticsPage() {
     const e = q.get('end');
     const b = q.get('bucket') as UsageSeriesBucket | null;
     const g = q.get('group_by') as UsageSeriesGroupBy | null;
+    const v = q.get('view') as 'all' | 'single' | null;
+    const pr = q.get('provider');
     if (p || s || e || b || g) {
       setFilters((prev) => ({ period: p ?? prev.period, start: s ?? prev.start, end: e ?? prev.end }));
       if (b === 'hour' || b === 'day' || b === 'month') setBucket(b);
       if (g === 'model' || g === 'provider' || g === 'key') setGroupBy(g);
     }
+    if (v === 'single' || v === 'all') setView(v);
+    if (pr) setProvider(pr);
   }, []);
 
   const syncUrl = useCallback(() => {
@@ -282,17 +303,24 @@ export function AnalyticsPage() {
     if (filters.start) q.set('start', filters.start);
     if (filters.end) q.set('end', filters.end);
     q.set('bucket', bucket);
-    q.set('group_by', groupBy);
+    q.set('group_by', effectiveGroupBy);
+    if (view === 'single') {
+      q.set('view', 'single');
+      if (provider) q.set('provider', provider);
+    }
     const qs = `?${q.toString()}`;
     if (qs !== queryKey) {
       window.history.replaceState({}, '', `/analytics${qs}`);
       setQueryKey(qs);
     }
-  }, [filters, bucket, groupBy, queryKey]);
+  }, [filters, bucket, effectiveGroupBy, view, provider, queryKey]);
 
   useEffect(() => {
     syncUrl();
   }, [syncUrl]);
+
+  const groupLabel = effectiveGroupBy === 'provider' ? '供应商' : effectiveGroupBy === 'key' ? 'Key' : '模型';
+  const heroTitle = view === 'single' ? `${provider || '供应商'} · 明细看板` : '供应商 / 模型 Token 曲线';
 
   return (
     <section className="page">
@@ -300,9 +328,13 @@ export function AnalyticsPage() {
         <div className="hero-grid" aria-hidden />
         <div className="hero-copy">
           <span className="eyebrow">Usage · 用量分析</span>
-          <h1>供应商 / 模型 Token 曲线</h1>
+          <h1>{heroTitle}</h1>
           <p>
-            按 <b>{groupBy === 'provider' ? '供应商' : groupBy === 'key' ? 'Key' : '模型'}</b> 分线，逐 <b>{bucket}</b> 看 token 走势；表格可按桶 drill-down。
+            {view === 'single' ? (
+              <>只看 <b>{provider || '…'}</b> 旗下消耗：按 <b>{groupLabel}</b> 分线，逐 <b>{bucket}</b> 看 token 走势；表格可按桶 drill-down。</>
+            ) : (
+              <>站在所有供应商角度，按 <b>{groupLabel}</b> 分线，逐 <b>{bucket}</b> 看 token 走势；表格可按桶 drill-down。</>
+            )}
           </p>
           <div className="hero-meta">
             <span className="pill">{number.format(totalTokens)} tokens · {number.format(rows.reduce((s, r) => s + r.requests, 0))} req</span>
@@ -311,7 +343,7 @@ export function AnalyticsPage() {
           </div>
         </div>
         <div className="hero-orb">
-          <strong>{groupBy === 'provider' ? `${rows.length} 供应商` : groupBy === 'key' ? `${rows.length} keys` : `${rows.length} models`}</strong>
+          <strong>{effectiveGroupBy === 'provider' ? `${rows.length} 供应商` : effectiveGroupBy === 'key' ? `${rows.length} keys` : `${rows.length} models`}</strong>
           <span>BREAKDOWN</span>
           <em>top {top} + other</em>
         </div>
@@ -321,6 +353,24 @@ export function AnalyticsPage() {
 
       <div className="toolbar-wrap">
         <div className="toolbar">
+          <div className="field">
+            <label>视角</label>
+            <div className="segmented">
+              <button className={view === 'all' ? 'active' : ''} onClick={() => setView('all')}>所有供应商</button>
+              <button className={view === 'single' ? 'active' : ''} onClick={() => { setView('single'); if (groupBy === 'provider') setGroupBy('key'); }}>单个供应商</button>
+            </div>
+          </div>
+          {view === 'single' && (
+            <div className="field">
+              <label>供应商</label>
+              <select value={provider} onChange={(e) => setProvider(e.target.value)}>
+                <option value="">选择供应商</option>
+                {providerList.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="field">
             <label>Range</label>
             <select value={filters.period} onChange={(e) => setFilters({ ...filters, period: e.target.value })}>
@@ -348,9 +398,9 @@ export function AnalyticsPage() {
           </div>
           <div className="field">
             <label>Group by</label>
-            <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as UsageSeriesGroupBy)}>
+            <select value={effectiveGroupBy} onChange={(e) => setGroupBy(e.target.value as UsageSeriesGroupBy)}>
               <option value="model">Model</option>
-              <option value="provider">Supplier</option>
+              {view === 'all' && <option value="provider">Supplier</option>}
               <option value="key">Key</option>
             </select>
           </div>
@@ -383,16 +433,19 @@ export function AnalyticsPage() {
 
       <section className="card panel">
         <div className="section-title">
-          <h2>Token 曲线 — {groupBy === 'provider' ? '供应商' : groupBy === 'key' ? 'Key' : '模型'}</h2>
+          <h2>Token 曲线 — {groupLabel}</h2>
           <span className="muted">{metric} · {displayBuckets.length} buckets</span>
         </div>
-        {rows.length ? (
+        {view === 'single' && !provider ? (
+          <p className="muted">请先在上方选择供应商，查看其 Key / 模型消耗明细。</p>
+        ) : rows.length ? (
           <TokenTrend buckets={displayBuckets} rows={rows} metric={metric} />
         ) : (
           <Empty />
         )}
         <div className="callout">
-          小技巧：切 <b>Group by = Supplier</b> 看哪家在“偷用”多；切 <b>Model</b> 看单模型突峰。
+          小技巧：<b>所有供应商</b>视角切 <b>Group by = Supplier</b> 看哪家占用多、切 <b>Model</b> 看单模型突峰；
+          <b>单个供应商</b>视角选中某家后按 <b>Key / Model</b> 拆它自己的消耗。
           支持 URL 参数：<code>?period=month&bucket=day&group_by=provider</code> 可直接分享当前视角。
         </div>
       </section>
@@ -420,7 +473,7 @@ export function AnalyticsPage() {
           <table>
             <thead>
               <tr>
-                <th>{groupBy === 'provider' ? 'Supplier' : groupBy === 'key' ? 'Key' : 'Model'}</th>
+                <th>{effectiveGroupBy === 'provider' ? 'Supplier' : effectiveGroupBy === 'key' ? 'Key' : 'Model'}</th>
                 <th>Total</th>
                 <th>Prompt</th>
                 <th>Cached</th>
