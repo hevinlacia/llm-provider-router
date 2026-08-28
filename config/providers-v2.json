@@ -1,43 +1,5 @@
 {
   "providers": {
-    "openai-relay": {
-      "base_url": "https://api.aixhan.com/v1",
-      "anthropic_base_url": null,
-      "retry": {
-        "max_retry_seconds": 1800,
-        "retry_delay_seconds": 15.0,
-        "retry_on_status": [
-          429,
-          500,
-          502,
-          503,
-          504
-        ]
-      },
-      "keys": {
-        "oai-hevin": {
-          "env_var": "AGENT_AI_OPENAI_HEVIN_API_KEY",
-          "weight": 1,
-          "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
-        }
-      }
-    },
-    "deepseek-official": {
-      "base_url": "https://api.deepseek.com",
-      "anthropic_base_url": null,
-      "retry": null,
-      "keys": {
-        "deepseek-official": {
-          "env_var": "AGENT_AI_DEEPSEEK_API_KEY",
-          "weight": 1,
-          "billing_type": "payg",
-          "enabled": false,
-          "persist": true
-        }
-      }
-    },
     "opencode-go": {
       "base_url": "https://opencode.ai/zen/go/v1",
       "anthropic_base_url": null,
@@ -69,46 +31,91 @@
         ]
       },
       "keys": {
-        "ronnie": {
-          "env_var": "AGENT_AI_ARK_RONNIE_API_KEY",
-          "weight": 4,
-          "billing_type": "subscription",
-          "enabled": false,
-          "persist": true
-        },
-        "daryl": {
-          "env_var": "AGENT_AI_ARK_DARYL_API_KEY",
-          "weight": 5,
-          "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
-        },
-        "hevin": {
-          "env_var": "AGENT_AI_ARK_HEVIN_API_KEY",
-          "weight": 6,
-          "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
-        },
         "cyril": {
           "env_var": "AGENT_AI_ARK_CYRIL_API_KEY",
-          "weight": 2,
+          "weight": 1,
           "billing_type": "subscription",
-          "enabled": true,
+          "enabled": false,
           "persist": true
         },
         "moss": {
           "env_var": "AGENT_AI_ARK_MOSS_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
+          "enabled": false,
+          "persist": true
+        },
+        "hevin": {
+          "env_var": "AGENT_AI_ARK_HEVIN_API_KEY",
+          "weight": 1,
+          "billing_type": "subscription",
           "enabled": true,
+          "persist": true
+        },
+        "daryl": {
+          "env_var": "AGENT_AI_ARK_DARYL_API_KEY",
+          "weight": 1,
+          "billing_type": "subscription",
+          "enabled": false,
+          "persist": true
+        },
+        "hevin2": {
+          "env_var": "AGENT_AI_ARK_HEVIN2_API_KEY",
+          "weight": 1,
+          "billing_type": "subscription",
+          "enabled": true,
+          "persist": true
+        },
+        "ronnie": {
+          "env_var": "AGENT_AI_ARK_RONNIE_API_KEY",
+          "weight": 1,
+          "billing_type": "subscription",
+          "enabled": false,
           "persist": true
         },
         "hevin-private": {
           "env_var": "AGENT_AI_ARK_HEVIN_PRIVATE_API_KEY",
-          "weight": 5,
+          "weight": 1,
           "billing_type": "subscription",
           "enabled": false,
+          "persist": true
+        }
+      }
+    },
+    "deepseek-official": {
+      "base_url": "https://api.deepseek.com",
+      "anthropic_base_url": null,
+      "retry": null,
+      "keys": {
+        "deepseek-official": {
+          "env_var": "AGENT_AI_DEEPSEEK_API_KEY",
+          "weight": 1,
+          "billing_type": "payg",
+          "enabled": false,
+          "persist": true
+        }
+      }
+    },
+    "openai-relay": {
+      "base_url": "https://api.aixhan.com/v1",
+      "anthropic_base_url": null,
+      "retry": {
+        "max_retry_seconds": 1800,
+        "retry_delay_seconds": 15.0,
+        "retry_on_status": [
+          429,
+          500,
+          502,
+          503,
+          504
+        ]
+      },
+      "keys": {
+        "oai-hevin": {
+          "env_var": "AGENT_AI_OPENAI_HEVIN_API_KEY",
+          "weight": 1,
+          "billing_type": "subscription",
+          "enabled": true,
           "persist": true
         }
       }
