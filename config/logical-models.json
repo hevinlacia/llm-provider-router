@@ -1,17 +1,69 @@
 {
   "logical_models": {
-    "openai-gpt-5.5-hevin": {
+    "gpt-medium-latest-auto": {
       "params": {},
       "route": {
         "strategy": "priority",
         "targets": [
           {
-            "model": "openai-relay/gpt-5.5",
+            "model": "aixhan/gpt-5.6-terra",
             "weight": null
           }
         ]
       },
-      "display_name": "OpenAI GPT-5.5 Hevin"
+      "display_name": "GPT Medium Latest Auto"
+    },
+    "low-model-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "deepseek-v4-flash-auto",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "Low Model Auto"
+    },
+    "picture-model-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "opencode-go/deepseek-v4-flash-vision-exp",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "Picture Model Auto"
+    },
+    "medium-model-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "opencode-go/deepseek-v4-flash-vision-exp",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "Medium Model Auto"
+    },
+    "deepseek-v4-pro-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "ark/deepseek-v4-pro",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "DeepSeek V4 Pro Auto"
     },
     "muse-spark-latest-auto": {
       "params": {},
@@ -32,46 +84,12 @@
         "strategy": "weighted",
         "targets": [
           {
-            "model": "opencode-go/deepseek-v4-flash",
-            "weight": 0
-          },
-          {
             "model": "ark/deepseek-v4-flash-260801",
             "weight": 2
           }
         ]
       },
       "display_name": "DeepSeek V4 Flash Auto"
-    },
-    "grok-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "openai-relay/grok-4.6",
-            "weight": null
-          },
-          {
-            "model": "openai-relay/gpt-5.5",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "Grok Latest Auto"
-    },
-    "deepseek-v4-pro-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "ark/deepseek-v4-pro",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "DeepSeek V4 Pro Auto"
     },
     "deepseek-v4-flash-official": {
       "params": {},
@@ -86,31 +104,22 @@
       },
       "display_name": "DeepSeek V4 Flash Official"
     },
-    "gpt-high-latest-auto": {
+    "grok-latest-auto": {
       "params": {},
       "route": {
         "strategy": "priority",
         "targets": [
           {
-            "model": "openai-relay/gpt-5.6-sol",
+            "model": "aixhan/grok-4.6",
             "weight": null
-          }
-        ]
-      },
-      "display_name": "GPT High Latest Auto"
-    },
-    "medium-model-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
+          },
           {
-            "model": "opencode-go/deepseek-v4-flash-vision-exp",
+            "model": "aixhan/gpt-5.5",
             "weight": null
           }
         ]
       },
-      "display_name": "Medium Model Auto"
+      "display_name": "Grok Latest Auto"
     },
     "minimax-latest-auto": {
       "params": {},
@@ -125,45 +134,6 @@
       },
       "display_name": "MiniMax Latest Auto"
     },
-    "high-model-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "openai-relay/gpt-5.4",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "High Model Auto"
-    },
-    "gpt-low-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "openai-relay/gpt-5.4",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "GPT Low Latest Auto"
-    },
-    "picture-model-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "opencode-go/deepseek-v4-flash-vision-exp",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "Picture Model Auto"
-    },
     "deepseek-v4-pro-official": {
       "params": {},
       "route": {
@@ -177,6 +147,58 @@
       },
       "display_name": "DeepSeek V4 Pro Official"
     },
+    "openai-gpt-5.5-hevin": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "aixhan/gpt-5.5",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "OpenAI GPT-5.5 Hevin"
+    },
+    "gpt-high-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "aixhan/gpt-5.6-sol",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "GPT High Latest Auto"
+    },
+    "high-model-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "aixhan/gpt-5.4",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "High Model Auto"
+    },
+    "gpt-low-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "aixhan/gpt-5.4",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "GPT Low Latest Auto"
+    },
     "glm-latest-auto": {
       "params": {},
       "route": {
@@ -189,32 +211,6 @@
         ]
       },
       "display_name": "GLM Latest Auto"
-    },
-    "gpt-medium-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "openai-relay/gpt-5.6-terra",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "GPT Medium Latest Auto"
-    },
-    "low-model-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "deepseek-v4-flash-auto",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "Low Model Auto"
     }
   }
 }

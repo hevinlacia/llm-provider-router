@@ -54,11 +54,6 @@
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "opencode-go/deepseek-v4-flash": {
-    "input_uncached_per_million": 0.0,
-    "input_cached_per_million": 0.0,
-    "output_per_million": 0.0
-  },
   "opencode-go/deepseek-v4-flash-vision-exp": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
