@@ -118,7 +118,14 @@ pub(crate) async fn responses(
             let result = if alias.supports_responses() {
                 // 透传：只改写 model 名，发到供应商 Responses 端点
                 let upstream_payload = translate::prepare_passthrough_payload(&payload, &alias);
-                call_responses_passthrough(&app, alias, session_id.clone(), upstream_payload).await
+                call_responses_passthrough(
+                    &app,
+                    alias,
+                    session_id.clone(),
+                    upstream_payload,
+                    "/responses",
+                )
+                .await
             } else {
                 // 翻译：响应转 chat 请求，响应再翻译回 Responses
                 let chat = match &chat_payload {
@@ -175,11 +182,13 @@ fn translate_request(payload: &Value) -> Result<Value, String> {
 
 /// 非流式上游调用主链路（Responses 透传版）：选 key / 重试 / 冻结 / 用量，
 /// 与翻译版 `call_upstream_responses` 行为一致，仅端点不同且响应原样透传。
+/// `endpoint_path` 为端点路径（`/responses` 或 `/responses/compact`）。
 async fn call_responses_passthrough(
     app: &AppState,
     alias: ModelAlias,
     session_id: Option<String>,
     payload: Value,
+    endpoint_path: &str,
 ) -> Result<Response, CallError> {
     let responses_base = alias.responses_base_url.as_deref().unwrap_or("");
     if responses_base.trim().is_empty() {
@@ -193,7 +202,11 @@ async fn call_responses_passthrough(
     }
     let retry_policy = alias.retry_policy.clone();
     let mut tried = HashSet::new();
-    let endpoint = format!("{}/responses", responses_base.trim_end_matches('/'));
+    let endpoint = format!(
+        "{}{}",
+        responses_base.trim_end_matches('/'),
+        endpoint_path
+    );
 
     loop {
         let selected_key = match select_key_locked(app, &alias, session_id.as_deref(), &tried) {
@@ -556,12 +569,67 @@ pub(crate) async fn cancel_response(
 
 /// `POST /v1/responses/compact`：上下文压缩。
 ///
-/// Router 无压缩能力（chat 上游不支持）；返回 501 Not Implemented，明确不支持而非静默。
-pub(crate) async fn compact_response(State(_app): State<AppState>) -> Response {
+/// Router 自身无压缩能力；透传模式（alias 配置了 `responses_base_url`，原生支持
+/// Responses API）把请求原样转发给上游 `{responses_base_url}/responses/compact`，
+/// 是否支持由上游决定（上游不实现则原样返回其 404/501 错误）。
+/// 纯翻译模式（仅 chat completions base_url）无压缩能力，返回 501。
+pub(crate) async fn compact_response(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Response {
+    if let Some(response) = validate_auth(&app.settings, &headers) {
+        return response;
+    }
+    let Some(model_name) = payload.get("model").and_then(Value::as_str) else {
+        return error_response(
+            "compact requires a model parameter",
+            "invalid_request_error",
+            StatusCode::BAD_REQUEST,
+        );
+    };
+    let session_id = extract_session_id(&payload, &headers);
+    let route_aliases = match app.state.lock() {
+        Ok(mut state) => state.route_aliases(model_name, session_id.as_deref()),
+        Err(_) => return internal_error("router state lock poisoned"),
+    };
+    if route_aliases.is_empty() {
+        return error_response(
+            &format!("unsupported model alias: {model_name}"),
+            "unsupported_model",
+            StatusCode::NOT_FOUND,
+        );
+    }
+    let mut last_frozen: Option<NoAvailableKeyError> = None;
+    for base_alias in route_aliases {
+        if !base_alias.supports_responses() {
+            continue;
+        }
+        let alias = match app.state.lock() {
+            Ok(mut state) => state.alias_with_runtime_weights(&base_alias),
+            Err(_) => return internal_error("router state lock poisoned"),
+        };
+        let upstream_payload = translate::prepare_passthrough_payload(&payload, &alias);
+        match call_responses_passthrough(
+            &app,
+            alias,
+            session_id.clone(),
+            upstream_payload,
+            "/responses/compact",
+        )
+        .await
+        {
+            Ok(response) => return response,
+            Err(CallError::NoAvailable(exc)) => last_frozen = Some(exc),
+        }
+    }
+    if let Some(exc) = last_frozen {
+        return frozen_response(exc);
+    }
     json_status(
         StatusCode::NOT_IMPLEMENTED,
         translate::responses_error(
-            "compact is not supported by the router (no upstream compaction capability)",
+            "compact is not supported by the router (no responses-native upstream available; add a provider with responses_base_url)",
             "unsupported_feature",
         ),
     )
