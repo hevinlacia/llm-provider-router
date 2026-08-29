@@ -17,15 +17,25 @@ use crate::features::chat::select::{
 use crate::features::chat::upstream::CallError;
 use crate::features::responses::{store, translate};
 use crate::features::router::NoAvailableKeyError;
-use axum::extract::State;
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use axum::Json;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
 use super::chat::{extract_session_id, validate_auth};
 use super::resp::{internal_error, json_status, status_code};
+
+/// input_items 端点 query 参数。
+#[derive(Debug, Deserialize)]
+pub(crate) struct InputItemsQuery {
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    order: Option<String>,
+}
 
 pub(crate) async fn responses(
     State(app): State<AppState>,
@@ -125,7 +135,8 @@ pub(crate) async fn responses(
                     },
                 };
                 let upstream_payload = prepare_upstream_payload(&chat, &alias);
-                call_upstream_responses(&app, alias, session_id.clone(), upstream_payload).await
+                call_upstream_responses(&app, alias, session_id.clone(), upstream_payload, &payload)
+                    .await
             };
             match result {
                 Ok(response) => return response,
@@ -308,6 +319,7 @@ async fn call_upstream_responses(
     alias: ModelAlias,
     session_id: Option<String>,
     payload: Value,
+    original: &Value,
 ) -> Result<Response, CallError> {
     if alias.base_url.trim().is_empty() {
         return Ok(json_status(
@@ -443,10 +455,17 @@ async fn call_upstream_responses(
             ));
         }
 
-        // 成功：翻译成 Responses 响应对象 + 记录 previous_response_id 历史
+        // 成功：翻译成 Responses 响应对象 + 记录 previous_response_id 历史与完整响应
         let response_id = translate::next_id("resp");
-        let body = translate::chat_to_responses(&content, &response_id, &upstream_model);
-        store::put(&response_id, translate::assistant_chat_messages(&content));
+        let echo = translate::response_echo_fields(original);
+        let body = translate::chat_to_responses(&content, &response_id, &upstream_model, &echo);
+        let input_items = translate::extract_input_items(original);
+        store::put_full(
+            &response_id,
+            translate::assistant_chat_messages(&content),
+            body.clone(),
+            input_items,
+        );
         let mut resp = json_status(status_code(status), body);
         crate::features::chat::upstream::inject_router_headers(resp.headers_mut(), &alias);
         return Ok(resp);
@@ -466,4 +485,152 @@ fn frozen_response(exc: NoAvailableKeyError) -> Response {
         resp.headers_mut().insert("retry-after", value);
     }
     resp
+}
+
+// ---------------------------------------------------------------------------
+// 响应生命周期端点：Get / Delete / Cancel / Compact / input_items / input_tokens
+//
+// 这些端点无 model 字段，无法走 alias 路由；一律基于本进程 store（翻译模式的响应）。
+// 透传模式的响应不登记 store，get/delete/cancel 返回 not_found；compact 返回不支持。
+// ---------------------------------------------------------------------------
+
+/// `GET /v1/responses/{response_id}`：取完整 Response 对象（仅翻译模式登记过）。
+pub(crate) async fn get_response(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Path(response_id): Path<String>,
+) -> Response {
+    if let Some(response) = validate_auth(&app.settings, &headers) {
+        return response;
+    }
+    match store::get_response(&response_id) {
+        Some(response) => json_status(StatusCode::OK, response),
+        None => error_response(
+            &format!("response not found: {response_id}"),
+            "not_found",
+            StatusCode::NOT_FOUND,
+        ),
+    }
+}
+
+/// `DELETE /v1/responses/{response_id}`：删除响应。
+pub(crate) async fn delete_response(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Path(response_id): Path<String>,
+) -> Response {
+    if let Some(response) = validate_auth(&app.settings, &headers) {
+        return response;
+    }
+    if store::delete(&response_id) {
+        json_status(
+            StatusCode::OK,
+            json!({ "id": response_id, "object": "response", "deleted": true }),
+        )
+    } else {
+        json_status(
+            StatusCode::OK,
+            json!({ "id": response_id, "object": "response", "deleted": false }),
+        )
+    }
+}
+
+/// `POST /v1/responses/{response_id}/cancel`：取消响应（翻译模式 store 里改 status）。
+pub(crate) async fn cancel_response(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Path(response_id): Path<String>,
+) -> Response {
+    if let Some(response) = validate_auth(&app.settings, &headers) {
+        return response;
+    }
+    match store::cancel(&response_id) {
+        Some(response) => json_status(StatusCode::OK, response),
+        None => error_response(
+            &format!("response not found: {response_id}"),
+            "not_found",
+            StatusCode::NOT_FOUND,
+        ),
+    }
+}
+
+/// `POST /v1/responses/compact`：上下文压缩。
+///
+/// Router 无压缩能力（chat 上游不支持）；返回 501 Not Implemented，明确不支持而非静默。
+pub(crate) async fn compact_response(State(_app): State<AppState>) -> Response {
+    json_status(
+        StatusCode::NOT_IMPLEMENTED,
+        translate::responses_error(
+            "compact is not supported by the router (no upstream compaction capability)",
+            "unsupported_feature",
+        ),
+    )
+}
+
+/// `GET /v1/responses/{response_id}/input_items`：列出该响应的输入 items。
+/// 支持 limit / order query 参数（OpenAI 标准：limit 1-100 默认 20，order asc/desc 默认 desc）。
+pub(crate) async fn response_input_items(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Path(response_id): Path<String>,
+    Query(query): Query<InputItemsQuery>,
+) -> Response {
+    if let Some(response) = validate_auth(&app.settings, &headers) {
+        return response;
+    }
+    let items = match store::get_input_items(&response_id) {
+        Some(items) => items,
+        None => {
+            return error_response(
+                &format!("response not found: {response_id}"),
+                "not_found",
+                StatusCode::NOT_FOUND,
+            );
+        }
+    };
+    let limit = query.limit.unwrap_or(20).clamp(1, 100);
+    let mut items = items;
+    if query.order.as_deref().unwrap_or("desc") == "desc" {
+        items.reverse();
+    }
+    items.truncate(limit);
+    let (first_id, last_id) = match (items.first(), items.last()) {
+        (Some(f), Some(l)) => (
+            f.get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            l.get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+        ),
+        _ => (String::new(), String::new()),
+    };
+    json_status(
+        StatusCode::OK,
+        json!({
+            "object": "list",
+            "data": Value::Array(items),
+            "first_id": first_id,
+            "last_id": last_id,
+            "has_more": false,
+        }),
+    )
+}
+
+/// `POST /v1/responses/input_tokens`：估算输入 token 数（近似值，非精确计价）。
+pub(crate) async fn response_input_tokens(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Response {
+    if let Some(response) = validate_auth(&app.settings, &headers) {
+        return response;
+    }
+    let tokens = translate::estimate_input_tokens(&payload);
+    json_status(
+        StatusCode::OK,
+        json!({ "object": "response.input_tokens", "input_tokens": tokens }),
+    )
 }

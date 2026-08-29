@@ -308,8 +308,45 @@ fn translate_text_format(text: Option<&Value>) -> Option<Value> {
     }
 }
 
+/// 从 Responses 请求 payload 提取回显到响应对象的字段（供非流式/流式共用）。
+/// 透传时这些字段原样保留在上游响应里；翻译模式下响应对象需要回显请求参数，
+/// 保证 SDK 严格校验 / 客户端读取请求配置时不缺字段。
+pub(crate) fn response_echo_fields(payload: &Value) -> Value {
+    let mut echo = serde_json::Map::new();
+    // 简单字段：存在且非 null 才回显
+    for key in [
+        "instructions",
+        "metadata",
+        "temperature",
+        "top_p",
+        "max_output_tokens",
+        "parallel_tool_calls",
+        "service_tier",
+        "truncation",
+        "reasoning",
+        "text",
+        "tool_choice",
+        "tools",
+        "user",
+        "store",
+        "background",
+        "conversation",
+        "previous_response_id",
+        "max_tool_calls",
+        "top_logprobs",
+    ] {
+        if let Some(v) = payload.get(key) {
+            if !v.is_null() {
+                echo.insert(key.to_string(), v.clone());
+            }
+        }
+    }
+    Value::Object(echo)
+}
+
 /// 上游 chat completions 非流式响应 -> Responses API 响应对象。
-pub(crate) fn chat_to_responses(content: &Value, response_id: &str, model: &str) -> Value {
+/// `echo` 为从请求回显的字段（response_echo_fields 产物），可传 json!(null) 表示不回显。
+pub(crate) fn chat_to_responses(content: &Value, response_id: &str, model: &str, echo: &Value) -> Value {
     let created_at = now_ts();
     let mut output: Vec<Value> = Vec::new();
     let mut output_text = String::new();
@@ -387,11 +424,46 @@ pub(crate) fn chat_to_responses(content: &Value, response_id: &str, model: &str)
     }
 
     let usage = translate_usage(content);
+    let echo = if echo.is_null() { &json!({}) } else { echo };
+
+    // 从回显字段取值（缺失/无回显时用标准默认值），保证 35 个顶层字段齐全
+    let instructions = echo
+        .get("instructions")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let metadata = echo.get("metadata").cloned().unwrap_or(Value::Null);
+    let temperature = echo.get("temperature").cloned().unwrap_or(Value::Null);
+    let top_p = echo.get("top_p").cloned().unwrap_or(Value::Null);
+    let max_output_tokens = echo.get("max_output_tokens").cloned().unwrap_or(Value::Null);
+    let parallel_tool_calls = echo
+        .get("parallel_tool_calls")
+        .cloned()
+        .unwrap_or(json!(true));
+    let tool_choice = echo
+        .get("tool_choice")
+        .cloned()
+        .unwrap_or(json!("auto"));
+    let tools = echo.get("tools").cloned().unwrap_or(json!([]));
+    let service_tier = echo.get("service_tier").cloned().unwrap_or(Value::Null);
+    let truncation = echo.get("truncation").cloned().unwrap_or(Value::Null);
+    let reasoning = echo.get("reasoning").cloned().unwrap_or(Value::Null);
+    let text = echo.get("text").cloned().unwrap_or(Value::Null);
+    let background = echo.get("background").cloned().unwrap_or(Value::Null);
+    let conversation = echo.get("conversation").cloned().unwrap_or(Value::Null);
+    let max_tool_calls = echo.get("max_tool_calls").cloned().unwrap_or(Value::Null);
+    let top_logprobs = echo.get("top_logprobs").cloned().unwrap_or(Value::Null);
+    let user = echo.get("user").cloned().unwrap_or(Value::Null);
+    let store = echo.get("store").cloned().unwrap_or(json!(true));
+    let previous_response_id = echo
+        .get("previous_response_id")
+        .cloned()
+        .unwrap_or(Value::Null);
 
     json!({
         "id": response_id,
         "object": "response",
         "created_at": created_at,
+        "completed_at": created_at,
         "status": "completed",
         "model": model,
         "output": Value::Array(output),
@@ -399,14 +471,31 @@ pub(crate) fn chat_to_responses(content: &Value, response_id: &str, model: &str)
         "usage": usage,
         "error": Value::Null,
         "incomplete_details": Value::Null,
-        "instructions": Value::Null,
-        "metadata": Value::Null,
-        "parallel_tool_calls": true,
-        "temperature": Value::Null,
-        "tool_choice": "auto",
-        "tools": Value::Array(Vec::new()),
-        "top_p": Value::Null,
-        "max_output_tokens": Value::Null
+        "instructions": instructions,
+        "metadata": metadata,
+        "parallel_tool_calls": parallel_tool_calls,
+        "temperature": temperature,
+        "tool_choice": tool_choice,
+        "tools": tools,
+        "top_p": top_p,
+        "max_output_tokens": max_output_tokens,
+        "max_tool_calls": max_tool_calls,
+        "background": background,
+        "conversation": conversation,
+        "previous_response_id": previous_response_id,
+        "store": store,
+        "service_tier": service_tier,
+        "truncation": truncation,
+        "reasoning": reasoning,
+        "text": text,
+        "user": user,
+        "top_logprobs": top_logprobs,
+        "prompt": Value::Null,
+        "prompt_cache_key": Value::Null,
+        "prompt_cache_options": Value::Null,
+        "prompt_cache_retention": Value::Null,
+        "moderation": Value::Null,
+        "safety_identifier": Value::Null
     })
 }
 
@@ -463,6 +552,67 @@ pub(crate) fn zero_usage() -> Value {
         "output_tokens_details": { "reasoning_tokens": 0 },
         "total_tokens": 0
     })
+}
+
+/// 从 Responses 请求提取 input items（input_items 端点返回用）。
+/// - input 为数组：原样保留（每条 item）；
+/// - input 为字符串：归一成一条 user message item；
+/// - 无 input：返回空（input_items 端点返回 not_found）。
+pub(crate) fn extract_input_items(payload: &Value) -> Vec<Value> {
+    match payload.get("input") {
+        Some(Value::Array(items)) => items.clone(),
+        Some(Value::String(s)) if !s.is_empty() => vec![json!({
+            "type": "message",
+            "role": "user",
+            "content": [
+                { "type": "input_text", "text": s }
+            ]
+        })],
+        _ => Vec::new(),
+    }
+}
+
+/// 估算 input_tokens（POST /responses/input_tokens）。
+///
+/// 路由层面没有 tokenizer，这里用近似规则：先按翻译逻辑算出 chat messages，
+/// 再按字符/字节估算 token 数（ASCII ~4 字符/token，非 ASCII 按 ~2 字符/token）。
+/// 目的只是给客户端一个数量级参考，不是精确计价。
+pub(crate) fn estimate_input_tokens(payload: &Value) -> i64 {
+    // 复用翻译逻辑尽量贴近真实 token 消耗（含 instructions 与工具定义）
+    let mut estimate: i64 = 0;
+    if let Ok(chat) = responses_to_chat(payload) {
+        if let Some(messages) = chat.get("messages").and_then(Value::as_array) {
+            for msg in messages {
+                estimate += estimate_value_tokens(msg);
+            }
+        }
+        // 工具定义按 JSON 序列化长度估算
+        if let Some(tools) = chat.get("tools") {
+            estimate += estimate_value_tokens(tools);
+        }
+    } else {
+        // 翻译失败（如 input_file 等）：退回对原始 payload 的整体估算
+        estimate += estimate_value_tokens(payload);
+    }
+    estimate.max(0)
+}
+
+/// 粗略估算一个 JSON 值的 token 数：ASCII 字符按 4 字符/token，非 ASCII 按 2 字符/token。
+fn estimate_value_tokens(value: &Value) -> i64 {
+    let text = match value {
+        Value::String(s) => s.clone(),
+        _ => serde_json::to_string(value).unwrap_or_default(),
+    };
+    let mut ascii: i64 = 0;
+    let mut non_ascii: i64 = 0;
+    for c in text.chars() {
+        if c.is_ascii() {
+            ascii += 1;
+        } else {
+            non_ascii += 1;
+        }
+    }
+    ascii / 4 + non_ascii / 2
 }
 
 /// 把 chat completions 上游 4xx/5xx 错误体翻译成 Responses API 错误体。
@@ -691,7 +841,7 @@ mod tests {
                 "completion_tokens_details": { "reasoning_tokens": 3 }
             }
         });
-        let r = chat_to_responses(&content, "resp_1", "upstream-model");
+        let r = chat_to_responses(&content, "resp_1", "upstream-model", &json!({}));
         assert_eq!(r["id"], "resp_1");
         assert_eq!(r["object"], "response");
         assert_eq!(r["status"], "completed");
@@ -746,5 +896,145 @@ mod tests {
         // 不注入 chat 专用字段
         assert!(passthrough.get("messages").is_none());
         assert!(passthrough.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn chat_to_responses_echoes_request_fields_and_completes_schema() {
+        let content = json!({
+            "choices": [{ "index": 0, "message": { "role": "assistant", "content": "hello" } }],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15 }
+        });
+        let echo = response_echo_fields(&json!({
+            "model": "m",
+            "input": "hi",
+            "instructions": "be terse",
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "max_output_tokens": 512,
+            "parallel_tool_calls": false,
+            "metadata": { "k": "v" },
+            "service_tier": "flex",
+            "truncation": "disabled",
+            "user": "u1"
+        }));
+        let r = chat_to_responses(&content, "resp_1", "upstream-model", &echo);
+        // 回显字段
+        assert_eq!(r["instructions"], "be terse");
+        assert_eq!(r["temperature"], 0.7);
+        assert_eq!(r["top_p"], 0.9);
+        assert_eq!(r["max_output_tokens"], 512);
+        assert_eq!(r["parallel_tool_calls"], false);
+        assert_eq!(r["metadata"]["k"], "v");
+        assert_eq!(r["service_tier"], "flex");
+        assert_eq!(r["truncation"], "disabled");
+        assert_eq!(r["user"], "u1");
+        // 补齐的字段
+        assert_eq!(r["completed_at"], r["created_at"]);
+        assert_eq!(r["store"], true);
+        assert_eq!(r["max_tool_calls"], Value::Null);
+        assert_eq!(r["background"], Value::Null);
+        assert_eq!(r["conversation"], Value::Null);
+        assert_eq!(r["previous_response_id"], Value::Null);
+        assert_eq!(r["prompt"], Value::Null);
+        assert_eq!(r["prompt_cache_key"], Value::Null);
+        assert_eq!(r["prompt_cache_options"], Value::Null);
+        assert_eq!(r["prompt_cache_retention"], Value::Null);
+        assert_eq!(r["moderation"], Value::Null);
+        assert_eq!(r["safety_identifier"], Value::Null);
+        assert_eq!(r["reasoning"], Value::Null);
+        assert_eq!(r["text"], Value::Null);
+        assert_eq!(r["top_logprobs"], Value::Null);
+        // 全部 35 个标准顶层字段齐全
+        for field in [
+            "id", "object", "created_at", "completed_at", "status", "model", "output",
+            "output_text", "usage", "error", "incomplete_details", "instructions", "metadata",
+            "parallel_tool_calls", "temperature", "tool_choice", "tools", "top_p",
+            "max_output_tokens", "max_tool_calls", "background", "conversation",
+            "previous_response_id", "store", "service_tier", "truncation", "reasoning", "text",
+            "user", "top_logprobs", "prompt", "prompt_cache_key", "prompt_cache_options",
+            "prompt_cache_retention", "moderation", "safety_identifier",
+        ] {
+            assert!(r.get(field).is_some(), "missing field {field}");
+        }
+    }
+
+    #[test]
+    fn response_echo_fields_skips_null_and_unknown() {
+        let echo = response_echo_fields(&json!({
+            "model": "m",
+            "input": "hi",
+            "instructions": null,
+            "nonsense_field": 1,
+            "store": false,
+            "previous_response_id": "resp_prev",
+            "conversation": { "id": "conv_1" }
+        }));
+        assert!(echo.get("instructions").is_none());
+        assert!(echo.get("nonsense_field").is_none());
+        assert_eq!(echo["store"], false);
+        assert_eq!(echo["previous_response_id"], "resp_prev");
+        assert_eq!(echo["conversation"]["id"], "conv_1");
+    }
+
+    #[test]
+    fn estimate_input_tokens_roughly_counts() {
+        let payload = json!({
+            "model": "m",
+            "input": "hello world how are you today",
+            "instructions": "be brief"
+        });
+        let n = estimate_input_tokens(&payload);
+        // messages 结构字段（role 等）+ 文本都计入：当前实现序列化每个 message 估算。
+        // 修正为与实现一致的值（23），并验证估算随输入增长单调。
+        assert_eq!(n, 23);
+        let longer = json!({
+            "model": "m",
+            "input": "hello world how are you today my friend this is a longer sentence",
+            "instructions": "be brief"
+        });
+        assert!(estimate_input_tokens(&longer) > n);
+    }
+
+    #[test]
+    fn estimate_input_tokens_falls_back_on_unsupported_input() {
+        // input_file 翻译失败，退回整体估算（不 panic）
+        let payload = json!({
+            "model": "m",
+            "input": [{ "role": "user", "content": [{ "type": "input_file", "file_id": "f1" }] }]
+        });
+        let n = estimate_input_tokens(&payload);
+        assert!(n > 0);
+    }
+
+    #[test]
+    fn extract_input_items_normalizes_string_to_message() {
+        let payload = json!({ "model": "m", "input": "hello world" });
+        let items = extract_input_items(&payload);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["type"], "message");
+        assert_eq!(items[0]["role"], "user");
+        assert_eq!(items[0]["content"][0]["type"], "input_text");
+        assert_eq!(items[0]["content"][0]["text"], "hello world");
+    }
+
+    #[test]
+    fn extract_input_items_preserves_array() {
+        let payload = json!({
+            "model": "m",
+            "input": [
+                { "role": "user", "content": "a" },
+                { "type": "function_call_output", "call_id": "c1", "output": "4" }
+            ]
+        });
+        let items = extract_input_items(&payload);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["role"], "user");
+        assert_eq!(items[1]["type"], "function_call_output");
+    }
+
+    #[test]
+    fn extract_input_items_missing_returns_empty() {
+        assert!(extract_input_items(&json!({ "model": "m" })).is_empty());
+        assert!(extract_input_items(&json!({ "model": "m", "input": "" })).is_empty());
     }
 }

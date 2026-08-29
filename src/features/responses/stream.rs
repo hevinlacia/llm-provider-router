@@ -216,7 +216,8 @@ pub(crate) async fn stream_responses_route(
                     }
                 } else {
                     // 翻译：chat SSE -> Responses 事件
-                    let mut sse = ResponsesSse::new(&upstream_model);
+                    let echo = translate::response_echo_fields(&original_payload);
+                    let mut sse = ResponsesSse::with_echo(&upstream_model, &echo);
                     while let Some(item) = bytes_stream.next().await {
                         match item {
                             Ok(chunk) => {
@@ -243,11 +244,12 @@ pub(crate) async fn stream_responses_route(
                             }
                         }
                     }
-                    let (events, history) = sse.finish();
+                    let (events, (resp_id, history, response)) = sse.finish();
                     if !events.is_empty() {
                         yield Ok(Bytes::from(events));
                     }
-                    store::put(&history.0, history.1);
+                    let input_items = translate::extract_input_items(&original_payload);
+                    store::put_full(&resp_id, history, response, input_items);
                 }
                 let body_text = String::from_utf8_lossy(&body_text).to_string();
                 freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
@@ -326,6 +328,7 @@ pub(crate) struct ResponsesSse {
     response_id: String,
     created_at: i64,
     model: String,
+    echo: Value,
     output_index: usize,
     message: Option<MessageState>,
     reasoning: Option<ReasoningState>,
@@ -336,11 +339,14 @@ pub(crate) struct ResponsesSse {
 }
 
 impl ResponsesSse {
-    pub(crate) fn new(model: &str) -> Self {
+    /// 带请求回显字段构造（echo 来自 translate::response_echo_fields）。
+    /// 不传回显时用空对象（等价于历史 `new` 行为）。
+    pub(crate) fn with_echo(model: &str, echo: &Value) -> Self {
         Self {
             response_id: translate::next_id("resp"),
             created_at: translate::now_ts(),
             model: model.to_string(),
+            echo: if echo.is_null() { json!({}) } else { echo.clone() },
             output_index: 0,
             message: None,
             reasoning: None,
@@ -408,8 +414,8 @@ impl ResponsesSse {
     }
 
     /// 收尾：下发所有 done 事件 + response.completed + [DONE]。
-    /// 返回 (sse 文本, (response_id, 供 previous_response_id 回填的 chat 消息))。
-    pub(crate) fn finish(mut self) -> (String, (String, Vec<Value>)) {
+    /// 返回 (sse 文本, (response_id, 供 previous_response_id 回填的 chat 消息, 完整 Response 对象))。
+    pub(crate) fn finish(mut self) -> (String, (String, Vec<Value>, Value)) {
         let mut out = String::new();
         if !self.emitted_created {
             self.emitted_created = true;
@@ -541,7 +547,7 @@ impl ResponsesSse {
             json!({ "response": response }),
         );
         out.push_str("data: [DONE]\n\n");
-        (out, (self.response_id.clone(), history))
+        (out, (self.response_id.clone(), history, response))
     }
 
     fn ensure_message(&mut self, out: &mut String) {
@@ -782,10 +788,37 @@ impl ResponsesSse {
                 })
             })
             .collect();
+        let echo = &self.echo;
+        let instructions = echo.get("instructions").cloned().unwrap_or(Value::Null);
+        let metadata = echo.get("metadata").cloned().unwrap_or(Value::Null);
+        let temperature = echo.get("temperature").cloned().unwrap_or(Value::Null);
+        let top_p = echo.get("top_p").cloned().unwrap_or(Value::Null);
+        let max_output_tokens = echo.get("max_output_tokens").cloned().unwrap_or(Value::Null);
+        let parallel_tool_calls = echo
+            .get("parallel_tool_calls")
+            .cloned()
+            .unwrap_or(json!(true));
+        let tool_choice = echo.get("tool_choice").cloned().unwrap_or(json!("auto"));
+        let tools = echo.get("tools").cloned().unwrap_or(json!([]));
+        let service_tier = echo.get("service_tier").cloned().unwrap_or(Value::Null);
+        let truncation = echo.get("truncation").cloned().unwrap_or(Value::Null);
+        let reasoning = echo.get("reasoning").cloned().unwrap_or(Value::Null);
+        let text = echo.get("text").cloned().unwrap_or(Value::Null);
+        let background = echo.get("background").cloned().unwrap_or(Value::Null);
+        let conversation = echo.get("conversation").cloned().unwrap_or(Value::Null);
+        let max_tool_calls = echo.get("max_tool_calls").cloned().unwrap_or(Value::Null);
+        let top_logprobs = echo.get("top_logprobs").cloned().unwrap_or(Value::Null);
+        let user = echo.get("user").cloned().unwrap_or(Value::Null);
+        let store = echo.get("store").cloned().unwrap_or(json!(true));
+        let previous_response_id = echo
+            .get("previous_response_id")
+            .cloned()
+            .unwrap_or(Value::Null);
         json!({
             "id": self.response_id,
             "object": "response",
             "created_at": self.created_at,
+            "completed_at": self.created_at,
             "status": status,
             "model": self.model,
             "output": Value::Array(output),
@@ -793,14 +826,31 @@ impl ResponsesSse {
             "usage": self.usage.clone().unwrap_or_else(translate::zero_usage),
             "error": Value::Null,
             "incomplete_details": Value::Null,
-            "instructions": Value::Null,
-            "metadata": Value::Null,
-            "parallel_tool_calls": true,
-            "temperature": Value::Null,
-            "tool_choice": "auto",
-            "tools": Value::Array(Vec::new()),
-            "top_p": Value::Null,
-            "max_output_tokens": Value::Null
+            "instructions": instructions,
+            "metadata": metadata,
+            "parallel_tool_calls": parallel_tool_calls,
+            "temperature": temperature,
+            "tool_choice": tool_choice,
+            "tools": tools,
+            "top_p": top_p,
+            "max_output_tokens": max_output_tokens,
+            "max_tool_calls": max_tool_calls,
+            "background": background,
+            "conversation": conversation,
+            "previous_response_id": previous_response_id,
+            "store": store,
+            "service_tier": service_tier,
+            "truncation": truncation,
+            "reasoning": reasoning,
+            "text": text,
+            "user": user,
+            "top_logprobs": top_logprobs,
+            "prompt": Value::Null,
+            "prompt_cache_key": Value::Null,
+            "prompt_cache_options": Value::Null,
+            "prompt_cache_retention": Value::Null,
+            "moderation": Value::Null,
+            "safety_identifier": Value::Null
         })
     }
 
@@ -932,7 +982,7 @@ mod tests {
 
     #[test]
     fn plain_text_stream_emits_expected_events() {
-        let mut sse = ResponsesSse::new("test-model");
+        let mut sse = ResponsesSse::with_echo("test-model", &json!({}));
         let mut collected = String::new();
         collected.push_str(&sse.feed(&json!({
             "choices": [{ "index": 0, "delta": { "role": "assistant", "content": "" }, "finish_reason": null }]
@@ -946,7 +996,7 @@ mod tests {
         collected.push_str(&sse.feed(&json!({
             "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }]
         })));
-        let (finish_sse, (resp_id, history)) = sse.finish();
+        let (finish_sse, (resp_id, history, _response)) = sse.finish();
         collected.push_str(&finish_sse);
 
         let types = event_types(&collected);
@@ -980,7 +1030,7 @@ mod tests {
 
     #[test]
     fn reasoning_and_tool_call_stream() {
-        let mut sse = ResponsesSse::new("test-model");
+        let mut sse = ResponsesSse::with_echo("test-model", &json!({}));
         let mut collected = String::new();
         // 推理内容 + 工具调用首帧（带 id/name）
         collected.push_str(&sse.feed(&json!({
@@ -1002,7 +1052,7 @@ mod tests {
         collected.push_str(&sse.feed(&json!({
             "choices": [{ "index": 0, "delta": {}, "finish_reason": "tool_calls" }]
         })));
-        let (finish_sse, (_, history)) = sse.finish();
+        let (finish_sse, (_, history, _response)) = sse.finish();
         collected.push_str(&finish_sse);
 
         let types = event_types(&collected);
@@ -1030,8 +1080,8 @@ mod tests {
 
     #[test]
     fn finish_without_any_chunk_still_emits_created() {
-        let sse = ResponsesSse::new("m");
-        let (out, (_resp_id, history)) = sse.finish();
+        let sse = ResponsesSse::with_echo("m", &json!({}));
+        let (out, (_resp_id, history, _response)) = sse.finish();
         assert!(out.contains("response.created"));
         assert!(out.contains("response.completed"));
         assert!(history.is_empty());
