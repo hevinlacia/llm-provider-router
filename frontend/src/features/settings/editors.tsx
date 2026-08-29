@@ -41,7 +41,10 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
   }
   async function save() {
     if (!name.trim()) { onError('Provider name must not be empty'); return; }
-    if (!baseUrl.trim()) { onError('Base URL must not be empty'); return; }
+    if (!baseUrl.trim() && !responsesBaseUrl.trim() && !anthropicBaseUrl.trim()) {
+      onError('At least one of Base URL / Responses API Base URL / Anthropic Base URL must not be empty');
+      return;
+    }
     const keyMap: ProviderDraft['keys'] = {};
     for (const k of keys) {
       if (!k.name.trim()) continue;

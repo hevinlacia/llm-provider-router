@@ -67,6 +67,24 @@ pub(crate) async fn stream_responses_route(
                 }
             };
             let is_passthrough = alias.supports_responses();
+            // 空地址防护：所选模式对应的供应商地址未配置时给出明确错误，而不是发向坏 URL
+            let endpoint_missing = if is_passthrough {
+                alias
+                    .responses_base_url
+                    .as_deref()
+                    .map(|s| s.trim().is_empty())
+                    .unwrap_or(true)
+            } else {
+                alias.base_url.trim().is_empty()
+            };
+            if endpoint_missing {
+                yield Ok(Bytes::from(sse_error_message(if is_passthrough {
+                    "provider responses_base_url is empty; cannot pass through /v1/responses"
+                } else {
+                    "provider has no chat completions base_url configured; cannot translate /v1/responses"
+                })));
+                return;
+            }
             let (endpoint, upstream_payload) = if is_passthrough {
                 // 透传：只改写 model 名，原样发到供应商 Responses 端点
                 let responses_base = alias

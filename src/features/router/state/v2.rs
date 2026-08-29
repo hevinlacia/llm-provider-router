@@ -453,8 +453,12 @@ impl RouterState {
         if new_name.trim().is_empty() {
             anyhow::bail!("provider name must not be empty");
         }
-        if base_url.trim().is_empty() {
-            anyhow::bail!("base_url must not be empty");
+        // 三类地址至少填一种：base_url(Chat) / responses_base_url(Responses) / anthropic_base_url(Anthropic)
+        if base_url.trim().is_empty()
+            && responses_base_url.as_deref().map(str::trim).unwrap_or("").is_empty()
+            && anthropic_base_url.as_deref().map(str::trim).unwrap_or("").is_empty()
+        {
+            anyhow::bail!("at least one of base_url / responses_base_url / anthropic_base_url must not be empty");
         }
         let mut providers = config_v2::load_providers_file(config_v2::V2_PROVIDERS_PATH)?;
         let renamed = old_name != new_name;
@@ -502,8 +506,12 @@ impl RouterState {
         if name.is_empty() {
             anyhow::bail!("provider name must not be empty");
         }
-        if base_url.trim().is_empty() {
-            anyhow::bail!("base_url must not be empty");
+        // 三类地址至少填一种：base_url(Chat) / responses_base_url(Responses) / anthropic_base_url(Anthropic)
+        if base_url.trim().is_empty()
+            && responses_base_url.as_deref().map(str::trim).unwrap_or("").is_empty()
+            && anthropic_base_url.as_deref().map(str::trim).unwrap_or("").is_empty()
+        {
+            anyhow::bail!("at least one of base_url / responses_base_url / anthropic_base_url must not be empty");
         }
         let mut providers = config_v2::load_providers_file(config_v2::V2_PROVIDERS_PATH)?;
         if providers.providers.contains_key(name) {

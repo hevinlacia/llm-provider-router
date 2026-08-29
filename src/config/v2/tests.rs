@@ -442,6 +442,57 @@ fn validate_accepts_virtual_model_targets() {
 }
 
 #[test]
+fn validate_accepts_provider_with_any_single_url() {
+    // 三种地址任一非空即合法：base_url / responses_base_url / anthropic_base_url
+    for (label, provider_json) in [
+        (
+            "base_url only",
+            r#"{"name":{"base_url":"https://a.com/v1","keys":{}}}"#,
+        ),
+        (
+            "responses only",
+            r#"{"name":{"base_url":"","responses_base_url":"https://r.com/v1","keys":{}}}"#,
+        ),
+        (
+            "anthropic only",
+            r#"{"name":{"base_url":"","responses_base_url":"","anthropic_base_url":"https://a.anthropic.com","keys":{}}}"#,
+        ),
+    ] {
+        let dir = std::env::temp_dir().join(format!("lpr-v2-test-{}-anyurl", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let p = write_temp(&dir, "providers.json", &format!("{{\"providers\":{provider_json}}}"));
+        let m = write_temp(&dir, "models.json", r#"{"families":{},"models":{}}"#);
+        let l = write_temp(
+            &dir,
+            "logical.json",
+            r#"{"logical_models":{}}"#,
+        );
+        let v = write_temp(&dir, "virtual.json", r#"{"virtual_models":{}}"#);
+        let result = load_v2_config_from(&p, &m, &l, &v);
+        assert!(result.is_ok(), "{label}: 应通过校验, got {result:?}");
+    }
+}
+
+#[test]
+fn validate_rejects_provider_with_no_url() {
+    let dir = std::env::temp_dir().join(format!("lpr-v2-test-{}-nourl", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    let p = write_temp(
+        &dir,
+        "providers.json",
+        r#"{"providers":{"name":{"base_url":"","responses_base_url":"","anthropic_base_url":"","keys":{}}}}"#,
+    );
+    let m = write_temp(&dir, "models.json", r#"{"families":{},"models":{}}"#);
+    let l = write_temp(&dir, "logical.json", r#"{"logical_models":{}}"#);
+    let v = write_temp(&dir, "virtual.json", r#"{"virtual_models":{}}"#);
+    let err = load_v2_config_from(&p, &m, &l, &v).unwrap_err();
+    assert!(
+        err.to_string().contains("at least one of base_url"),
+        "错误信息应说明至少填一种地址, got: {err}"
+    );
+}
+
+#[test]
 fn rename_provider_updates_models_and_logical_references() {
     let dir = std::env::temp_dir().join(format!("lpr-v2-test-{}-rename", std::process::id()));
     let _ = fs::create_dir_all(&dir);

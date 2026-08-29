@@ -2,8 +2,20 @@ use super::types::V2Config;
 use anyhow::anyhow;
 pub fn validate(cfg: &V2Config) -> anyhow::Result<()> {
     for (provider_name, provider) in &cfg.providers {
-        if provider.base_url.is_empty() {
-            return Err(anyhow!("provider {provider_name}: base_url is empty"));
+        // 三类地址至少填一种：base_url(Chat) / responses_base_url(Responses) / anthropic_base_url(Anthropic)
+        let has_any_url = !provider.base_url.trim().is_empty()
+            || provider
+                .responses_base_url
+                .as_deref()
+                .is_some_and(|s| !s.trim().is_empty())
+            || provider
+                .anthropic_base_url
+                .as_deref()
+                .is_some_and(|s| !s.trim().is_empty());
+        if !has_any_url {
+            return Err(anyhow!(
+                "provider {provider_name}: at least one of base_url / responses_base_url / anthropic_base_url must be set"
+            ));
         }
         for (key_name, key) in &provider.keys {
             if key.env_var.is_empty() {
