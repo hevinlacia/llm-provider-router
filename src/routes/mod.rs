@@ -146,6 +146,20 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         .route("/api/router/capabilities", get(models::router_capabilities))
         .route("/v1/chat/completions", post(chat::chat_completions))
         .route("/v1/responses", post(responses::responses))
+        .route(
+            "/v1/responses/{response_id}",
+            get(responses::get_response).delete(responses::delete_response),
+        )
+        .route(
+            "/v1/responses/{response_id}/cancel",
+            post(responses::cancel_response),
+        )
+        .route("/v1/responses/compact", post(responses::compact_response))
+        .route(
+            "/v1/responses/{response_id}/input_items",
+            get(responses::response_input_items),
+        )
+        .route("/v1/responses/input_tokens", post(responses::response_input_tokens))
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
         .fallback(get(usage::dashboard))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
