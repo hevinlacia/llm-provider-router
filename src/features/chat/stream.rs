@@ -47,6 +47,15 @@ pub(crate) async fn stream_upstream_route(
                     return;
                 }
             };
+            // 空地址防护：供应商未配置 chat completions base_url 时给出明确错误
+            if alias.base_url.trim().is_empty() {
+                yield Ok(Bytes::from(stream_error_event(
+                    &alias.alias,
+                    0,
+                    "provider has no chat completions base_url configured",
+                )));
+                return;
+            }
             let upstream_payload = prepare_upstream_payload(&payload, &alias);
             let mut tried = HashSet::new();
             let retry_policy = alias.retry_policy.clone();

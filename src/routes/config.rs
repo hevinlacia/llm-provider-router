@@ -68,18 +68,31 @@ fn parse_v2_provider_body(
     let Some(new_name) = provider.get("name").and_then(Value::as_str) else {
         return Err("provider.name (string) is required".to_string());
     };
-    let Some(base_url) = provider.get("base_url").and_then(Value::as_str) else {
-        return Err("provider.base_url (string) is required".to_string());
-    };
+    // 三类地址至少填一种：base_url(Chat) / responses_base_url(Responses) / anthropic_base_url(Anthropic)
+    let base_url = provider
+        .get("base_url")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     let responses_base_url = provider
         .get("responses_base_url")
         .and_then(Value::as_str)
         .map(str::to_string)
-        .filter(|s| !s.is_empty());
+        .filter(|s| !s.trim().is_empty());
     let anthropic_base_url = provider
         .get("anthropic_base_url")
         .and_then(Value::as_str)
-        .map(str::to_string);
+        .map(str::to_string)
+        .filter(|s| !s.trim().is_empty());
+    if base_url.trim().is_empty()
+        && responses_base_url.is_none()
+        && anthropic_base_url.is_none()
+    {
+        return Err(
+            "at least one of base_url / responses_base_url / anthropic_base_url must be set"
+                .to_string(),
+        );
+    }
     let mut keys = HashMap::new();
     if let Some(key_objs) = provider.get("keys").and_then(Value::as_object) {
         for (name, value) in key_objs {

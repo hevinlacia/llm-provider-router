@@ -185,9 +185,11 @@ impl ModelAlias {
         self
     }
 
-    /// 是否原生支持 Responses API（配置了 responses_base_url 即支持，走透传）。
+    /// 是否原生支持 Responses API（配置了非空 responses_base_url 即支持，走透传）。
     pub fn supports_responses(&self) -> bool {
-        self.responses_base_url.is_some()
+        self.responses_base_url
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
     }
 
     pub fn upstream_model(&self) -> String {

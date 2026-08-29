@@ -4,7 +4,7 @@ use crate::app::AppState;
 use crate::config::ModelAlias;
 use crate::features::router::NoAvailableKeyError;
 use axum::http::header::CONTENT_TYPE;
-use axum::http::{HeaderMap, HeaderValue};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -26,6 +26,12 @@ pub(crate) async fn call_upstream(
     session_id: Option<String>,
     payload: Value,
 ) -> Result<Response, CallError> {
+    if alias.base_url.trim().is_empty() {
+        return Ok(json_status(
+            StatusCode::BAD_GATEWAY,
+            json!({ "error": { "message": "provider has no chat completions base_url configured (base_url empty)", "type": "upstream_error" } }),
+        ));
+    }
     let retry_policy = alias.retry_policy.clone();
     let mut tried = HashSet::new();
 

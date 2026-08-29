@@ -170,9 +170,18 @@ async fn call_responses_passthrough(
     session_id: Option<String>,
     payload: Value,
 ) -> Result<Response, CallError> {
+    let responses_base = alias.responses_base_url.as_deref().unwrap_or("");
+    if responses_base.trim().is_empty() {
+        return Ok(json_status(
+            StatusCode::BAD_GATEWAY,
+            translate::responses_error(
+                "provider responses_base_url is empty; cannot pass through /v1/responses",
+                "upstream_error",
+            ),
+        ));
+    }
     let retry_policy = alias.retry_policy.clone();
     let mut tried = HashSet::new();
-    let responses_base = alias.responses_base_url.as_deref().unwrap_or("");
     let endpoint = format!("{}/responses", responses_base.trim_end_matches('/'));
 
     loop {
@@ -300,6 +309,15 @@ async fn call_upstream_responses(
     session_id: Option<String>,
     payload: Value,
 ) -> Result<Response, CallError> {
+    if alias.base_url.trim().is_empty() {
+        return Ok(json_status(
+            StatusCode::BAD_GATEWAY,
+            translate::responses_error(
+                "provider has no chat completions base_url configured (base_url empty); cannot translate /v1/responses",
+                "upstream_error",
+            ),
+        ));
+    }
     let retry_policy = alias.retry_policy.clone();
     let mut tried = HashSet::new();
     let upstream_model = alias.upstream_model();
