@@ -15,3 +15,4 @@ Personal tool project under `~/Developer/tools/`.
 - **切换后立即复检**:切换完成后必须立刻用 front-proxy 入口验证——`/health` 健康、`/api/config/token-prices`、`/api/config/v2/physical-models`、`/api/router/capabilities` 等核心 API 返回正常 JSON(而非 dashboard HTML fallback)。
 - **失败即回滚**:切换后任一检查失败,立即切回原 slot 恢复服务,再排查新版本问题;不得让服务停留在未验证/异常状态。
 - **禁止裸替换**:不得直接停旧进程/覆盖可执行文件后立即启动新版本来替换;始终走 hot-deploy 的 blue/green 验证流程。
+- **温备常驻,无 drain 等待**:`deploy` 切完并复检通过后**不停旧 slot**,旧 slot 继续常驻作温备。切换成功由复检在 ~5s 内确认;下次发版直接部署该温备 slot(`systemctl restart` 强制加载当前二进制)。需停某 slot 时手动 `systemctl --user stop llm-provider-router-backend@{slot}.service`。
