@@ -59,7 +59,13 @@ pub struct V2Retry {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct V2Provider {
+    /// Chat Completions API 基础地址（OpenAI 兼容，Router 内部翻译链路的落点）。
     pub base_url: String,
+    /// Responses API 基础地址（可选）。供应商原生支持 OpenAI Responses API 时配置，
+    /// Router 对 `/v1/responses` 请求透传到 `{responses_base_url}/responses`（只改写 model 名）。
+    /// 未配置 = 该供应商不支持 Responses，由 Router 翻译成 chat completions 走 `base_url`。
+    #[serde(default)]
+    pub responses_base_url: Option<String>,
     /// Anthropic 兼容 API 端点（可选）。供应商同时提供 Anthropic 协议时配置，
     /// 模型能力探测优先走 Anthropic `/v1/models`（返回精确 context_window，零成本）。
     #[serde(default)]

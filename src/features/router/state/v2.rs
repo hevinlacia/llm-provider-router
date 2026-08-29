@@ -166,6 +166,7 @@ impl RouterState {
                 name.clone(),
                 json!({
                     "base_url": prov.base_url,
+                    "responses_base_url": prov.responses_base_url,
                     "anthropic_base_url": prov.anthropic_base_url,
                     "key_total": prov.keys.len(),
                     "key_enabled": enabled.len(),
@@ -445,6 +446,7 @@ impl RouterState {
         old_name: &str,
         new_name: &str,
         base_url: &str,
+        responses_base_url: Option<String>,
         anthropic_base_url: Option<String>,
         keys: HashMap<String, config_v2::V2Key>,
     ) -> anyhow::Result<Value> {
@@ -464,6 +466,9 @@ impl RouterState {
             .remove(old_name)
             .ok_or_else(|| anyhow::anyhow!("provider {old_name} not found"))?;
         provider.base_url = base_url.trim().to_string();
+        provider.responses_base_url = responses_base_url
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         provider.anthropic_base_url = anthropic_base_url
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
@@ -489,6 +494,7 @@ impl RouterState {
         &mut self,
         name: &str,
         base_url: &str,
+        responses_base_url: Option<String>,
         anthropic_base_url: Option<String>,
         keys: HashMap<String, config_v2::V2Key>,
     ) -> anyhow::Result<Value> {
@@ -507,6 +513,9 @@ impl RouterState {
             name.to_string(),
             config_v2::V2Provider {
                 base_url: base_url.trim().to_string(),
+                responses_base_url: responses_base_url
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty()),
                 anthropic_base_url: anthropic_base_url
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty()),

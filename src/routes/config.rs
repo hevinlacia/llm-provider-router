@@ -60,6 +60,7 @@ fn parse_v2_provider_body(
         String,
         String,
         Option<String>,
+        Option<String>,
         HashMap<String, crate::config_v2::V2Key>,
     ),
     String,
@@ -70,6 +71,11 @@ fn parse_v2_provider_body(
     let Some(base_url) = provider.get("base_url").and_then(Value::as_str) else {
         return Err("provider.base_url (string) is required".to_string());
     };
+    let responses_base_url = provider
+        .get("responses_base_url")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .filter(|s| !s.is_empty());
     let anthropic_base_url = provider
         .get("anthropic_base_url")
         .and_then(Value::as_str)
@@ -106,6 +112,7 @@ fn parse_v2_provider_body(
     Ok((
         new_name.to_string(),
         base_url.to_string(),
+        responses_base_url,
         anthropic_base_url,
         keys,
     ))
@@ -118,13 +125,20 @@ pub(crate) async fn api_config_v2_providers_create(
     let Some(provider) = payload.get("provider").and_then(Value::as_object) else {
         return bad_request("provider (object) is required");
     };
-    let (name, base_url, anthropic_base_url, keys) = match parse_v2_provider_body(provider) {
-        Ok(parsed) => parsed,
-        Err(message) => return bad_request(&message),
-    };
+    let (name, base_url, responses_base_url, anthropic_base_url, keys) =
+        match parse_v2_provider_body(provider) {
+            Ok(parsed) => parsed,
+            Err(message) => return bad_request(&message),
+        };
     match app.state.lock() {
         Ok(mut state) => {
-            match state.create_v2_provider(&name, &base_url, anthropic_base_url, keys) {
+            match state.create_v2_provider(
+                &name,
+                &base_url,
+                responses_base_url,
+                anthropic_base_url,
+                keys,
+            ) {
                 Ok(value) => json_status(StatusCode::OK, value),
                 Err(err) => bad_request(&err.to_string()),
             }
@@ -143,14 +157,21 @@ pub(crate) async fn api_config_v2_providers_update(
     let Some(provider) = payload.get("provider").and_then(Value::as_object) else {
         return bad_request("provider (object) is required");
     };
-    let (new_name, base_url, anthropic_base_url, keys) = match parse_v2_provider_body(provider) {
-        Ok(parsed) => parsed,
-        Err(message) => return bad_request(&message),
-    };
+    let (new_name, base_url, responses_base_url, anthropic_base_url, keys) =
+        match parse_v2_provider_body(provider) {
+            Ok(parsed) => parsed,
+            Err(message) => return bad_request(&message),
+        };
     match app.state.lock() {
         Ok(mut state) => {
-            match state.update_v2_provider(old_name, &new_name, &base_url, anthropic_base_url, keys)
-            {
+            match state.update_v2_provider(
+                old_name,
+                &new_name,
+                &base_url,
+                responses_base_url,
+                anthropic_base_url,
+                keys,
+            ) {
                 Ok(value) => json_status(StatusCode::OK, value),
                 Err(err) => bad_request(&err.to_string()),
             }

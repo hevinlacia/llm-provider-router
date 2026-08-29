@@ -98,10 +98,54 @@ npm run build
 - `GET /v1/models` — OpenAI-compatible model list (enriched with `context_window`/`max_output_tokens` for dynamic context negotiation).
 - `GET /api/router/capabilities` — dynamic context negotiation view: per logical model `effective: {contextWindow,maxTokens}` (conservative min across available physical targets) + per-target windows/availability.
 - `POST /v1/chat/completions` — OpenAI-compatible chat completions (non-streaming responses include `x-llm-router-*` headers for per-request precise window; streaming includes conservative hint), streaming and non-streaming.
+- `POST /v1/responses` — OpenAI **Responses API** entry (the newest API). Per provider it either **passes through** to a native Responses upstream or **translates** to/from chat completions (see [Responses API Support](#responses-api-support)). Non-streaming JSON and streaming SSE (Responses `response.*` events) are both supported.
 - `POST /v1/search` — unified web search proxy (search key pool): authenticated with the same local bearer token, routes to Tavily/Exa/Brave by key pool. See [Search Key Pool](#search-key-pool).
 - `GET/PUT /api/config/search-providers` — inspect/update the search key pool configuration.
 - `GET /_proxy/health` — front-proxy backend health.
 - `POST /_proxy/active/{slot}` — switch active blue/green slot.
+
+## Responses API Support
+
+`POST /v1/responses` exposes the **latest OpenAI Responses API** on the router. Whether a request is
+passed through or translated depends on the **address you configure for the provider** — each
+provider can configure three kinds of addresses:
+
+| Config field | 协议 | 用途 |
+|---|---|---|
+| `base_url` | Chat Completions API | 必填；Router 内部翻译链路（Responses→chat→Responses）的落点 |
+| `responses_base_url` | Responses API | 可选；配置了 = 供应商原生支持 Responses，`/v1/responses` 请求**原样透传**到 `{responses_base_url}/responses`（只改写 `model` 名） |
+| `anthropic_base_url` | Anthropic API | 可选；能力探测优先走 Anthropic `/v1/models` 获取精确 context_window |
+
+### 透传 vs 翻译
+
+- **透传**（供应商配置了 `responses_base_url`）：请求只改写 `model` 为上游物理模型名，其余字段原样转发；
+  响应（非流式 JSON / 流式 SSE）也原样返回。上游原生能力（如文件检索、内置工具、加密 reasoning）完整保留。
+- **翻译**（供应商只有 `base_url`）：Router 把 Responses 请求翻译成 chat completions 走上游，响应再翻译回
+  Responses 格式。覆盖：
+  - 请求：`input`（字符串/消息数组/工具调用项/工具输出）→ `messages`；`instructions` → system 前缀；
+    `tools`（扁平 function）→ chat 工具；`reasoning.effort` → `reasoning_effort`（接上 thinking_level_map 档位翻译）；
+    `max_output_tokens` → `max_tokens`；`text.format` → `response_format`；`previous_response_id` → 内存多轮历史回填。
+  - 响应：`message` → `message` 项、`tool_calls` → `function_call` 项、deepseek `reasoning_content` → `reasoning` 项；
+    chat usage → Responses usage（含 cached / reasoning 细分）。
+  - 流式：chat SSE 逐块翻译成 Responses `response.created` / `response.output_item.added` /
+    `response.output_text.delta` / `response.reasoning_summary_text.delta` / `response.function_call_arguments.delta` /
+    `response.completed` 等事件，末尾 `data: [DONE]`。
+
+示例（供应商原生支持 Responses）：
+
+```bash
+curl -X POST http://127.0.0.1:8789/v1/responses \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{
+    "model": "low-model-auto",
+    "input": "Explain the tradeoff in one sentence",
+    "reasoning": { "effort": "medium" },
+    "stream": true
+  }'
+```
+
+迁移方向：`/v1/responses` 将成为 router 的主入口；`/v1/chat/completions` 暂时保留以兼容现有
+pi / opencode 客户端。
 
 ## Configuration
 
