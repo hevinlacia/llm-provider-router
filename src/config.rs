@@ -124,6 +124,10 @@ pub struct ModelAlias {
     pub thinking_level_map: Option<HashMap<String, Option<String>>>,
     /// 上游思考字段协议（reasoning_effort / deepseek 等），供调试与后续 format 翻译使用。
     pub thinking_format: Option<String>,
+    /// 供应商配置的 Responses API 基础地址（可选）。配置后 = 原生支持 Responses，
+    /// 对 `/v1/responses` 请求透传到 `{responses_base_url}/responses`；
+    /// None = 由 Router 翻译成 chat completions 走 `base_url`。
+    pub responses_base_url: Option<String>,
 }
 
 impl ModelAlias {
@@ -145,6 +149,7 @@ impl ModelAlias {
             max_output_tokens: None,
             thinking_level_map: None,
             thinking_format: None,
+            responses_base_url: None,
         }
     }
 
@@ -172,6 +177,17 @@ impl ModelAlias {
         self.context_window = context_window;
         self.max_output_tokens = max_output_tokens;
         self
+    }
+
+    /// 标记上游原生支持 Responses API（透传模式）：设置其 Responses API 基础地址。
+    pub fn with_responses_base_url(mut self, url: Option<String>) -> Self {
+        self.responses_base_url = url;
+        self
+    }
+
+    /// 是否原生支持 Responses API（配置了 responses_base_url 即支持，走透传）。
+    pub fn supports_responses(&self) -> bool {
+        self.responses_base_url.is_some()
     }
 
     pub fn upstream_model(&self) -> String {
