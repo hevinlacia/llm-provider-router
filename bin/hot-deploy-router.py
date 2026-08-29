@@ -201,11 +201,10 @@ def deploy(args: argparse.Namespace) -> int:
         status()
         return 1
 
-    if old and args.drain_seconds >= 0:
-        print(f"draining old backend {old} for {args.drain_seconds}s")
-        time.sleep(args.drain_seconds)
-        stop_backend(old)
-        print(f"stopped old backend {old}")
+    if old:
+        # 温备常驻：不停旧 slot，继续常驻作温备。切换成功已由上面的复检在 ~5s 内确认，
+        # 无需 drain 等待；下次发版直接部署旧 slot（restart 会加载当前二进制）。
+        print(f"old backend {old} kept running as warm standby (no drain wait)")
 
     status()
     return 0
@@ -232,10 +231,9 @@ def main() -> int:
     p_boot.add_argument("--stop-other", action="store_true")
     p_boot.set_defaults(func=bootstrap)
 
-    p_deploy = sub.add_parser("deploy", help="Start inactive slot, switch traffic, then drain old slot.")
+    p_deploy = sub.add_parser("deploy", help="Restart inactive slot with current binary, switch traffic, verify, keep old slot as warm standby.")
     p_deploy.add_argument("--slot", choices=sorted(SLOTS), help="Target slot. Defaults to inactive slot.")
     p_deploy.add_argument("--health-timeout", type=int, default=30)
-    p_deploy.add_argument("--drain-seconds", type=int, default=120)
     p_deploy.set_defaults(func=deploy)
 
     p_status = sub.add_parser("status", help="Print active slot, services, and health.")
