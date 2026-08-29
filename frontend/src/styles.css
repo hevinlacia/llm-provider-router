@@ -378,6 +378,14 @@ td input[type="checkbox"] { width: auto; accent-color: var(--cyan); }
 .api-key-table { min-width: 1060px; }
 .provider-group { margin-top: 18px; }
 
+/* ---------- search providers ---------- */
+.provider-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 16px 0 2px; }
+.provider-head h3 { margin: 0; text-transform: capitalize; color: #e0f2fe; font-size: 1rem; }
+.base-url-field { min-width: 380px; }
+.search-providers-section .env-input { min-width: 300px; }
+.search-keys-table { min-width: 760px; }
+.search-providers-toolbar { margin-top: 16px; justify-content: space-between; align-items: center; }
+
 .modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; z-index: 100; backdrop-filter: blur(8px); }
 .modal { background: rgba(16, 24, 40, 0.98); border: 1px solid rgba(148,163,184,.18); border-radius: 20px; padding: 20px; max-width: 760px; width: 92%; max-height: 84vh; overflow: auto; box-shadow: 0 28px 78px rgba(0, 0, 0, 0.5); }
 .modal h3 { margin: 0 0 12px; color: #fff; }

@@ -271,3 +271,23 @@ export type RouterCapabilities = {
     }>;
   }>;
 };
+
+// ---- 搜索服务提供商 key 池（GET/PUT /api/config/search-providers）----
+
+export type SearchProviderKey = {
+  env_var: string;
+  weight: number;
+  enabled: boolean;
+  /** 后端从运行环境解析该 env_var 是否已有值（GET 响应带回，PUT 时忽略） */
+  configured?: boolean;
+};
+
+export type SearchProviderConfig = {
+  base_url?: string | null;
+  keys: Record<string, SearchProviderKey>;
+};
+
+export type SearchProvidersConfig = {
+  ok: boolean;
+  providers: Record<string, SearchProviderConfig>;
+};

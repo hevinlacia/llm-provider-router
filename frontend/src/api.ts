@@ -1,4 +1,4 @@
-import type { FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProbeResult, ProviderConfig, ProviderModelsResponse, RouterCapabilities, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, WeightConfig } from './types';
+import type { FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProbeResult, ProviderConfig, ProviderModelsResponse, RouterCapabilities, SearchProvidersConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, WeightConfig } from './types';
 
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
@@ -222,6 +222,16 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+    });
+  },
+  searchProviders() {
+    return request<SearchProvidersConfig>('/api/config/search-providers');
+  },
+  saveSearchProviders(providers: Record<string, { base_url?: string | null; keys: Record<string, { env_var: string; weight: number; enabled: boolean }> }>) {
+    return request<SearchProvidersConfig>('/api/config/search-providers', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providers }),
     });
   },
 };
