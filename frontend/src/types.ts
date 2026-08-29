@@ -154,6 +154,8 @@ export type V2KeyStatus = {
 
 export type V2ProviderStatus = {
   base_url: string;
+  /** Responses API 基础地址（可选）：供应商原生支持 OpenAI Responses API 时配置，/v1/responses 透传落点 */
+  responses_base_url?: string | null;
   /** Anthropic 兼容 API 端点（可选）：供应商同时提供 Anthropic 协议时配置，能力探测优先走它 */
   anthropic_base_url?: string | null;
   key_total: number;
@@ -270,4 +272,24 @@ export type RouterCapabilities = {
       weight?: number | null;
     }>;
   }>;
+};
+
+// ---- 搜索服务提供商 key 池（GET/PUT /api/config/search-providers）----
+
+export type SearchProviderKey = {
+  env_var: string;
+  weight: number;
+  enabled: boolean;
+  /** 后端从运行环境解析该 env_var 是否已有值（GET 响应带回，PUT 时忽略） */
+  configured?: boolean;
+};
+
+export type SearchProviderConfig = {
+  base_url?: string | null;
+  keys: Record<string, SearchProviderKey>;
+};
+
+export type SearchProvidersConfig = {
+  ok: boolean;
+  providers: Record<string, SearchProviderConfig>;
 };

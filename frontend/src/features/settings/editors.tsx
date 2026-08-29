@@ -8,6 +8,7 @@ type KeyDraft = { name: string; env_var: string; weight: number; billing_type: s
 type ProviderDraft = {
   name: string;
   base_url: string;
+  responses_base_url?: string | null;
   anthropic_base_url?: string | null;
   keys: Record<string, { env_var: string; weight: number; billing_type: string; enabled: boolean }>;
 };
@@ -22,6 +23,7 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
 }) {
   const [name, setName] = useState(providerName);
   const [baseUrl, setBaseUrl] = useState(provider.base_url);
+  const [responsesBaseUrl, setResponsesBaseUrl] = useState(provider.responses_base_url ?? '');
   const [anthropicBaseUrl, setAnthropicBaseUrl] = useState(provider.anthropic_base_url ?? '');
   const [keys, setKeys] = useState<KeyDraft[]>(() =>
     Object.entries(provider.keys).map(([k, v]) => ({ name: k, env_var: v.env_var, weight: v.weight, billing_type: v.billing_type, enabled: v.enabled })),
@@ -52,9 +54,9 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
     }
     try {
       if (isNew) {
-        onSaved(await api.createV2Provider({ name: name.trim(), base_url: baseUrl.trim(), anthropic_base_url: anthropicBaseUrl.trim() || null, keys: keyMap }));
+        onSaved(await api.createV2Provider({ name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, anthropic_base_url: anthropicBaseUrl.trim() || null, keys: keyMap }));
       } else {
-        onSaved(await api.updateV2Provider(providerName, { name: name.trim(), base_url: baseUrl.trim(), anthropic_base_url: anthropicBaseUrl.trim() || null, keys: keyMap }));
+        onSaved(await api.updateV2Provider(providerName, { name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, anthropic_base_url: anthropicBaseUrl.trim() || null, keys: keyMap }));
       }
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
@@ -63,7 +65,8 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
   return <div className="modal-overlay" onClick={onCancel}><div className="modal" onClick={(event) => event.stopPropagation()}>
     <h3>{isNew ? 'Add Provider' : `Edit Provider: ${providerName}`}</h3>
     <div className="field"><label>Name</label><input value={name} onChange={(event) => setName(event.target.value)} /></div>
-    <div className="field"><label>Base URL (OpenAI-compatible)</label><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" /></div>
+    <div className="field"><label>Base URL (Chat Completions API)</label><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" /></div>
+    <div className="field"><label>Responses API Base URL <span className="muted small-text">（可选）供应商原生支持 OpenAI Responses API 时填写；填写后 /v1/responses 请求将透传到 {`{responses_base_url}/responses`}，未填写则由 Router 翻译成 chat completions 走上方地址</span></label><input value={responsesBaseUrl} onChange={(event) => setResponsesBaseUrl(event.target.value)} placeholder="https://api.example.com/v1（留空则翻译）" /></div>
     <div className="field"><label>Anthropic Base URL <span className="muted small-text">（可选）供应商同时提供 Anthropic 兼容 API 时填写；能力探测将优先走 Anthropic /v1/models 获取精确 context_window</span></label><input value={anthropicBaseUrl} onChange={(event) => setAnthropicBaseUrl(event.target.value)} placeholder="https://api.anthropic.com（留空则用 OpenAI 兼容探测）" /></div>
     <h4>Keys</h4>
     <div className="table-wrap"><table><thead><tr><th>Key</th><th>Env Var</th><th>Weight</th><th>Billing</th><th>Enabled</th><th></th></tr></thead><tbody>

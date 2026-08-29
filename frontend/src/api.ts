@@ -1,4 +1,4 @@
-import type { FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProbeResult, ProviderConfig, ProviderModelsResponse, RouterCapabilities, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, WeightConfig } from './types';
+import type { FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProbeResult, ProviderConfig, ProviderModelsResponse, RouterCapabilities, SearchProvidersConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, WeightConfig } from './types';
 
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
@@ -161,14 +161,14 @@ export const api = {
     const query = refresh ? '?refresh=1' : '';
     return request<ProviderModelsResponse>(`/api/config/v2/providers/${encodeURIComponent(name)}/models${query}`);
   },
-  updateV2Provider(oldName: string, provider: { name: string; base_url: string; anthropic_base_url?: string | null; keys: Record<string, { env_var: string; weight: number; billing_type: string; enabled: boolean }> }) {
+  updateV2Provider(oldName: string, provider: { name: string; base_url: string; responses_base_url?: string | null; anthropic_base_url?: string | null; keys: Record<string, { env_var: string; weight: number; billing_type: string; enabled: boolean }> }) {
     return request<V2Status>('/api/config/v2/providers', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ old_name: oldName, provider }),
     });
   },
-  createV2Provider(provider: { name: string; base_url: string; anthropic_base_url?: string | null; keys: Record<string, { env_var: string; weight: number; billing_type: string; enabled: boolean }> }) {
+  createV2Provider(provider: { name: string; base_url: string; responses_base_url?: string | null; anthropic_base_url?: string | null; keys: Record<string, { env_var: string; weight: number; billing_type: string; enabled: boolean }> }) {
     return request<V2Status>('/api/config/v2/providers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -222,6 +222,16 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+    });
+  },
+  searchProviders() {
+    return request<SearchProvidersConfig>('/api/config/search-providers');
+  },
+  saveSearchProviders(providers: Record<string, { base_url?: string | null; keys: Record<string, { env_var: string; weight: number; enabled: boolean }> }>) {
+    return request<SearchProvidersConfig>('/api/config/search-providers', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providers }),
     });
   },
 };
