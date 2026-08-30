@@ -157,6 +157,13 @@ pub(crate) async fn stream_upstream_route(
                     let usage = extract_usage_from_stream(&body_text).or_else(|| serde_json::from_str::<Value>(&body_text).ok().and_then(|value| extract_usage(&value).cloned()));
                     record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref());
                     log_upstream_failure(&alias, status, &body_text);
+                    // 与 responses 流一致：记录可重试失败，避免全 key 都因限流失败时
+                    // 以 200 空流结束（客户端会当成传输截断反复重试）。
+                    let message = serde_json::from_str::<Value>(&body_text)
+                        .ok()
+                        .and_then(|v| v.get("error").and_then(|e| e.get("message")).and_then(Value::as_str).map(str::to_string))
+                        .unwrap_or_else(|| "upstream error".to_string());
+                    last_error = Some(format!("upstream {status}: {message}"));
                     continue;
                 }
 
