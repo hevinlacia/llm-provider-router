@@ -18,7 +18,7 @@ It preserves the old API/config contracts so existing OpenCode/headroom-proxy cl
 - Streaming: SSE chat completion streams are proxied without buffering the full response.
 - Usage metrics: request/error/token counts persist to SQLite by model, key, status, day, and month.
 - Hot settings: provider URLs, key weights, model routes, and encrypted API keys can be edited from the dashboard.
-- Blue/green deploy: stable front proxy on `:8789` forwards to backend slots `:8790` / `:8791`.
+- Blue/green deploy: stable front proxy on `:8789` forwards to backend slots `:8790` / `:8791`; the proxy auto-stops idle non-active slots after 15min no traffic and auto-starts the active slot when down (see [Slot Lifecycle](#slot-lifecycle-槽生命周期自动管理)).
 
 ## Intended Deployment
 
@@ -262,6 +262,25 @@ LLM_PROVIDER_ROUTER_GREEN_URL=http://127.0.0.1:8791
 LLM_PROVIDER_ROUTER_ACTIVE_BACKEND_FILE=~/.local/state/llm-provider-router/active-backend.json
 LLM_PROVIDER_ROUTER_DEFAULT_SLOT=blue
 ```
+
+### Slot Lifecycle (槽生命周期自动管理)
+
+front proxy 是唯一管理蓝/绿槽生命周期的流量入口。客户端始终连接 `:8789`，不需要感知具体槽位：
+
+- 每次请求被路由到某槽时记录该槽最后流量时间。
+- **非活跃槽**（非当前 active 的槽）连续无流量超过 `LLM_PROVIDER_ROUTER_IDLE_SHUTDOWN_SECONDS`
+  后自动 `systemctl --user stop` 下线；设 `0` 禁用（回到永久常驻）。
+- **活跃槽**不在线时入口自动 `systemctl --user start` 拉起（`LLM_PROVIDER_ROUTER_SLOT_AUTO_HEAL=1` 开启）。
+- `POST /_proxy/active/{slot}` 切到已下线槽时立即拉起，减少切换空窗。
+
+```text
+LLM_PROVIDER_ROUTER_IDLE_SHUTDOWN_SECONDS=900       # 非活跃槽无流量自动下线阈值(秒); 0=禁用(永久常驻)
+LLM_PROVIDER_ROUTER_SLOT_CHECK_INTERVAL_SECONDS=30  # 槽健康/闲置检查间隔(秒)
+LLM_PROVIDER_ROUTER_SLOT_AUTO_HEAL=1                # 活跃槽不在线时自动拉起
+```
+
+查看生命周期状态：`curl http://127.0.0.1:8789/_proxy/health` 的 `slot_management` 字段，
+或 `python3 bin/hot-deploy-router.py status`（含各槽 `idle_for` / `last_action`）。
 
 API key values are read from environment variables loaded from `~/.config/opencode/agent-secrets.env`. The encrypted source of truth is now `~/Developer/vault`; restore it with `python3 ~/Developer/vault/scripts/vault.py restore`. The dashboard can still show whether keys are configured and can update runtime env values, but persistent key changes should be made through the vault/env file flow.
 

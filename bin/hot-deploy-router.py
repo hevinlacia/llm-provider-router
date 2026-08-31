@@ -157,13 +157,35 @@ def verify_after_switch() -> tuple[bool, list[str]]:
 
 
 
+def fetch_proxy_slot_management() -> dict | None:
+    """从 front-proxy /_proxy/health 拉取槽生命周期管理快照（新版本字段，缺失则 None）。"""
+    try:
+        with urllib.request.urlopen(f"{proxy_url().rstrip('/')}/_proxy/health", timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data.get("slot_management")
+    except Exception:
+        return None
+
+
 def status() -> None:
     active = read_active_slot()
+    mgmt = fetch_proxy_slot_management()
     print(f"active_slot={active or 'unset'}")
+    idle_cfg = f"idle_shutdown={mgmt['idle_shutdown_secs']}s" if mgmt else "idle_shutdown=?s(旧 proxy,需升级)"
+    print(f"slot_mgmt: {idle_cfg} check_interval={mgmt['check_interval_secs'] if mgmt else '?'}s auto_heal={'on' if mgmt and mgmt['auto_heal'] else 'off'}")
     for slot, meta in SLOTS.items():
+        detail = ""
+        if mgmt:
+            info = next((s for s in mgmt["slots"] if s["slot"] == slot), None)
+            if info:
+                detail = (
+                    f" idle_for={info['idle_for_secs']}s"
+                    f" is_active={info['is_active']}"
+                    f" last_action={info['last_action']}"
+                )
         print(
             f"{slot}: service={'active' if is_active(service_name(slot)) else 'inactive'} "
-            f"health={'ok' if health_url(meta['url']) else 'fail'} url={meta['url']}"
+            f"health={'ok' if health_url(meta['url']) else 'fail'} url={meta['url']}{detail}"
         )
     print(f"proxy: service={'active' if is_active(PROXY_SERVICE) else 'inactive'}")
     print(f"active_file={ACTIVE_FILE}")
@@ -202,9 +224,13 @@ def deploy(args: argparse.Namespace) -> int:
         return 1
 
     if old:
-        # 温备常驻：不停旧 slot，继续常驻作温备。切换成功已由上面的复检在 ~5s 内确认，
-        # 无需 drain 等待；下次发版直接部署旧 slot（restart 会加载当前二进制）。
-        print(f"old backend {old} kept running as warm standby (no drain wait)")
+        # 旧槽自动下线：切换后旧槽继续运行（无 drain 等待），由 front-proxy 生命周期管理
+        # 在连续无流量超过 idle_shutdown_secs（默认 15 分钟）后自动 systemctl stop 下线；
+        # 切回该槽时入口自动拉起。需手动停某槽仍可 systemctl --user stop backend@{old}。
+        print(
+            f"old backend {old} kept running; front-proxy will auto-stop it after "
+            f"idle (default 15min) with no traffic"
+        )
 
     status()
     return 0

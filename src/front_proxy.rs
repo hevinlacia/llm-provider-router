@@ -1,3 +1,4 @@
+use crate::slot_manager::{SlotManager, SlotSpec};
 use axum::body::{Body, Bytes};
 use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
@@ -11,10 +12,13 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 
 const DEFAULT_ACTIVE_BACKEND_FILE: &str = "~/.local/state/llm-provider-router/active-backend.json";
+const DEFAULT_IDLE_SHUTDOWN_SECONDS: &str = "900";
+const DEFAULT_SLOT_CHECK_INTERVAL_SECONDS: &str = "30";
 
 /// 请求体上限：`Bytes` extractor 全量缓冲，默认仅 2MB，内嵌 base64 图片的 chat 请求会直接 413。
 /// 与后端 routes/mod.rs 的 BODY_LIMIT 保持一致，链路两侧都放开。
@@ -29,14 +33,52 @@ struct Backend {
 #[derive(Clone)]
 struct ProxyState {
     client: reqwest::Client,
+    manager: Arc<SlotManager>,
 }
 
 pub async fn serve() -> anyhow::Result<()> {
     let host = env_or("LLM_PROVIDER_ROUTER_PROXY_HOST", "127.0.0.1");
     let port: u16 = env_or("LLM_PROVIDER_ROUTER_PROXY_PORT", "8789").parse()?;
+    let client = reqwest::Client::builder().build()?;
+    // 槽生命周期管理：由流量入口（front proxy）统一管理蓝/绿槽。
+    // 非活跃槽连续无流量 idle_shutdown_secs 自动下线；活跃不在线时自动拉起。
+    let specs: Vec<SlotSpec> = configured_backends()
+        .values()
+        .map(|backend| SlotSpec {
+            slot: backend.slot.clone(),
+            base_url: backend.base_url.clone(),
+            service_name: format!("llm-provider-router-backend@{}.service", backend.slot),
+        })
+        .collect();
+    let idle_shutdown_secs: u64 = env_or(
+        "LLM_PROVIDER_ROUTER_IDLE_SHUTDOWN_SECONDS",
+        DEFAULT_IDLE_SHUTDOWN_SECONDS,
+    )
+    .parse()
+    .unwrap_or(900);
+    let check_interval = Duration::from_secs(
+        env_or(
+            "LLM_PROVIDER_ROUTER_SLOT_CHECK_INTERVAL_SECONDS",
+            DEFAULT_SLOT_CHECK_INTERVAL_SECONDS,
+        )
+        .parse()
+        .unwrap_or(30),
+    );
+    let auto_heal = env_or("LLM_PROVIDER_ROUTER_SLOT_AUTO_HEAL", "1") != "0";
+    let manager = Arc::new(SlotManager::new(
+        specs,
+        client.clone(),
+        idle_shutdown_secs,
+        check_interval,
+        auto_heal,
+    ));
     let state = ProxyState {
-        client: reqwest::Client::builder().build()?,
+        client,
+        manager: manager.clone(),
     };
+    // 独立后台任务：定期检查槽健康与闲置情况，执行自动下线/拉起
+    let manager_loop = manager.clone();
+    tokio::spawn(async move { manager_loop.run(read_active_slot).await });
     let app = Router::new()
         .route("/_proxy/health", get(proxy_health))
         .route("/_proxy/active/{slot}", post(set_active))
@@ -49,7 +91,7 @@ pub async fn serve() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn proxy_health() -> Response {
+async fn proxy_health(State(state): State<ProxyState>) -> Response {
     let active = read_active_slot();
     let mut probes = Vec::new();
     for backend in ordered_backends() {
@@ -66,11 +108,12 @@ async fn proxy_health() -> Response {
         "active_slot": active,
         "active_backend_file": active_backend_path().to_string_lossy(),
         "backends": probes,
+        "slot_management": state.manager.snapshot(&active).await,
     }))
     .into_response()
 }
 
-async fn set_active(Path(slot): Path<String>) -> Response {
+async fn set_active(State(state): State<ProxyState>, Path(slot): Path<String>) -> Response {
     if !configured_backends().contains_key(&slot) {
         return (
             StatusCode::BAD_REQUEST,
@@ -80,6 +123,12 @@ async fn set_active(Path(slot): Path<String>) -> Response {
     }
     match write_active_backend(&slot) {
         Ok(backend) => {
+            // 切到目标槽后立即尝试拉起（若此前已被 idle 下线），减少切换空窗
+            let manager = state.manager.clone();
+            let slot_name = slot.clone();
+            tokio::spawn(async move {
+                manager.ensure_running(&slot_name).await;
+            });
             Json(json!({ "ok": true, "active_slot": slot, "backend": backend.base_url }))
                 .into_response()
         }
@@ -104,6 +153,8 @@ async fn proxy(
         .unwrap_or(uri.path());
     let mut errors = Vec::new();
     for backend in ordered_backends() {
+        // 每次请求路由到某槽都刷新其最后流量时间（含 active 槽自身），供 idle 下线决策
+        state.manager.touch(&backend.slot).await;
         let target = format!(
             "{}{}",
             backend.base_url.trim_end_matches('/'),
