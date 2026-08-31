@@ -15,4 +15,5 @@ Personal tool project under `~/Developer/tools/`.
 - **切换后立即复检**:切换完成后必须立刻用 front-proxy 入口验证——`/health` 健康、`/api/config/token-prices`、`/api/config/v2/physical-models`、`/api/router/capabilities` 等核心 API 返回正常 JSON(而非 dashboard HTML fallback)。
 - **失败即回滚**:切换后任一检查失败,立即切回原 slot 恢复服务,再排查新版本问题;不得让服务停留在未验证/异常状态。
 - **禁止裸替换**:不得直接停旧进程/覆盖可执行文件后立即启动新版本来替换;始终走 hot-deploy 的 blue/green 验证流程。
-- **温备常驻,无 drain 等待**:`deploy` 切完并复检通过后**不停旧 slot**,旧 slot 继续常驻作温备。切换成功由复检在 ~5s 内确认;下次发版直接部署该温备 slot(`systemctl restart` 强制加载当前二进制)。需停某 slot 时手动 `systemctl --user stop llm-provider-router-backend@{slot}.service`。
+- **旧槽自动下线(由流量入口接管生命周期)**:`deploy` 切完并复检通过后**不停旧 slot**,旧 slot 继续运行(无 drain 等待)。切换后旧 slot 由 front-proxy 统一管理——连续无流量超过 `LLM_PROVIDER_ROUTER_IDLE_SHUTDOWN_SECONDS`(默认 900s=15min)后自动 `systemctl --user stop llm-provider-router-backend@{slot}.service` 下线;重新切回该 slot 时入口自动拉起。配置 `LLM_PROVIDER_ROUTER_IDLE_SHUTDOWN_SECONDS=0` 可禁用自动下线(回到永久常驻)。需手动停某 slot 仍可 `systemctl --user stop llm-provider-router-backend@{slot}.service`(入口不会自动拉起非活跃槽)。查看槽生命周期状态:`python3 bin/hot-deploy-router.py status`(含 idle_for / last_action)或 `curl http://127.0.0.1:8789/_proxy/health` 的 `slot_management` 字段。
+- **front-proxy 需先于 backend 升级**:槽生命周期管理由 front-proxy 执行,升级本功能后必须先重启 front-proxy 服务(加载新 front-proxy 二进制)再走 deploy,否则旧 front-proxy 无管理能力、旧槽不会自动下线。
