@@ -347,6 +347,9 @@ pub(crate) struct ResponsesSse {
     usage: Option<Value>,
     emitted_created: bool,
     sequence: u64,
+    /// 上游给出的 finish_reason 原值（如 stop / length / tool_calls），
+    /// 断流时为空；供收尾选择 incomplete_details 语义。
+    finish_reason: Option<String>,
 }
 
 impl ResponsesSse {
@@ -357,7 +360,11 @@ impl ResponsesSse {
             response_id: translate::next_id("resp"),
             created_at: translate::now_ts(),
             model: model.to_string(),
-            echo: if echo.is_null() { json!({}) } else { echo.clone() },
+            echo: if echo.is_null() {
+                json!({})
+            } else {
+                echo.clone()
+            },
             output_index: 0,
             message: None,
             reasoning: None,
@@ -365,6 +372,7 @@ impl ResponsesSse {
             usage: None,
             emitted_created: false,
             sequence: 0,
+            finish_reason: None,
         }
     }
 
@@ -419,7 +427,13 @@ impl ResponsesSse {
                 self.feed_tool_call(tc, &mut out);
             }
         }
-        // finish_reason
+        // finish_reason：追踪上游结束信号。标准上游会在流尾的 choice 上带
+        // finish_reason（stop / length / tool_calls）；缺失即代表流未正常结束。
+        if let Some(fr) = choice.get("finish_reason").and_then(Value::as_str) {
+            if !fr.is_empty() {
+                self.finish_reason = Some(fr.to_string());
+            }
+        }
 
         out
     }
@@ -551,12 +565,25 @@ impl ResponsesSse {
         items.sort_by_key(|(idx, _)| *idx);
         let output: Vec<Value> = items.into_iter().map(|(_, v)| v).collect();
         let history = self.history_from_output(&output);
-        let response = self.response_with("completed", output);
-        self.push_seq(
-            &mut out,
-            "response.completed",
-            json!({ "response": response }),
-        );
+        // 收尾状态判定：上游给出正常结束信号（stop/tool_calls）才算 completed；
+        // 明确 length 截断标记为 incomplete/max_output_tokens；流中途断（无
+        // finish_reason）标记为 incomplete/interrupted。这样客户端（pi-ai
+        // mapStopReason: "incomplete" -> "length"）能感知输出不完整，走
+        // max-tokens/重试路径，而不是把半截输出当成正常 stop。
+        let (status, incomplete_details) = match self.finish_reason.as_deref() {
+            Some("stop") | Some("tool_calls") => ("completed", Value::Null),
+            Some("length") => ("incomplete", json!({ "reason": "max_output_tokens" })),
+            // 无 finish_reason：上游断流/异常 EOF（含完全空流）
+            _ => ("incomplete", json!({ "reason": "interrupted" })),
+        };
+        let mut response = self.response_with(status, output);
+        response["incomplete_details"] = incomplete_details;
+        let event = if status == "incomplete" {
+            "response.incomplete"
+        } else {
+            "response.completed"
+        };
+        self.push_seq(&mut out, event, json!({ "response": response }));
         out.push_str("data: [DONE]\n\n");
         (out, (self.response_id.clone(), history, response))
     }
@@ -804,7 +831,10 @@ impl ResponsesSse {
         let metadata = echo.get("metadata").cloned().unwrap_or(Value::Null);
         let temperature = echo.get("temperature").cloned().unwrap_or(Value::Null);
         let top_p = echo.get("top_p").cloned().unwrap_or(Value::Null);
-        let max_output_tokens = echo.get("max_output_tokens").cloned().unwrap_or(Value::Null);
+        let max_output_tokens = echo
+            .get("max_output_tokens")
+            .cloned()
+            .unwrap_or(Value::Null);
         let parallel_tool_calls = echo
             .get("parallel_tool_calls")
             .cloned()
@@ -1094,8 +1124,65 @@ mod tests {
         let sse = ResponsesSse::with_echo("m", &json!({}));
         let (out, (_resp_id, history, _response)) = sse.finish();
         assert!(out.contains("response.created"));
-        assert!(out.contains("response.completed"));
+        assert!(out.contains("response.incomplete"));
+        assert!(!out.contains("response.completed"));
         assert!(history.is_empty());
+    }
+
+    /// 上游流中途结束（从未给出 finish_reason）时，收尾必须下发
+    /// response.incomplete（reason=interrupted）而不是 response.completed，
+    /// 让客户端感知输出不完整，而不是把半截输出当成正常 stop。
+    #[test]
+    fn stream_without_finish_reason_emits_incomplete_interrupted() {
+        let mut sse = ResponsesSse::with_echo("m", &json!({}));
+        let mut collected = String::new();
+        // 只吐出部分推理内容，然后流直接 EOF（无 finish_reason）
+        collected.push_str(&sse.feed(&json!({
+            "choices": [{ "index": 0, "delta": { "role": "assistant", "reasoning_content": "half" }, "finish_reason": null }]
+        })));
+        collected.push_str(&sse.feed(&json!({
+            "choices": [{ "index": 0, "delta": { "reasoning_content": "-thought" }, "finish_reason": null }]
+        })));
+        let (finish_sse, (_, _, response)) = sse.finish();
+        collected.push_str(&finish_sse);
+
+        assert!(!collected.contains("response.completed"));
+        let incomplete = last_event_json(&collected, "response.incomplete");
+        assert_eq!(incomplete["response"]["status"], "incomplete");
+        assert_eq!(
+            incomplete["response"]["incomplete_details"]["reason"],
+            "interrupted"
+        );
+        // 半截推理内容仍应保留（客户端据此可重试或提示）
+        let output = incomplete["response"]["output"].as_array().unwrap();
+        assert_eq!(output[0]["type"], "reasoning");
+        assert_eq!(output[0]["summary"][0]["text"], "half-thought");
+        assert_eq!(response["status"], "incomplete");
+    }
+
+    /// 上游显式以 finish_reason=length 截断时，标记为 incomplete/max_output_tokens
+    /// （对应真实 Responses API 的 max_output_tokens 截断语义）。
+    #[test]
+    fn stream_with_length_finish_emits_incomplete_max_output_tokens() {
+        let mut sse = ResponsesSse::with_echo("m", &json!({}));
+        let mut collected = String::new();
+        collected.push_str(&sse.feed(&json!({
+            "choices": [{ "index": 0, "delta": { "role": "assistant", "content": "partial" }, "finish_reason": null }]
+        })));
+        collected.push_str(&sse.feed(&json!({
+            "choices": [{ "index": 0, "delta": {}, "finish_reason": "length" }]
+        })));
+        let (finish_sse, (_, _, _response)) = sse.finish();
+        collected.push_str(&finish_sse);
+
+        assert!(!collected.contains("response.completed"));
+        let incomplete = last_event_json(&collected, "response.incomplete");
+        assert_eq!(incomplete["response"]["status"], "incomplete");
+        assert_eq!(
+            incomplete["response"]["incomplete_details"]["reason"],
+            "max_output_tokens"
+        );
+        assert_eq!(incomplete["response"]["output_text"], "partial");
     }
 
     /// 回归：alias 内所有 key 都因可重试状态（429）失败时，流尾必须 yield 一个
@@ -1217,6 +1304,144 @@ mod tests {
             "expected rate-limit wording in error, got: {text}"
         );
         // 只发生了一次真实上游请求（failover 未空转重试同一 key）。
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    /// 上游返回 200 但流中途断开（只发部分 reasoning delta，无 finish_reason）时，
+    /// 翻译层收尾必须下发 response.incomplete（reason=interrupted）而非
+    /// response.completed——否则客户端（pi-ai mapStopReason: "completed" -> "stop"）
+    /// 会把半截输出当成正常结束，用户只看到思考停住且无任何报错。
+    #[tokio::test]
+    async fn upstream_truncated_stream_emits_response_incomplete() {
+        use crate::app::AppState;
+        use crate::config::{KeyRef, ModelAlias, RetryPolicy, Settings};
+        use axum::body::to_bytes;
+        use axum::routing::post;
+        use axum::Router;
+        use futures_util::stream::once;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        // 本地 mock 上游：返回 200 + 一段只含部分 reasoning 的 SSE 流，然后正常 EOF
+        //（模拟 ark 中途断流：没有 finish_reason、没有 [DONE]）。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_server = hits.clone();
+        let app = Router::new().route(
+            "/chat/completions",
+            post(move || {
+                let hits = hits_for_server.clone();
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    let sse = concat!(
+                        "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",",
+                        "\"reasoning_content\":\"think\"},\"finish_reason\":null}]}\n\n",
+                        "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"ing\"},",
+                        "\"finish_reason\":null}]}\n\n",
+                    );
+                    (
+                        axum::http::StatusCode::OK,
+                        [
+                            (axum::http::header::CONTENT_TYPE, "text/event-stream"),
+                        ],
+                        axum::body::Body::from_stream(once(async move {
+                            Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(sse))
+                        })),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        std::env::set_var("DSH_TEST_ROUTER_TRUNC_KEY", "test-key-value");
+
+        let settings = Settings {
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            session_ttl_seconds: 3600.0,
+            monthly_quota_fallback_seconds: 86400.0,
+            five_hour_quota_fallback_seconds: 5400.0,
+            request_timeout_seconds: 30.0,
+            local_bearer_token: None,
+            usage_db_path: ":memory:".to_string(),
+            state_db_path: ":memory:".to_string(),
+            weight_config_path: ":memory:".to_string(),
+            provider_config_path: ":memory:".to_string(),
+            custom_key_config_path: ":memory:".to_string(),
+            api_keys_path: ":memory:".to_string(),
+            token_price_config_path: ":memory:".to_string(),
+            model_alias_config_path: ":memory:".to_string(),
+            search_providers_path: ":memory:".to_string(),
+            provider_models_path: ":memory:".to_string(),
+            auth_invalid_freeze_seconds: 86400.0,
+            v2_config_enabled: false,
+            diag_dir: ":memory:".to_string(),
+            diag_max_bytes: 10 * 1024 * 1024,
+            diag_max_files: 0,
+            diag_sample_every: 1,
+            env_file_path: None,
+        };
+        let app_state = AppState::new(settings).unwrap();
+
+        // 单 key、translate 模式（responses_base_url=None）。
+        let alias = ModelAlias::new(
+            "mock/test-model",
+            "openai/mock-test-model",
+            &format!("http://{addr}"),
+            vec![KeyRef::with_provider(
+                "test-key",
+                "DSH_TEST_ROUTER_TRUNC_KEY",
+                1,
+                "mock-provider",
+                "subscription",
+            )],
+            Some(RetryPolicy::new(
+                300,
+                5.0,
+                &[401, 402, 429, 500, 502, 503, 504],
+            )),
+        );
+
+        let response = stream_responses_route(
+            app_state,
+            vec![alias],
+            None,
+            json!({ "model": "mock/test-model", "input": "hi", "stream": true }),
+            Some(json!({
+                "model": "mock/test-model",
+                "messages": [{ "role": "user", "content": "hi" }],
+                "stream": true,
+            })),
+        )
+        .await;
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let text = String::from_utf8_lossy(&body);
+        server.abort();
+
+        // 核心断言：翻译层把上游断流收尾成 response.incomplete（而非 completed），
+        // 且带 reason=interrupted；半截 reasoning 内容保留。
+        assert!(
+            text.contains("response.incomplete"),
+            "expected response.incomplete for truncated upstream, got: {text}"
+        );
+        assert!(
+            !text.contains("response.completed"),
+            "must not emit response.completed for truncated upstream, got: {text}"
+        );
+        assert!(
+            text.contains("\"reason\":\"interrupted\"")
+                || text.contains("\"reason\": \"interrupted\""),
+            "expected interrupted reason, got: {text}"
+        );
+        assert!(
+            text.contains("thinking"),
+            "partial reasoning content should be preserved, got: {text}"
+        );
+        // 只发生了一次真实上游请求。
         assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 }
