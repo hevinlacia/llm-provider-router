@@ -144,7 +144,8 @@ fn virtual_candidate(
         retry,
     )
     .with_params(lm_params_default(cfg, alias))
-    .with_responses_base_url(prov.responses_base_url.clone());
+    .with_responses_base_url(prov.responses_base_url.clone())
+    .with_anthropic_base_url(prov.anthropic_base_url.clone());
     // 虚拟映射无独立物理记录，尝试从 models 表按 provider+upstream 复用窗口声明
     if let Some(pm) = cfg
         .models
@@ -203,7 +204,8 @@ fn physical_candidate(
     )
     .with_params(merge_params(&lm_params_default(cfg, alias), &pm.params))
     .with_windows(pm.context_window, pm.max_output_tokens)
-    .with_responses_base_url(prov.responses_base_url.clone());
+    .with_responses_base_url(prov.responses_base_url.clone())
+    .with_anthropic_base_url(prov.anthropic_base_url.clone());
 
     Some(TargetCandidate {
         model,
