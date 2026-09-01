@@ -114,7 +114,7 @@ provider can configure three kinds of addresses:
 |---|---|---|
 | `base_url` | Chat Completions API | 必填之一；Router 内部翻译链路（Responses→chat→Responses）的落点；模型名探测统一走 `{base_url}/models`（未配置时回退 `responses_base_url`） |
 | `responses_base_url` | Responses API | 可选；配置了 = 供应商原生支持 Responses，`/v1/responses` 请求**原样透传**到 `{responses_base_url}/responses`（只改写 `model` 名） |
-| `anthropic_base_url` | Anthropic API | 可选；历史遗留字段（能力探测已移除，不再参与探测） |
+| `anthropic_base_url` | Anthropic API | 可选；供应商提供 Anthropic 兼容 API 时填写（预留字段） |
 
 ### 透传 vs 翻译
 
