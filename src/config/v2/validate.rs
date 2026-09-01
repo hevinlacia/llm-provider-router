@@ -2,7 +2,7 @@ use super::types::V2Config;
 use anyhow::anyhow;
 pub fn validate(cfg: &V2Config) -> anyhow::Result<()> {
     for (provider_name, provider) in &cfg.providers {
-        // 三类地址至少填一种：base_url(Chat) / responses_base_url(Responses) / anthropic_base_url(Anthropic)
+        // 三类地址至少填一种：Chat Completions API(base_url) / Responses API(responses_base_url) / Anthropic API(anthropic_base_url)
         let has_any_url = !provider.base_url.trim().is_empty()
             || provider
                 .responses_base_url
@@ -14,7 +14,7 @@ pub fn validate(cfg: &V2Config) -> anyhow::Result<()> {
                 .is_some_and(|s| !s.trim().is_empty());
         if !has_any_url {
             return Err(anyhow!(
-                "provider {provider_name}: at least one of base_url / responses_base_url / anthropic_base_url must be set"
+                "provider {provider_name}: at least one of Chat Completions API / Responses API / Anthropic API base URL must be set"
             ));
         }
         for (key_name, key) in &provider.keys {

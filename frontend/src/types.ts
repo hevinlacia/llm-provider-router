@@ -153,17 +153,18 @@ export type V2KeyStatus = {
 };
 
 export type V2ProviderStatus = {
+  /** Chat Completions API 基础地址 */
   base_url: string;
   /** Responses API 基础地址（可选）：供应商原生支持 OpenAI Responses API 时配置，/v1/responses 透传落点 */
   responses_base_url?: string | null;
-  /** Anthropic 兼容 API 端点（可选）：供应商同时提供 Anthropic 协议时配置，能力探测优先走它 */
+  /** Anthropic 兼容 API 端点（可选，预留） */
   anthropic_base_url?: string | null;
   key_total: number;
   key_enabled: number;
   key_frozen: number;
   available: boolean;
   keys: Record<string, V2KeyStatus>;
-  /** 供应商详情（上游探测）模型列表 */
+  /** 供应商模型名列表（来自 Chat Completions API 的 /models 探测） */
   models?: string[];
 };
 
@@ -180,18 +181,7 @@ export type V2PhysicalModel = {
   thinking_format?: string | null;
 };
 
-/** 物理模型能力探测结果（POST /api/config/v2/physical-models/probe） */
-export type ProbeResult = {
-  ok: boolean;
-  provider: string;
-  upstream: string;
-  context_window: number | null;
-  max_output_tokens: number | null;
-  supports_image: boolean | null;
-  notes: string[];
-};
-
-/** 供应商模型配置面板：物理模型完整能力参数补丁 */
+/** 物理模型能力参数补丁 */
 export type PhysicalModelPatch = {
   model: string;
   context_window?: number | null;

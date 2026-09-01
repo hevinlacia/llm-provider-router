@@ -66,8 +66,7 @@ pub struct V2Provider {
     /// 未配置 = 该供应商不支持 Responses，由 Router 翻译成 chat completions 走 `base_url`。
     #[serde(default)]
     pub responses_base_url: Option<String>,
-    /// Anthropic 兼容 API 端点（可选）。供应商同时提供 Anthropic 协议时配置，
-    /// 模型能力探测优先走 Anthropic `/v1/models`（返回精确 context_window，零成本）。
+    /// Anthropic 兼容 API 端点（可选）。供应商同时提供 Anthropic 协议时配置（预留）。
     #[serde(default)]
     pub anthropic_base_url: Option<String>,
     #[serde(default)]
