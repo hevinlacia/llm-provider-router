@@ -1,4 +1,29 @@
 {
+  "aixhan/gpt-5.4": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "aixhan/gpt-5.5": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "aixhan/gpt-5.6-sol": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "aixhan/gpt-5.6-terra": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "aixhan/grok-4.6": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
   "ark/deepseek-v4-flash-260801": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
@@ -14,6 +39,11 @@
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
+  "ark/glm-5.3-flash": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
   "ark/minimax-m3": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
@@ -25,31 +55,6 @@
     "output_per_million": 0.0
   },
   "deepseek-official/deepseek-v4-pro": {
-    "input_uncached_per_million": 0.0,
-    "input_cached_per_million": 0.0,
-    "output_per_million": 0.0
-  },
-  "openai-relay/gpt-5.4": {
-    "input_uncached_per_million": 0.0,
-    "input_cached_per_million": 0.0,
-    "output_per_million": 0.0
-  },
-  "openai-relay/gpt-5.5": {
-    "input_uncached_per_million": 0.0,
-    "input_cached_per_million": 0.0,
-    "output_per_million": 0.0
-  },
-  "openai-relay/gpt-5.6-sol": {
-    "input_uncached_per_million": 0.0,
-    "input_cached_per_million": 0.0,
-    "output_per_million": 0.0
-  },
-  "openai-relay/gpt-5.6-terra": {
-    "input_uncached_per_million": 0.0,
-    "input_cached_per_million": 0.0,
-    "output_per_million": 0.0
-  },
-  "openai-relay/grok-4.6": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
