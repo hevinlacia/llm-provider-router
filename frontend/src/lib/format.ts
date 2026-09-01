@@ -74,13 +74,3 @@ export function buildTargetCandidates(config: V2Status, excludePool: string | nu
     { group: TARGET_GROUP_VIRTUAL, items: Object.keys(config.virtual_models ?? {}) },
   ];
 }
-
-export function isKnownTarget(model: string, groups: TargetCandidateGroup[]): boolean {
-  const physical = groups.find((g) => g.group === TARGET_GROUP_PHYSICAL)?.items ?? [];
-  const pools = groups.find((g) => g.group === TARGET_GROUP_POOL)?.items ?? [];
-  const virtuals = groups.find((g) => g.group === TARGET_GROUP_VIRTUAL)?.items ?? [];
-  if (physical.includes(model) || pools.includes(model) || virtuals.includes(model)) return true;
-  const slash = model.indexOf('/');
-  if (slash > 0 && virtuals.includes(model.slice(slash + 1))) return true;
-  return false;
-}

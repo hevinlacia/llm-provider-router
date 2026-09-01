@@ -415,7 +415,8 @@ impl RouterState {
         })
     }
 
-    /// v2 供应商探测信息：base_url + anthropic_base_url + enabled key 的 env_var 列表（用于拉取 /models 或能力探测）。
+    /// v2 供应商探测信息：Chat Completions API 地址（base_url）+ Responses API 地址 + enabled key 的 env_var 列表（用于拉取模型名列表）。
+    /// 探测统一走 Chat Completions API：模型名拉取优先 base_url，未配置时回退 responses_base_url。
     pub fn v2_provider_probe(&self, name: &str) -> Option<(String, Option<String>, Vec<String>)> {
         let cfg = self.v2.as_ref()?;
         let provider = cfg.providers.get(name)?;
@@ -434,7 +435,7 @@ impl RouterState {
         }
         Some((
             provider.base_url.clone(),
-            provider.anthropic_base_url.clone(),
+            provider.responses_base_url.clone(),
             env_vars,
         ))
     }
@@ -453,12 +454,12 @@ impl RouterState {
         if new_name.trim().is_empty() {
             anyhow::bail!("provider name must not be empty");
         }
-        // 三类地址至少填一种：base_url(Chat) / responses_base_url(Responses) / anthropic_base_url(Anthropic)
+        // 三类地址至少填一种：Chat Completions API(base_url) / Responses API(responses_base_url) / Anthropic API(anthropic_base_url)
         if base_url.trim().is_empty()
             && responses_base_url.as_deref().map(str::trim).unwrap_or("").is_empty()
             && anthropic_base_url.as_deref().map(str::trim).unwrap_or("").is_empty()
         {
-            anyhow::bail!("at least one of base_url / responses_base_url / anthropic_base_url must not be empty");
+            anyhow::bail!("at least one of Chat Completions API / Responses API / Anthropic API base URL must not be empty");
         }
         let mut providers = config_v2::load_providers_file(config_v2::V2_PROVIDERS_PATH)?;
         let renamed = old_name != new_name;
@@ -506,12 +507,12 @@ impl RouterState {
         if name.is_empty() {
             anyhow::bail!("provider name must not be empty");
         }
-        // 三类地址至少填一种：base_url(Chat) / responses_base_url(Responses) / anthropic_base_url(Anthropic)
+        // 三类地址至少填一种：Chat Completions API(base_url) / Responses API(responses_base_url) / Anthropic API(anthropic_base_url)
         if base_url.trim().is_empty()
             && responses_base_url.as_deref().map(str::trim).unwrap_or("").is_empty()
             && anthropic_base_url.as_deref().map(str::trim).unwrap_or("").is_empty()
         {
-            anyhow::bail!("at least one of base_url / responses_base_url / anthropic_base_url must not be empty");
+            anyhow::bail!("at least one of Chat Completions API / Responses API / Anthropic API base URL must not be empty");
         }
         let mut providers = config_v2::load_providers_file(config_v2::V2_PROVIDERS_PATH)?;
         if providers.providers.contains_key(name) {

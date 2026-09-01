@@ -487,7 +487,7 @@ fn validate_rejects_provider_with_no_url() {
     let v = write_temp(&dir, "virtual.json", r#"{"virtual_models":{}}"#);
     let err = load_v2_config_from(&p, &m, &l, &v).unwrap_err();
     assert!(
-        err.to_string().contains("at least one of base_url"),
+        err.to_string().contains("at least one of Chat Completions API"),
         "错误信息应说明至少填一种地址, got: {err}"
     );
 }

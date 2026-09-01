@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api';
 import { formatWindow } from '../../lib/format';
-import type { PhysicalModelPatch, ProbeResult, TokenPrice, TokenPriceConfig, V2PhysicalModel, V2Status } from '../../types';
+import type { PhysicalModelPatch, TokenPrice, TokenPriceConfig, V2PhysicalModel, V2Status } from '../../types';
 
 const STANDARD_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 
@@ -136,8 +136,6 @@ export function SupplierModelConfigPanel({ v2, tokenPrices, onSaved, onError }: 
   const [selectedProvider, setSelectedProvider] = useState<string>('__all__');
   const [editing, setEditing] = useState<V2PhysicalModel | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [probingKey, setProbingKey] = useState<string | null>(null);
-  const [probeResult, setProbeResult] = useState<ProbeResult | null>(null);
 
   useEffect(() => {
     if (providers.length && selectedProvider !== '__all__' && !providers.includes(selectedProvider)) {
@@ -201,21 +199,6 @@ export function SupplierModelConfigPanel({ v2, tokenPrices, onSaved, onError }: 
     }
   }
 
-  async function probe(row: { key: string; upstream: string; provider: string; model?: V2PhysicalModel }) {
-    // 探测会向上游发 3 次真实请求（上下文 128K 输入可能产生少量费用），需确认
-    if (!window.confirm(`Probe \`${row.upstream}\` 的能力边界？\n\n将向 ${row.provider} 发送 3 次探测请求：\n- 上下文：128K tokens 输入（若窗口更大会产生输入费用）\n- 最大输出：max_tokens=200K\n- 图片：1×1 图片\n\n每次探测固定 1 个请求，不做重试。`)) return;
-    setProbingKey(row.key);
-    try {
-      const res = await api.probePhysicalModel(row.provider, row.upstream);
-      setProbeResult(res);
-      setEditing(row.model ?? { id: `${row.provider}/${row.upstream}`, provider: row.provider, upstream_model: row.upstream, params: {}, context_window: null, max_output_tokens: null, supports_image: null });
-    } catch (err) {
-      onError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setProbingKey(null);
-    }
-  }
-
   return <>
     <section className="card settings-section thinking-section">
       <div className="section-title settings-title thinking-title"><div><h2>Supplier Model Config</h2><p className="muted">按供应商配置物理模型能力参数（上下文 / 输出 / 图片 / 思考档位映射 / Token 价格）。逻辑模型自动取池内最低参数，不再单独配置。</p></div><span className="muted small-text config-path">config/models.json</span></div>
@@ -244,20 +227,19 @@ export function SupplierModelConfigPanel({ v2, tokenPrices, onSaved, onError }: 
             <td>{m?.supports_image ? <span className="status ok">image</span> : m ? <span className="muted small-text">text</span> : <span className="muted small-text">—</span>}</td>
             <td className="muted small-text thinking-summary-cell">{thinkingSummary(map)}</td>
             <td className="muted small-text thinking-summary-cell">{priceSummary(price)}</td>
-            <td><div className="row-actions"><button className="secondary compact-button" disabled={probingKey === row.key} onClick={() => void probe({ key: row.key, upstream: row.upstream, provider: m?.provider ?? (selectedProvider === '__all__' ? '' : selectedProvider), model: m })} title="探测上下文/输出/图片能力边界（向上游发固定 3 个请求）">{probingKey === row.key ? 'Probing…' : 'Probe'}</button><button className="secondary compact-button" onClick={() => setEditing(m ?? { id: `${selectedProvider}/${row.upstream}`, provider: selectedProvider, upstream_model: row.upstream, params: {}, context_window: null, max_output_tokens: null, supports_image: null })}>{m ? 'Configure' : 'Register & Configure'}</button></div></td>
+            <td><div className="row-actions"><button className="secondary compact-button" onClick={() => setEditing(m ?? { id: `${selectedProvider}/${row.upstream}`, provider: selectedProvider, upstream_model: row.upstream, params: {}, context_window: null, max_output_tokens: null, supports_image: null })}>{m ? 'Configure' : 'Register & Configure'}</button></div></td>
           </tr>;
         })}{!rows.length && <tr><td colSpan={7} className="muted">{selectedProvider === '__all__' ? 'No physical models configured yet.' : `No models for supplier \`${selectedProvider}\` yet. Click Refresh to pull from upstream, or register a model via Model Pools.`}</td></tr>}</tbody>
       </table></div>
       <p className="muted small-text thinking-tip">Tip: 上下文/输出在 models.json 上声明后，Context Negotiation 会把逻辑模型（含模型池）的对外能力按「池内最低参数」聚合。图片支持参与输入模态协商。Token 价格随配置弹窗一并保存。</p>
     </section>
-    {editing && <ModelConfigModal model={editing} prices={prices} probeResult={probeResult} onCancel={() => setEditing(null)} onSaved={async (draft) => { await patchModel(editing, draft); setEditing(null); }} onError={onError} />}
+    {editing && <ModelConfigModal model={editing} prices={prices} onCancel={() => setEditing(null)} onSaved={async (draft) => { await patchModel(editing, draft); setEditing(null); }} onError={onError} />}
   </>;
 }
 
-function ModelConfigModal({ model, prices, probeResult, onCancel, onSaved, onError }: {
+function ModelConfigModal({ model, prices, onCancel, onSaved, onError }: {
   model: V2PhysicalModel;
   prices: TokenPrice[];
-  probeResult: ProbeResult | null;
   onCancel: () => void;
   onSaved: (draft: Draft) => void | Promise<void>;
   onError: (value: string) => void;
@@ -266,16 +248,6 @@ function ModelConfigModal({ model, prices, probeResult, onCancel, onSaved, onErr
   const [presets, setPresets] = useState<Preset[]>(() => loadPresets());
   const [saving, setSaving] = useState(false);
 
-  // 探测结果填充：仅当探测到精确值时覆盖 draft（“≥ 阈值”不写，避免误导）
-  useEffect(() => {
-    if (!probeResult) return;
-    setDraft((prev) => ({
-      ...prev,
-      context_window: probeResult.context_window ?? prev.context_window,
-      max_output_tokens: probeResult.max_output_tokens ?? prev.max_output_tokens,
-      supports_image: probeResult.supports_image ?? prev.supports_image,
-    }));
-  }, [probeResult]);
   function update(level: string, raw: string) {
     const nextMap = { ...(draft.thinking_level_map ?? {}) } as Record<string, string | null>;
     const trimmed = raw.trim();
@@ -338,7 +310,6 @@ function ModelConfigModal({ model, prices, probeResult, onCancel, onSaved, onErr
       ))}</div>
     </div>}
     <h4>能力参数</h4>
-    {probeResult && probeResult.notes.length > 0 && <div className="probe-notes"><div className="muted small-text">🔍 探测结果：</div>{probeResult.notes.map((n) => <div key={n} className="muted small-text">· {n}</div>)}</div>}
     <div className="modal-config-grid">
       <div className="field"><label>Context Window (tokens)</label><input type="number" min="0" step="1000" value={draft.context_window ?? ''} placeholder="— (infer)" onChange={(e) => setDraft({ ...draft, context_window: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) || 0 })} /></div>
       <div className="field"><label>Max Output (tokens)</label><input type="number" min="0" step="1000" value={draft.max_output_tokens ?? ''} placeholder="— (infer)" onChange={(e) => setDraft({ ...draft, max_output_tokens: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) || 0 })} /></div>
