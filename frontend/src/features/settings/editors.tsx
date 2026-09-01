@@ -8,6 +8,7 @@ type ProviderDraft = {
   name: string;
   base_url: string;
   responses_base_url?: string | null;
+  anthropic_base_url?: string | null;
   keys: Record<string, { env_var: string; weight: number; billing_type: string; enabled: boolean }>;
 };
 
@@ -22,6 +23,7 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
   const [name, setName] = useState(providerName);
   const [baseUrl, setBaseUrl] = useState(provider.base_url);
   const [responsesBaseUrl, setResponsesBaseUrl] = useState(provider.responses_base_url ?? '');
+  const [anthropicBaseUrl, setAnthropicBaseUrl] = useState(provider.anthropic_base_url ?? '');
   const [keys, setKeys] = useState<KeyDraft[]>(() =>
     Object.entries(provider.keys).map(([k, v]) => ({ name: k, env_var: v.env_var, weight: v.weight, billing_type: v.billing_type, enabled: v.enabled })),
   );
@@ -38,8 +40,8 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
   }
   async function save() {
     if (!name.trim()) { onError('Provider name must not be empty'); return; }
-    if (!baseUrl.trim() && !responsesBaseUrl.trim()) {
-      onError('At least one of Chat Completions API / Responses API Base URL must not be empty');
+    if (!baseUrl.trim() && !responsesBaseUrl.trim() && !anthropicBaseUrl.trim()) {
+      onError('At least one of Chat Completions API / Responses API / Anthropic API must not be empty');
       return;
     }
     const keyMap: ProviderDraft['keys'] = {};
@@ -54,9 +56,9 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
     }
     try {
       if (isNew) {
-        onSaved(await api.createV2Provider({ name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, keys: keyMap }));
+        onSaved(await api.createV2Provider({ name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, anthropic_base_url: anthropicBaseUrl.trim() || null, keys: keyMap }));
       } else {
-        onSaved(await api.updateV2Provider(providerName, { name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, keys: keyMap }));
+        onSaved(await api.updateV2Provider(providerName, { name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, anthropic_base_url: anthropicBaseUrl.trim() || null, keys: keyMap }));
       }
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
@@ -66,7 +68,8 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
     <h3>{isNew ? 'Add Provider' : `Edit Provider: ${providerName}`}</h3>
     <div className="field"><label>Name</label><input value={name} onChange={(event) => setName(event.target.value)} /></div>
     <div className="field"><label>Chat Completions API</label><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" /></div>
-    <div className="field"><label>Responses API Base URL <span className="muted small-text">（可选）供应商原生支持 OpenAI Responses API 时填写；填写后 /v1/responses 请求将透传到 {`{responses_base_url}/responses`}，未填写则由 Router 翻译成 chat completions 走上方地址</span></label><input value={responsesBaseUrl} onChange={(event) => setResponsesBaseUrl(event.target.value)} placeholder="https://api.example.com/v1（留空则翻译）" /></div>
+    <div className="field"><label>Responses API</label><input value={responsesBaseUrl} onChange={(event) => setResponsesBaseUrl(event.target.value)} placeholder="https://api.example.com/v1（留空则翻译）" /></div>
+    <div className="field"><label>Anthropic API</label><input value={anthropicBaseUrl} onChange={(event) => setAnthropicBaseUrl(event.target.value)} placeholder="https://api.anthropic.com" /></div>
     <h4>Keys</h4>
     <div className="table-wrap"><table><thead><tr><th>Key</th><th>Env Var</th><th>Weight</th><th>Billing</th><th>Enabled</th><th></th></tr></thead><tbody>
       {keys.map((k, i) => <tr key={i}><td><input value={k.name} onChange={(event) => updateKey(i, { name: event.target.value })} /></td><td><input className="env-input" value={k.env_var} onChange={(event) => updateKey(i, { env_var: event.target.value })} /></td><td><input className="weight-input" type="number" min="0" step="1" value={k.weight} onChange={(event) => updateKey(i, { weight: Number(event.target.value) || 0 })} /></td><td><select value={k.billing_type} onChange={(event) => updateKey(i, { billing_type: event.target.value })}><option value="subscription">subscription</option><option value="payg">payg</option></select></td><td><input type="checkbox" checked={k.enabled} onChange={(event) => updateKey(i, { enabled: event.target.checked })} /></td><td><button className="secondary" onClick={() => removeKey(i)}>Delete</button></td></tr>)}
