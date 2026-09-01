@@ -1,0 +1,41 @@
+src/config.rs
+  bc36056a78dfff68 131-134,157,200-208
+frontend/src/features/settings/supplierModels.tsx
+  bc36056a78dfff68 149,154-156,181,185,192,194-198,201,203
+src/features/anthropic/stream.rs
+  bc36056a78dfff68 1-115
+src/features/anthropic/translate.rs
+  bc36056a78dfff68 1-4,6-125,127-167,169-448,450-866,869-907,909-920
+src/routes/mod.rs
+  bc36056a78dfff68 12,145
+README.md
+  bc36056a78dfff68 101-102,118-138
+src/config/v2/fold.rs
+  bc36056a78dfff68 75
+src/routes/responses.rs
+  bc36056a78dfff68 118-122,124-125,143-176,178,217,496,500
+src/routes/messages.rs
+  bc36056a78dfff68 1-41,43-57,59-62,64-65,67-153,155-165,167,173-274,278-280,287,292-302,304-306,308,310-403,405-447,450-522,524-560,562-581,583-588,590-600,602,604-612,614-634
+src/features/anthropic/mod.rs
+  bc36056a78dfff68 1-61,63-65,67-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "356a182f202072b7cfe005a9cbebe439fc3b2434",
+  "prompts": {
+    "bc36056a78dfff68": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a05c23-6b4e-71c2-b456-1f8747f20543",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 1822,
+      "total_deletions": 110,
+      "accepted_lines": 1803,
+      "overriden_lines": 38
+    }
+  }
+}
