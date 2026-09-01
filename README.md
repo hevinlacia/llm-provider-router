@@ -98,7 +98,8 @@ npm run build
 - `GET /v1/models` — OpenAI-compatible model list (enriched with `context_window`/`max_output_tokens` for dynamic context negotiation).
 - `GET /api/router/capabilities` — dynamic context negotiation view: per logical model `effective: {contextWindow,maxTokens}` (conservative min across available physical targets) + per-target windows/availability.
 - `POST /v1/chat/completions` — OpenAI-compatible chat completions (non-streaming responses include `x-llm-router-*` headers for per-request precise window; streaming includes conservative hint), streaming and non-streaming.
-- `POST /v1/responses` — OpenAI **Responses API** entry (the newest API). Per provider it either **passes through** to a native Responses upstream or **translates** to/from chat completions (see [Responses API Support](#responses-api-support)). Non-streaming JSON and streaming SSE (Responses `response.*` events) are both supported.
+- `POST /v1/messages` — **Anthropic Messages API** entry（对外两种 API 之一）。Per provider it either **passes through** to a native Anthropic upstream or **translates** via the Responses machinery (see [Anthropic API Support](#anthropic-api-support)). Non-streaming JSON and streaming SSE（Anthropic `message_start` / `content_block_delta` / `message_stop` 事件）均支持。
+- `POST /v1/responses` — OpenAI **Responses API** entry（对外两种 API 之一）。Per provider it either **passes through** to a native Responses upstream or **translates** to/from chat completions (see [Responses API Support](#responses-api-support)). Non-streaming JSON and streaming SSE (Responses `response.*` events) are both supported.
 - `POST /v1/search` — unified web search proxy (search key pool): authenticated with the same local bearer token, routes to Tavily/Exa/Brave by key pool. See [Search Key Pool](#search-key-pool).
 - `GET/PUT /api/config/search-providers` — inspect/update the search key pool configuration.
 - `GET /_proxy/health` — front-proxy backend health.
@@ -114,7 +115,27 @@ provider can configure three kinds of addresses:
 |---|---|---|
 | `base_url` | Chat Completions API | 必填之一；Router 内部翻译链路（Responses→chat→Responses）的落点；模型名探测统一走 `{base_url}/models`（未配置时回退 `responses_base_url`） |
 | `responses_base_url` | Responses API | 可选；配置了 = 供应商原生支持 Responses，`/v1/responses` 请求**原样透传**到 `{responses_base_url}/responses`（只改写 `model` 名） |
-| `anthropic_base_url` | Anthropic API | 可选；供应商提供 Anthropic 兼容 API 时填写（预留字段） |
+| `anthropic_base_url` | Anthropic API | 可选；配置了 = 供应商原生支持 Anthropic，`/v1/messages` 请求**原样透传**到 `{anthropic_base_url}/v1/messages`（只改写 `model` 名） |
+
+### Anthropic API Support
+
+`POST /v1/messages` exposes the **Anthropic Messages API** on the router. Router 对外只暴露两种 API：Anthropic 与 Responses；Chat Completions 是内部翻译语言。
+
+- **透传**（供应商配置了 `anthropic_base_url`）：请求只改写 `model` 为上游物理模型名，其余字段原样转发到
+  `{anthropic_base_url}/v1/messages`（`x-api-key` 鉴权），响应/流式 SSE 原样返回。
+- **翻译**（未配置）：Anthropic 请求翻译成 Responses 请求，走现有 `/v1/responses` 机制（内部再透传到
+  供应商 Responses 端点或翻译成 chat completions），响应再翻译回 Anthropic 格式。覆盖：
+  - 请求：`system` → `instructions`；`messages`（text/image/tool_use/tool_result 块）→ Responses `input`
+    项（`thinking` / `redacted_thinking` 块丢弃）；`max_tokens` → `max_output_tokens`；
+    `tools[].input_schema` → `tools[].parameters`；`tool_choice`（auto/any/tool）→ auto/required/function；
+    `thinking.budget_tokens` → `reasoning.effort`（≥32k high / ≥8k medium / 其余 low）；`stop_sequences` 丢弃。
+  - 响应：`output` 项 → Anthropic `content` 块（`message.output_text` → `text`、`reasoning.summary` →
+    `thinking`（signature 置空）、`function_call` → `tool_use`）；`status` → `stop_reason`
+    （incomplete → `max_tokens`、含 tool_use → `tool_use`、其余 → `end_turn`）；usage 按 Anthropic 字段映射。
+  - 流式：Responses SSE 事件翻译成 Anthropic 事件（`message_start` / `content_block_start` /
+    `content_block_delta`（text_delta/thinking_delta/input_json_delta）/ `content_block_stop` /
+    `message_delta` + `message_stop`）。
+- **鉴权**：`x-api-key` 或 `Authorization: Bearer` 任一匹配本地 token 即可。
 
 ### 透传 vs 翻译
 

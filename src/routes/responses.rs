@@ -115,36 +115,14 @@ pub(crate) async fn responses(
                 Ok(mut state) => state.alias_with_runtime_weights(&base_alias),
                 Err(_) => return internal_error("router state lock poisoned"),
             };
-            let result = if alias.supports_responses() {
-                // 透传：只改写 model 名，发到供应商 Responses 端点
-                let upstream_payload = translate::prepare_passthrough_payload(&payload, &alias);
-                call_responses_passthrough(
-                    &app,
-                    alias,
-                    session_id.clone(),
-                    upstream_payload,
-                    "/responses",
-                )
-                .await
-            } else {
-                // 翻译：响应转 chat 请求，响应再翻译回 Responses
-                let chat = match &chat_payload {
-                    Some(chat) => chat.clone(),
-                    None => match translate_request(&payload) {
-                        Ok(chat) => chat,
-                        Err(message) => {
-                            return error_response(
-                                &message,
-                                "invalid_request_error",
-                                StatusCode::BAD_REQUEST,
-                            );
-                        }
-                    },
-                };
-                let upstream_payload = prepare_upstream_payload(&chat, &alias);
-                call_upstream_responses(&app, alias, session_id.clone(), upstream_payload, &payload)
-                    .await
-            };
+            let result = responses_alias_dispatch(
+                &app,
+                alias,
+                session_id.clone(),
+                &payload,
+                chat_payload.as_ref(),
+            )
+            .await;
             match result {
                 Ok(response) => return response,
                 Err(CallError::NoAvailable(exc)) => last_frozen = Some(exc),
@@ -162,8 +140,42 @@ pub(crate) async fn responses(
     }
 }
 
+/// 单个 route alias 的 Responses 请求分发：透传（供应商原生 Responses）或翻译成 chat。
+/// 返回 `Ok(Response)`（含错误响应体）或 `Err(NoAvailable)`（key 耗尽，由调用方 fallback 下一 alias）。
+/// `/v1/responses` 与 Anthropic `/v1/messages`（翻译模式）共用。
+pub(crate) async fn responses_alias_dispatch(
+    app: &AppState,
+    alias: ModelAlias,
+    session_id: Option<String>,
+    payload: &Value,
+    chat_payload: Option<&Value>,
+) -> Result<Response, CallError> {
+    if alias.supports_responses() {
+        // 透传：只改写 model 名，发到供应商 Responses 端点
+        let upstream_payload = translate::prepare_passthrough_payload(payload, &alias);
+        call_responses_passthrough(app, alias, session_id, upstream_payload, "/responses").await
+    } else {
+        // 翻译：请求转 chat，响应再翻译回 Responses
+        let chat = match chat_payload {
+            Some(chat) => chat.clone(),
+            None => match translate_request(payload) {
+                Ok(chat) => chat,
+                Err(message) => {
+                    return Ok(error_response(
+                        &message,
+                        "invalid_request_error",
+                        StatusCode::BAD_REQUEST,
+                    ))
+                }
+            },
+        };
+        let upstream_payload = prepare_upstream_payload(&chat, &alias);
+        call_upstream_responses(app, alias, session_id, upstream_payload, payload).await
+    }
+}
+
 /// Responses 请求翻译成 chat completions 请求，并处理 previous_response_id 多轮历史。
-fn translate_request(payload: &Value) -> Result<Value, String> {
+pub(crate) fn translate_request(payload: &Value) -> Result<Value, String> {
     let mut chat = translate::responses_to_chat(payload)?;
     if let Some(prev_id) = payload.get("previous_response_id").and_then(Value::as_str) {
         match store::get(prev_id) {
@@ -202,11 +214,7 @@ async fn call_responses_passthrough(
     }
     let retry_policy = alias.retry_policy.clone();
     let mut tried = HashSet::new();
-    let endpoint = format!(
-        "{}{}",
-        responses_base.trim_end_matches('/'),
-        endpoint_path
-    );
+    let endpoint = format!("{}{}", responses_base.trim_end_matches('/'), endpoint_path);
 
     loop {
         let selected_key = match select_key_locked(app, &alias, session_id.as_deref(), &tried) {
@@ -485,11 +493,11 @@ async fn call_upstream_responses(
     }
 }
 
-fn error_response(message: &str, code: &str, status: StatusCode) -> Response {
+pub(crate) fn error_response(message: &str, code: &str, status: StatusCode) -> Response {
     json_status(status, translate::responses_error(message, code))
 }
 
-fn frozen_response(exc: NoAvailableKeyError) -> Response {
+pub(crate) fn frozen_response(exc: NoAvailableKeyError) -> Response {
     let mut resp = json_status(
         StatusCode::TOO_MANY_REQUESTS,
         translate::responses_error(&exc.to_string(), "all_keys_frozen"),

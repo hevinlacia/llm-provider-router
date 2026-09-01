@@ -460,13 +460,13 @@ fn validate_accepts_provider_with_any_single_url() {
     ] {
         let dir = std::env::temp_dir().join(format!("lpr-v2-test-{}-anyurl", std::process::id()));
         let _ = fs::create_dir_all(&dir);
-        let p = write_temp(&dir, "providers.json", &format!("{{\"providers\":{provider_json}}}"));
-        let m = write_temp(&dir, "models.json", r#"{"families":{},"models":{}}"#);
-        let l = write_temp(
+        let p = write_temp(
             &dir,
-            "logical.json",
-            r#"{"logical_models":{}}"#,
+            "providers.json",
+            &format!("{{\"providers\":{provider_json}}}"),
         );
+        let m = write_temp(&dir, "models.json", r#"{"families":{},"models":{}}"#);
+        let l = write_temp(&dir, "logical.json", r#"{"logical_models":{}}"#);
         let v = write_temp(&dir, "virtual.json", r#"{"virtual_models":{}}"#);
         let result = load_v2_config_from(&p, &m, &l, &v);
         assert!(result.is_ok(), "{label}: 应通过校验, got {result:?}");
@@ -487,7 +487,8 @@ fn validate_rejects_provider_with_no_url() {
     let v = write_temp(&dir, "virtual.json", r#"{"virtual_models":{}}"#);
     let err = load_v2_config_from(&p, &m, &l, &v).unwrap_err();
     assert!(
-        err.to_string().contains("at least one of Chat Completions API"),
+        err.to_string()
+            .contains("at least one of Chat Completions API"),
         "错误信息应说明至少填一种地址, got: {err}"
     );
 }

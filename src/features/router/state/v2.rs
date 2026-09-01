@@ -456,8 +456,16 @@ impl RouterState {
         }
         // 三类地址至少填一种：Chat Completions API(base_url) / Responses API(responses_base_url) / Anthropic API(anthropic_base_url)
         if base_url.trim().is_empty()
-            && responses_base_url.as_deref().map(str::trim).unwrap_or("").is_empty()
-            && anthropic_base_url.as_deref().map(str::trim).unwrap_or("").is_empty()
+            && responses_base_url
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            && anthropic_base_url
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
         {
             anyhow::bail!("at least one of Chat Completions API / Responses API / Anthropic API base URL must not be empty");
         }
@@ -509,8 +517,16 @@ impl RouterState {
         }
         // 三类地址至少填一种：Chat Completions API(base_url) / Responses API(responses_base_url) / Anthropic API(anthropic_base_url)
         if base_url.trim().is_empty()
-            && responses_base_url.as_deref().map(str::trim).unwrap_or("").is_empty()
-            && anthropic_base_url.as_deref().map(str::trim).unwrap_or("").is_empty()
+            && responses_base_url
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            && anthropic_base_url
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
         {
             anyhow::bail!("at least one of Chat Completions API / Responses API / Anthropic API base URL must not be empty");
         }

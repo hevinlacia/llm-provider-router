@@ -128,6 +128,10 @@ pub struct ModelAlias {
     /// 对 `/v1/responses` 请求透传到 `{responses_base_url}/responses`；
     /// None = 由 Router 翻译成 chat completions 走 `base_url`。
     pub responses_base_url: Option<String>,
+    /// 供应商配置的 Anthropic 兼容 API 端点（可选）。配置后 = 原生支持 Anthropic 协议，
+    /// 对 `/v1/messages` 请求透传到 `{anthropic_base_url}/v1/messages`；
+    /// None = 由 Router 翻译成 Responses 请求走现有 /v1/responses 机制。
+    pub anthropic_base_url: Option<String>,
 }
 
 impl ModelAlias {
@@ -150,6 +154,7 @@ impl ModelAlias {
             thinking_level_map: None,
             thinking_format: None,
             responses_base_url: None,
+            anthropic_base_url: None,
         }
     }
 
@@ -188,6 +193,19 @@ impl ModelAlias {
     /// 是否原生支持 Responses API（配置了非空 responses_base_url 即支持，走透传）。
     pub fn supports_responses(&self) -> bool {
         self.responses_base_url
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+    }
+
+    /// 标记上游原生支持 Anthropic 协议（透传模式）：设置其 Anthropic API 端点。
+    pub fn with_anthropic_base_url(mut self, url: Option<String>) -> Self {
+        self.anthropic_base_url = url;
+        self
+    }
+
+    /// 是否原生支持 Anthropic 协议（配置了非空 anthropic_base_url 即支持，`/v1/messages` 透传）。
+    pub fn supports_anthropic(&self) -> bool {
+        self.anthropic_base_url
             .as_deref()
             .is_some_and(|s| !s.trim().is_empty())
     }
