@@ -9,6 +9,7 @@
 
 pub(crate) mod chat;
 pub(crate) mod config;
+pub(crate) mod messages;
 pub(crate) mod models;
 pub(crate) mod resp;
 pub(crate) mod responses;
@@ -141,6 +142,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         .route("/v1/models", get(models::models))
         .route("/api/router/capabilities", get(models::router_capabilities))
         .route("/v1/chat/completions", post(chat::chat_completions))
+        .route("/v1/messages", post(messages::messages))
         .route("/v1/responses", post(responses::responses))
         .route(
             "/v1/responses/{response_id}",
@@ -155,7 +157,10 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
             "/v1/responses/{response_id}/input_items",
             get(responses::response_input_items),
         )
-        .route("/v1/responses/input_tokens", post(responses::response_input_tokens))
+        .route(
+            "/v1/responses/input_tokens",
+            post(responses::response_input_tokens),
+        )
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
         .fallback(get(usage::dashboard))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))

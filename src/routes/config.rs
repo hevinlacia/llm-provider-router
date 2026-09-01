@@ -84,10 +84,7 @@ fn parse_v2_provider_body(
         .and_then(Value::as_str)
         .map(str::to_string)
         .filter(|s| !s.trim().is_empty());
-    if base_url.trim().is_empty()
-        && responses_base_url.is_none()
-        && anthropic_base_url.is_none()
-    {
+    if base_url.trim().is_empty() && responses_base_url.is_none() && anthropic_base_url.is_none() {
         return Err(
             "at least one of base_url / responses_base_url / anthropic_base_url must be set"
                 .to_string(),

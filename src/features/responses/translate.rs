@@ -346,7 +346,12 @@ pub(crate) fn response_echo_fields(payload: &Value) -> Value {
 
 /// 上游 chat completions 非流式响应 -> Responses API 响应对象。
 /// `echo` 为从请求回显的字段（response_echo_fields 产物），可传 json!(null) 表示不回显。
-pub(crate) fn chat_to_responses(content: &Value, response_id: &str, model: &str, echo: &Value) -> Value {
+pub(crate) fn chat_to_responses(
+    content: &Value,
+    response_id: &str,
+    model: &str,
+    echo: &Value,
+) -> Value {
     let created_at = now_ts();
     let mut output: Vec<Value> = Vec::new();
     let mut output_text = String::new();
@@ -427,22 +432,19 @@ pub(crate) fn chat_to_responses(content: &Value, response_id: &str, model: &str,
     let echo = if echo.is_null() { &json!({}) } else { echo };
 
     // 从回显字段取值（缺失/无回显时用标准默认值），保证 35 个顶层字段齐全
-    let instructions = echo
-        .get("instructions")
-        .cloned()
-        .unwrap_or(Value::Null);
+    let instructions = echo.get("instructions").cloned().unwrap_or(Value::Null);
     let metadata = echo.get("metadata").cloned().unwrap_or(Value::Null);
     let temperature = echo.get("temperature").cloned().unwrap_or(Value::Null);
     let top_p = echo.get("top_p").cloned().unwrap_or(Value::Null);
-    let max_output_tokens = echo.get("max_output_tokens").cloned().unwrap_or(Value::Null);
+    let max_output_tokens = echo
+        .get("max_output_tokens")
+        .cloned()
+        .unwrap_or(Value::Null);
     let parallel_tool_calls = echo
         .get("parallel_tool_calls")
         .cloned()
         .unwrap_or(json!(true));
-    let tool_choice = echo
-        .get("tool_choice")
-        .cloned()
-        .unwrap_or(json!("auto"));
+    let tool_choice = echo.get("tool_choice").cloned().unwrap_or(json!("auto"));
     let tools = echo.get("tools").cloned().unwrap_or(json!([]));
     let service_tier = echo.get("service_tier").cloned().unwrap_or(Value::Null);
     let truncation = echo.get("truncation").cloned().unwrap_or(Value::Null);
@@ -946,13 +948,42 @@ mod tests {
         assert_eq!(r["top_logprobs"], Value::Null);
         // 全部 35 个标准顶层字段齐全
         for field in [
-            "id", "object", "created_at", "completed_at", "status", "model", "output",
-            "output_text", "usage", "error", "incomplete_details", "instructions", "metadata",
-            "parallel_tool_calls", "temperature", "tool_choice", "tools", "top_p",
-            "max_output_tokens", "max_tool_calls", "background", "conversation",
-            "previous_response_id", "store", "service_tier", "truncation", "reasoning", "text",
-            "user", "top_logprobs", "prompt", "prompt_cache_key", "prompt_cache_options",
-            "prompt_cache_retention", "moderation", "safety_identifier",
+            "id",
+            "object",
+            "created_at",
+            "completed_at",
+            "status",
+            "model",
+            "output",
+            "output_text",
+            "usage",
+            "error",
+            "incomplete_details",
+            "instructions",
+            "metadata",
+            "parallel_tool_calls",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_p",
+            "max_output_tokens",
+            "max_tool_calls",
+            "background",
+            "conversation",
+            "previous_response_id",
+            "store",
+            "service_tier",
+            "truncation",
+            "reasoning",
+            "text",
+            "user",
+            "top_logprobs",
+            "prompt",
+            "prompt_cache_key",
+            "prompt_cache_options",
+            "prompt_cache_retention",
+            "moderation",
+            "safety_identifier",
         ] {
             assert!(r.get(field).is_some(), "missing field {field}");
         }

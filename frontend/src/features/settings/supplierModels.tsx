@@ -135,7 +135,6 @@ export function SupplierModelConfigPanel({ v2, tokenPrices, onSaved, onError }: 
   const providers = useMemo(() => Object.keys(v2?.providers ?? {}).sort(), [v2]);
   const [selectedProvider, setSelectedProvider] = useState<string>('__all__');
   const [editing, setEditing] = useState<V2PhysicalModel | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (providers.length && selectedProvider !== '__all__' && !providers.includes(selectedProvider)) {
@@ -147,41 +146,14 @@ export function SupplierModelConfigPanel({ v2, tokenPrices, onSaved, onError }: 
   if (!v2.v2_enabled) return <section className="card settings-section"><h2>Supplier Model Config</h2><p className="muted">Layered routing disabled (set LLM_PROVIDER_ROUTER_V2=1 to enable).</p></section>;
 
   const prices = tokenPrices?.models ?? [];
-  const detailModels = selectedProvider === '__all__'
-    ? new Set<string>()
-    : new Set(v2.providers?.[selectedProvider]?.models ?? []);
+  // 只展示实际用到的模型：已注册的物理模型（models.json）；不罗列供应商全量模型列表
   const physical = (v2.models ?? []).filter((m) => {
     if (selectedProvider === '__all__') return true;
     return m.provider === selectedProvider;
   });
-
-  // 模型列表 = 该供应商 detail 列表 + 已注册物理模型（按 upstream 名去重）
-  const seen = new Set<string>();
-  const rows: Array<{ key: string; upstream: string; model?: V2PhysicalModel; fromDetail: boolean }> = [];
-  for (const p of physical) {
-    if (seen.has(p.upstream_model)) continue;
-    seen.add(p.upstream_model);
-    rows.push({ key: p.id, upstream: p.upstream_model, model: p, fromDetail: detailModels.has(p.upstream_model) });
-  }
-  for (const upstream of detailModels) {
-    if (seen.has(upstream)) continue;
-    seen.add(upstream);
-    rows.push({ key: upstream, upstream, model: undefined, fromDetail: true });
-  }
-  rows.sort((a, b) => a.upstream.localeCompare(b.upstream));
-
-  async function refresh() {
-    if (selectedProvider === '__all__') return;
-    setRefreshing(true);
-    try {
-      await api.providerModels(selectedProvider, true);
-      onSaved(await api.v2Status());
-    } catch (err) {
-      onError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRefreshing(false);
-    }
-  }
+  const rows: Array<{ key: string; upstream: string; model: V2PhysicalModel }> = physical
+    .map((p) => ({ key: p.id, upstream: p.upstream_model, model: p }))
+    .sort((a, b) => a.upstream.localeCompare(b.upstream));
 
   async function patchModel(model: V2PhysicalModel, draft: Draft) {
     try {
@@ -206,30 +178,29 @@ export function SupplierModelConfigPanel({ v2, tokenPrices, onSaved, onError }: 
         <div className="field thinking-filter"><label>Supplier</label>
           <select value={selectedProvider} onChange={(e) => setSelectedProvider(e.target.value)}>
             <option value="__all__">All suppliers ({physical.length} physical)</option>
-            {providers.map((p) => <option key={p} value={p}>{p} ({physical.filter((m) => m.provider === p).length} / {v2.providers?.[p]?.models?.length ?? 0} detail)</option>)}
+            {providers.map((p) => <option key={p} value={p}>{p} ({physical.filter((m) => m.provider === p).length})</option>)}
           </select>
         </div>
         <div className="thinking-actions">
-          <span className="muted small-text">Showing {rows.length} models</span>
-          <button className="secondary compact-button" disabled={selectedProvider === '__all__' || refreshing} onClick={() => void refresh()}>{refreshing ? 'Refreshing…' : 'Refresh detail models'}</button>
+          <span className="muted small-text">Showing {rows.length} models in use</span>
         </div>
       </div>
       <div className="table-wrap"><table className="settings-table supplier-models-table">
         <thead><tr><th>Model</th><th>Context</th><th>Output</th><th>Image</th><th>Thinking map</th><th>Token Price</th><th></th></tr></thead>
         <tbody>{rows.map((row) => {
           const m = row.model;
-          const map = (m?.thinking_level_map as Record<string, string | null> | null | undefined) ?? null;
+          const map = (m.thinking_level_map as Record<string, string | null> | null | undefined) ?? null;
           const price = priceFor(row.key, prices);
-          return <tr key={row.key} className={!m ? 'supplier-unregistered-row' : ''}>
-            <td className="strong-cell">{row.upstream}{!m && <span className="status warn" style={{ marginLeft: 8 }}>unregistered</span>}</td>
-            <td className="muted small-text">{m?.context_window ? formatWindow(m.context_window) : '—'}</td>
-            <td className="muted small-text">{m?.max_output_tokens ? formatWindow(m.max_output_tokens) : '—'}</td>
-            <td>{m?.supports_image ? <span className="status ok">image</span> : m ? <span className="muted small-text">text</span> : <span className="muted small-text">—</span>}</td>
+          return <tr key={row.key}>
+            <td className="strong-cell">{row.upstream}</td>
+            <td className="muted small-text">{m.context_window ? formatWindow(m.context_window) : '—'}</td>
+            <td className="muted small-text">{m.max_output_tokens ? formatWindow(m.max_output_tokens) : '—'}</td>
+            <td>{m.supports_image ? <span className="status ok">image</span> : <span className="muted small-text">text</span>}</td>
             <td className="muted small-text thinking-summary-cell">{thinkingSummary(map)}</td>
             <td className="muted small-text thinking-summary-cell">{priceSummary(price)}</td>
-            <td><div className="row-actions"><button className="secondary compact-button" onClick={() => setEditing(m ?? { id: `${selectedProvider}/${row.upstream}`, provider: selectedProvider, upstream_model: row.upstream, params: {}, context_window: null, max_output_tokens: null, supports_image: null })}>{m ? 'Configure' : 'Register & Configure'}</button></div></td>
+            <td><div className="row-actions"><button className="secondary compact-button" onClick={() => setEditing(m)}>Configure</button></div></td>
           </tr>;
-        })}{!rows.length && <tr><td colSpan={7} className="muted">{selectedProvider === '__all__' ? 'No physical models configured yet.' : `No models for supplier \`${selectedProvider}\` yet. Click Refresh to pull from upstream, or register a model via Model Pools.`}</td></tr>}</tbody>
+        })}{!rows.length && <tr><td colSpan={7} className="muted">{selectedProvider === '__all__' ? 'No physical models registered yet. Add a model pool target to register one.' : `No registered models for supplier \`${selectedProvider}\` yet. Add a model pool target to register one.`}</td></tr>}</tbody>
       </table></div>
       <p className="muted small-text thinking-tip">Tip: 上下文/输出在 models.json 上声明后，Context Negotiation 会把逻辑模型（含模型池）的对外能力按「池内最低参数」聚合。图片支持参与输入模态协商。Token 价格随配置弹窗一并保存。</p>
     </section>
