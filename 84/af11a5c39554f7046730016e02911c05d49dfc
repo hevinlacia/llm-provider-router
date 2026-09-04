@@ -1,0 +1,50 @@
+src/shutdown.rs
+  ceffb94ea6ba9ee1 1-39
+src/main.rs
+  ceffb94ea6ba9ee1 10
+Cargo.toml
+  ceffb94ea6ba9ee1 23
+src/slot_manager.rs
+  ceffb94ea6ba9ee1 12,84-133,154,184-189,197,202-206,247,323-324,335,357-358
+src/front_proxy.rs
+  ceffb94ea6ba9ee1 1-2,38,80,93-95,168-193,195-199,203-209
+AGENTS.md
+  ceffb94ea6ba9ee1 20-21
+src/routes/mod.rs
+  ceffb94ea6ba9ee1 172-174
+.gitignore
+  c03c4fc0e2c5d49b 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "84af11a5c39554f7046730016e02911c05d49dfc",
+  "prompts": {
+    "c03c4fc0e2c5d49b": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f899e-efd0-7b8f-a1cb-b3eb035f616f",
+        "model": "openai-gpt-5.5-hevin"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 18,
+      "total_deletions": 1,
+      "accepted_lines": 344,
+      "overriden_lines": 0
+    },
+    "ceffb94ea6ba9ee1": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a066cd-5493-7f37-b79d-dceff11b62ec",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 158,
+      "total_deletions": 18,
+      "accepted_lines": 162,
+      "overriden_lines": 0
+    }
+  }
+}
