@@ -9,6 +9,7 @@
 use reqwest::Client;
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
@@ -80,6 +81,56 @@ const SYSTEMCTL_TIMEOUT: Duration = Duration::from_secs(15);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const ACTION_COOLDOWN_SECS: u64 = 15;
 
+/// 每槽在途请求数（front-proxy 转发成功响应时 +1，响应流结束/断开时 -1）。
+/// idle 下线前必须等在途流清零，否则 `systemctl stop` 会切断存量流。
+#[derive(Default)]
+pub struct SlotInflight {
+    counts: HashMap<String, AtomicI64>,
+}
+
+impl SlotInflight {
+    pub fn new(slots: &[String]) -> Self {
+        Self {
+            counts: slots
+                .iter()
+                .map(|slot| (slot.clone(), AtomicI64::new(0)))
+                .collect(),
+        }
+    }
+
+    /// 登记一个在途请求；返回 guard，Drop（流结束/客户端断开）时自动递减。
+    pub fn enter(self: &Arc<Self>, slot: &str) -> SlotInflightGuard {
+        if let Some(count) = self.counts.get(slot) {
+            count.fetch_add(1, Ordering::Relaxed);
+        }
+        SlotInflightGuard {
+            tracker: Arc::clone(self),
+            slot: slot.to_string(),
+        }
+    }
+
+    pub fn get(&self, slot: &str) -> u64 {
+        self.counts
+            .get(slot)
+            .map(|count| count.load(Ordering::Relaxed).max(0) as u64)
+            .unwrap_or(0)
+    }
+}
+
+/// 在途请求计数 guard：随响应流的生命周期存活，Drop 时递减。
+pub struct SlotInflightGuard {
+    tracker: Arc<SlotInflight>,
+    slot: String,
+}
+
+impl Drop for SlotInflightGuard {
+    fn drop(&mut self) {
+        if let Some(count) = self.tracker.counts.get(&self.slot) {
+            count.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
 #[derive(Default)]
 struct Inner {
     /// 每槽最后流量 unix 秒；无流量记录时用 first_seen 兜底计时。
@@ -100,6 +151,7 @@ pub struct SlotManager {
     check_interval: Duration,
     auto_heal: bool,
     systemctl: Arc<dyn SystemCtl>,
+    inflight: Arc<SlotInflight>,
     inner: Arc<Mutex<Inner>>,
 }
 
@@ -129,6 +181,12 @@ impl SlotManager {
         auto_heal: bool,
         systemctl: Arc<dyn SystemCtl>,
     ) -> Self {
+        let inflight = Arc::new(SlotInflight::new(
+            &specs
+                .iter()
+                .map(|spec| spec.slot.clone())
+                .collect::<Vec<_>>(),
+        ));
         Self {
             specs: Arc::new(specs),
             client,
@@ -136,8 +194,14 @@ impl SlotManager {
             check_interval,
             auto_heal,
             systemctl,
+            inflight,
             inner: Arc::new(Mutex::new(Inner::default())),
         }
+    }
+
+    /// 在途计数器的共享句柄：front-proxy 用它登记/释放每个转发请求。
+    pub fn inflight(&self) -> Arc<SlotInflight> {
+        Arc::clone(&self.inflight)
     }
 
     /// 记录某槽收到一次流量（幂等，只刷新时间戳）。
@@ -180,6 +244,7 @@ impl SlotManager {
                     now,
                     self.idle_shutdown_secs,
                     self.auto_heal,
+                    self.inflight.get(&spec.slot),
                     last_action,
                     ACTION_COOLDOWN_SECS,
                 );
@@ -255,7 +320,8 @@ fn now_secs() -> u64 {
 ///
 /// 规则：
 /// - **活跃槽**：health 正常 → 无动作；health 异常且 `auto_heal` → `Start`（带冷却）。
-/// - **非活跃槽**：health 正常、`idle_shutdown_secs>0` 且连续无流量超过阈值 → `Stop`（带冷却）；
+/// - **非活跃槽**：health 正常、在途请求为 0、`idle_shutdown_secs>0` 且连续无流量超过阈值
+///   → `Stop`（带冷却）；在途请求 >0 说明还有存量流没跑完，下线会切断连接，本轮跳过；
 ///   health 异常（已下线/启动中）→ 无动作（不重复 stop、不主动拉起非活跃槽）。
 #[allow(clippy::too_many_arguments)]
 pub fn decide(
@@ -266,6 +332,7 @@ pub fn decide(
     now: u64,
     idle_shutdown_secs: u64,
     auto_heal: bool,
+    inflight: u64,
     last_action: (Action, u64),
     cooldown_secs: u64,
 ) -> Action {
@@ -285,6 +352,10 @@ pub fn decide(
         return Action::None;
     }
     if idle_shutdown_secs == 0 {
+        return Action::None;
+    }
+    // 还有在途流（切换前遗留的长流）→ 不下线，等下一轮
+    if inflight > 0 {
         return Action::None;
     }
     let idle_secs = now.saturating_sub(last_traffic);
@@ -310,6 +381,7 @@ mod tests {
                 1000,
                 900,
                 true,
+                0,
                 (Action::None, 0),
                 15
             ),
@@ -328,6 +400,7 @@ mod tests {
                 1000,
                 900,
                 true,
+                0,
                 (Action::None, 0),
                 15
             ),
@@ -346,6 +419,7 @@ mod tests {
                 900,
                 900,
                 false,
+                0,
                 (Action::None, 0),
                 15
             ),
@@ -365,6 +439,7 @@ mod tests {
                 1500,
                 900,
                 true,
+                0,
                 (Action::None, 0),
                 15
             ),
@@ -383,6 +458,7 @@ mod tests {
                 1500,
                 900,
                 true,
+                0,
                 (Action::None, 0),
                 15
             ),
@@ -402,6 +478,7 @@ mod tests {
                 1500,
                 900,
                 true,
+                0,
                 (Action::Stop, 1495),
                 15
             ),
@@ -420,6 +497,7 @@ mod tests {
                 1500,
                 0,
                 true,
+                0,
                 (Action::None, 0),
                 15
             ),
@@ -438,6 +516,7 @@ mod tests {
                 1500,
                 900,
                 true,
+                0,
                 (Action::None, 0),
                 15
             ),
@@ -457,6 +536,7 @@ mod tests {
                 1500,
                 900,
                 true,
+                0,
                 (Action::None, 0),
                 15
             ),
@@ -476,10 +556,31 @@ mod tests {
                 1500,
                 900,
                 true,
+                0,
                 (Action::None, 0),
                 15
             ),
             Action::Start
+        );
+    }
+
+    #[test]
+    fn inactive_idle_but_inflight_no_stop() {
+        // idle 已超阈值，但该槽还有存量流在跑 → 本轮不下线，避免切断连接
+        assert_eq!(
+            decide(
+                "green",
+                "blue",
+                true,
+                500,
+                1500,
+                900,
+                true,
+                2,
+                (Action::None, 0),
+                15
+            ),
+            Action::None
         );
     }
 }
