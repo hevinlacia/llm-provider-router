@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { AnalyticsPage } from './features/analytics/AnalyticsPage';
 import { HomePage } from './features/home/HomePage';
 import { SettingsPage } from './features/settings/SettingsPage';
+import { TokenUnitProvider } from './lib/tokenUnit';
 import './styles.css';
 
 type Page = 'home' | 'analytics' | 'settings';
@@ -29,5 +30,5 @@ export default function App() {
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
-  return <div className="shell"><aside><div className="brand">LLM Provider Router</div><nav><button className={`nav-button ${page === 'home' ? 'active' : ''}`} onClick={() => navigate('home')}>Dashboard</button><button className={`nav-button ${page === 'analytics' ? 'active' : ''}`} onClick={() => navigate('analytics')}>Analytics</button><button className={`nav-button ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}>Settings</button></nav><div className="side-card"><span>Cost Board</span><strong>当月决策看板</strong><em>by supplier · key · model</em></div></aside><main>{page === 'home' ? <HomePage /> : page === 'analytics' ? <AnalyticsPage /> : <SettingsPage />}</main></div>;
+  return <TokenUnitProvider><div className="shell"><aside><div className="brand">LLM Provider Router</div><nav><button className={`nav-button ${page === 'home' ? 'active' : ''}`} onClick={() => navigate('home')}>Dashboard</button><button className={`nav-button ${page === 'analytics' ? 'active' : ''}`} onClick={() => navigate('analytics')}>Analytics</button><button className={`nav-button ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}>Settings</button></nav><div className="side-card"><span>Cost Board</span><strong>当月决策看板</strong><em>by supplier · key · model</em></div></aside><main>{page === 'home' ? <HomePage /> : page === 'analytics' ? <AnalyticsPage /> : <SettingsPage />}</main></div></TokenUnitProvider>;
 }
