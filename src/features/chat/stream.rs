@@ -86,7 +86,7 @@ pub(crate) async fn stream_upstream_route(
                     }
                 };
                 let Some(key_value) = key_value else {
-                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None);
+                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None, session_id.as_deref());
                     last_error = Some(format!("missing key value for {}", usage_key_name(&app, &key)));
                     continue;
                 };
@@ -132,7 +132,7 @@ pub(crate) async fn stream_upstream_route(
                 let response = match response {
                     Some(r) => r,
                     None => {
-                        record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None);
+                        record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None, session_id.as_deref());
                         last_error = Some(last_exc.unwrap_or_else(|| "upstream connect error".to_string()));
                         if crate::diag::diag_enabled(&app.settings) {
                             crate::diag::append(
@@ -155,7 +155,7 @@ pub(crate) async fn stream_upstream_route(
                     let body_text = response.text().await.unwrap_or_default();
                     freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
                     let usage = extract_usage_from_stream(&body_text).or_else(|| serde_json::from_str::<Value>(&body_text).ok().and_then(|value| extract_usage(&value).cloned()));
-                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref());
+                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref(), session_id.as_deref());
                     log_upstream_failure(&alias, status, &body_text);
                     // 与 responses 流一致：记录可重试失败，避免全 key 都因限流失败时
                     // 以 200 空流结束（客户端会当成传输截断反复重试）。
@@ -229,7 +229,7 @@ pub(crate) async fn stream_upstream_route(
                 }
                 freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
                 let usage = extract_usage_from_stream(&body_text);
-                record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref());
+                record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref(), session_id.as_deref());
                 log_upstream_failure(&alias, status, &body_text);
                 return;
             }

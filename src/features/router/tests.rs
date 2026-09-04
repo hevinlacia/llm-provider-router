@@ -179,7 +179,13 @@ fn usage_snapshot_includes_cost_by_model() {
         "total_tokens": 125
     });
     state
-        .record_usage("glm-latest-auto", "hevin", 200, Some(&usage))
+        .record_usage(
+            "glm-latest-auto",
+            "hevin",
+            200,
+            Some(&usage),
+            Some("sess-test"),
+        )
         .unwrap();
 
     let snapshot = state.usage_snapshot("all", None, None).unwrap();

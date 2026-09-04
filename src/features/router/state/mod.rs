@@ -428,8 +428,16 @@ impl RouterState {
         key_name: &str,
         status_code: u16,
         usage: Option<&Value>,
+        session_id: Option<&str>,
     ) -> anyhow::Result<()> {
-        self.usage_store.record(model, key_name, status_code, usage)
+        self.usage_store
+            .record(model, key_name, status_code, usage, session_id)
+    }
+
+    /// 活跃 session 聚合（透传 usage_store）。
+    pub fn active_sessions(&self) -> anyhow::Result<Value> {
+        self.usage_store
+            .active_sessions(3600, crate::state_store::now_seconds())
     }
 
     pub fn reset_usage(&mut self) -> anyhow::Result<()> {

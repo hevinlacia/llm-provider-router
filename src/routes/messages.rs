@@ -358,7 +358,7 @@ async fn stream_anthropic_passthrough(
                     }
                 };
                 let Some(key_value) = key_value else {
-                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None);
+                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None, session_id.as_deref());
                     last_error = Some(format!("missing key value for {}", usage_key_name(&app, &key)));
                     continue;
                 };
@@ -391,7 +391,7 @@ async fn stream_anthropic_passthrough(
                 let response = match response {
                     Some(r) => r,
                     None => {
-                        record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None);
+                        record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None, session_id.as_deref());
                         last_error = Some("upstream connect error".to_string());
                         continue;
                     }
@@ -401,7 +401,7 @@ async fn stream_anthropic_passthrough(
                 if retry_policy.as_ref().is_some_and(|p| p.retry_on_status.contains(&status)) {
                     let body_text = response.text().await.unwrap_or_default();
                     freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
-                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, None);
+                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, None, session_id.as_deref());
                     crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
                     last_error = Some(format!("upstream {status}"));
                     continue;
@@ -409,7 +409,7 @@ async fn stream_anthropic_passthrough(
                 if status >= 400 {
                     let body_text = response.text().await.unwrap_or_default();
                     freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
-                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, None);
+                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, None, session_id.as_deref());
                     crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
                     // 200 SSE 流已提交，上游错误转成 Anthropic SSE error 事件下发
                     let message = serde_json::from_str::<Value>(&body_text)
@@ -440,7 +440,7 @@ async fn stream_anthropic_passthrough(
                 let body_str = String::from_utf8_lossy(&body_text).to_string();
                 freeze_maybe(&app.state, &key, status, &headers, &body_str, &app.settings);
                 let usage = translate::extract_anthropic_stream_usage(&body_str);
-                record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref());
+                record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref(), session_id.as_deref());
                 return;
             }
         }
@@ -521,6 +521,7 @@ async fn call_anthropic_passthrough(
                 &usage_key_name(app, &key),
                 599,
                 None,
+                session_id.as_deref(),
             );
             continue;
         };
@@ -559,6 +560,7 @@ async fn call_anthropic_passthrough(
                     &usage_key_name(app, &key),
                     599,
                     None,
+                    session_id.as_deref(),
                 );
                 continue;
             }
@@ -587,6 +589,7 @@ async fn call_anthropic_passthrough(
                 &usage_key_name(app, &key),
                 status,
                 None,
+                session_id.as_deref(),
             );
             crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
             continue;
@@ -611,6 +614,7 @@ async fn call_anthropic_passthrough(
             &usage_key_name(app, &key),
             status,
             usage.as_ref(),
+            session_id.as_deref(),
         );
         crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
 

@@ -72,9 +72,10 @@ pub(crate) fn record_usage(
     key_name: &str,
     status_code: u16,
     usage: Option<&Value>,
+    session_id: Option<&str>,
 ) {
     if let Ok(mut state) = state.lock() {
-        let _ = state.record_usage(model, key_name, status_code, usage);
+        let _ = state.record_usage(model, key_name, status_code, usage, session_id);
     }
 }
 

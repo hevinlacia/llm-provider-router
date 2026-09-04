@@ -61,6 +61,7 @@ pub(crate) async fn call_upstream(
                 &usage_key_name(&app, &key),
                 599,
                 None,
+                session_id.as_deref(),
             );
             continue;
         };
@@ -119,6 +120,7 @@ pub(crate) async fn call_upstream(
                     &usage_key_name(&app, &key),
                     599,
                     None,
+                    session_id.as_deref(),
                 );
                 if crate::diag::diag_enabled(&app.settings) {
                     crate::diag::append(
@@ -160,6 +162,7 @@ pub(crate) async fn call_upstream(
                 &usage_key_name(&app, &key),
                 status,
                 extract_usage(&content),
+                session_id.as_deref(),
             );
             log_upstream_failure(&alias, status, &body_text);
             continue;
@@ -179,6 +182,7 @@ pub(crate) async fn call_upstream(
             &usage_key_name(&app, &key),
             status,
             extract_usage(&content),
+            session_id.as_deref(),
         );
         log_upstream_failure(&alias, status, &body_text);
         let mut resp = json_status(status_code(status), content);

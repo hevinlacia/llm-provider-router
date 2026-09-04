@@ -488,3 +488,11 @@ td input[type="checkbox"] { width: auto; accent-color: var(--cyan); }
 .preset-chip:hover { border-color: rgba(34,211,238,.4); color: #e0f2fe; }
 .preset-chip-title { font: 800 .72rem var(--mono); }
 .preset-chip-detail { font: 700 .64rem var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
+
+/* ---- 活跃会话面板 ---- */
+.sess-state { display: inline-flex; align-items: center; gap: 6px; font: 700 .7rem var(--mono); color: var(--muted); }
+.sess-state::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
+.sess-state.live::before { background: var(--green); box-shadow: 0 0 8px rgba(34, 197, 94, .7); }
+.sess-state.active::before { background: #60a5fa; }
+.sess-id { font: 700 .72rem var(--mono); }
+.sess-models { color: var(--faint); font: .68rem var(--mono); }

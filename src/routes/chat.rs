@@ -130,9 +130,15 @@ pub(crate) fn validate_auth(settings: &Settings, headers: &HeaderMap) -> Option<
     }
 }
 
+/// 从请求头 / 请求体里推断会话标识：显式 header 优先，其次 body 内的
+/// session/trace 字段，最后兜底解析 Claude Code 的 `metadata.user_id`
+/// （形如 `user_<hash>_account_<uuid>_session_<uuid>`）。
 pub(crate) fn extract_session_id(payload: &Value, headers: &HeaderMap) -> Option<String> {
     header_str(headers, "x-litellm-session-id")
         .or_else(|| header_str(headers, "x-opencode-session-id"))
+        .or_else(|| header_str(headers, "x-session-id"))
+        .or_else(|| header_str(headers, "x-session-affinity"))
+        .or_else(|| header_str(headers, "session_id"))
         .or_else(|| {
             payload
                 .pointer("/metadata/session_id")
@@ -157,6 +163,24 @@ pub(crate) fn extract_session_id(payload: &Value, headers: &HeaderMap) -> Option
                 .and_then(Value::as_str)
                 .map(str::to_string)
         })
+        .or_else(|| {
+            payload
+                .pointer("/metadata/user_id")
+                .and_then(Value::as_str)
+                .and_then(parse_session_from_user_id)
+        })
+}
+
+/// Claude Code 把会话 UUID 拼在 `metadata.user_id` 尾部：取最后一个 `_session_` 之后的段。
+fn parse_session_from_user_id(user_id: &str) -> Option<String> {
+    let marker = "_session_";
+    let idx = user_id.rfind(marker)?;
+    let session = &user_id[idx + marker.len()..];
+    if session.is_empty() {
+        None
+    } else {
+        Some(session.to_string())
+    }
 }
 
 pub(crate) fn header_str(headers: &HeaderMap, name: &'static str) -> Option<String> {
@@ -165,4 +189,47 @@ pub(crate) fn header_str(headers: &HeaderMap, name: &'static str) -> Option<Stri
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_prefers_explicit_session_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-session-affinity", "affinity-123".parse().unwrap());
+        headers.insert("session_id", "plain-456".parse().unwrap());
+        assert_eq!(
+            extract_session_id(&json!({}), &headers).as_deref(),
+            Some("affinity-123")
+        );
+    }
+
+    #[test]
+    fn extract_parses_claude_code_user_id() {
+        let payload = json!({
+            "metadata": { "user_id": "user_ab12cd34_account_1111-2222_session_9f8e7d6c" }
+        });
+        assert_eq!(
+            extract_session_id(&payload, &HeaderMap::new()).as_deref(),
+            Some("9f8e7d6c")
+        );
+    }
+
+    #[test]
+    fn explicit_metadata_session_beats_user_id() {
+        let payload = json!({
+            "metadata": { "session_id": "explicit", "user_id": "user_a_account_b_session_c" }
+        });
+        assert_eq!(
+            extract_session_id(&payload, &HeaderMap::new()).as_deref(),
+            Some("explicit")
+        );
+    }
+
+    #[test]
+    fn extract_returns_none_without_signals() {
+        assert_eq!(extract_session_id(&json!({}), &HeaderMap::new()), None);
+    }
 }
