@@ -1,0 +1,35 @@
+AGENTS.md
+  ceffb94ea6ba9ee1 20-21
+src/main.rs
+  ceffb94ea6ba9ee1 10
+Cargo.toml
+  ceffb94ea6ba9ee1 23
+src/front_proxy.rs
+  ceffb94ea6ba9ee1 1-2,38,80,93-95,168-193,195-199,203-209
+src/slot_manager.rs
+  ceffb94ea6ba9ee1 12,84-133,154,184-189,197,202-206,247,323-324,335,357-358
+src/shutdown.rs
+  ceffb94ea6ba9ee1 1-39
+src/routes/mod.rs
+  ceffb94ea6ba9ee1 172-174
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "bbc97f0c3e08f59a65bda5fac545d3b16b3c6cd9",
+  "prompts": {
+    "ceffb94ea6ba9ee1": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a066cd-5493-7f37-b79d-dceff11b62ec",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 158,
+      "total_deletions": 18,
+      "accepted_lines": 163,
+      "overriden_lines": 0
+    }
+  }
+}
