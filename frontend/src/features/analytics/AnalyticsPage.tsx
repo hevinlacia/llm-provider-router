@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../api';
-import { formatCompact, formatMoney, number, providerOf } from '../../lib/format';
+import { formatCompact, formatMoney, number, providerOf, formatTokens } from '../../lib/format';
+import { TokenUnitSelect, useTokenUnit } from '../../lib/tokenUnit';
 import type {
   Bucket,
   FilterState,
@@ -57,6 +58,7 @@ function TokenTrend({
   metric: UsageSeriesMetric;
   height?: number;
 }) {
+  const { unit } = useTokenUnit();
   const maxY = useMemo(() => {
     let m = 1;
     for (const r of rows) for (const b of buckets) m = Math.max(m, metricOf(r.bucketByName[b] ?? (r.bucketByName[buckets[0]] as Bucket | undefined) ?? emptyBucket(), metric));
@@ -65,7 +67,7 @@ function TokenTrend({
 
   if (!buckets.length || !rows.length) return <Empty />;
 
-  const pad = { top: 12, right: 16, bottom: 28, left: 56 };
+  const pad = { top: 12, right: 16, bottom: 28, left: 76 };
   const w = 1040;
   const h = height;
   const innerW = w - pad.left - pad.right;
@@ -86,8 +88,8 @@ function TokenTrend({
           return (
             <g key={i}>
               <line x1={pad.left} x2={w - pad.right} y1={yy} y2={yy} className="trend-grid" />
-              <text x={pad.left - 8} y={yy} dy="0.35em" className="trend-y-label">
-                {formatCompact(v)}
+              <text x={pad.left - 8} y={yy} dy="0.35em" className="trend-y-label" textAnchor="end">
+                {unit === 'raw' ? formatCompact(v) : formatTokens(v, unit)}
               </text>
             </g>
           );
@@ -140,6 +142,7 @@ function emptyBucket(): Bucket {
 }
 
 export function AnalyticsPage() {
+  const { unit } = useTokenUnit();
   const [filters, setFilters] = useState<FilterState>({ period: 'month', start: '', end: '' });
   const [bucket, setBucket] = useState<UsageSeriesBucket>('day');
   const [groupBy, setGroupBy] = useState<UsageSeriesGroupBy>('model');
@@ -337,7 +340,7 @@ export function AnalyticsPage() {
             )}
           </p>
           <div className="hero-meta">
-            <span className="pill">{number.format(totalTokens)} tokens · {number.format(rows.reduce((s, r) => s + r.requests, 0))} req</span>
+            <span className="pill">{formatTokens(totalTokens, unit)} tokens · {number.format(rows.reduce((s, r) => s + r.requests, 0))} req</span>
             <span className="pill ghost">{totalCost ? `${formatMoney(totalCost)} EST` : 'cost pending'}</span>
             <span className="pill ghost">{displayBuckets.length} buckets</span>
           </div>
@@ -412,6 +415,10 @@ export function AnalyticsPage() {
               <option value="completion_tokens">Completion</option>
               <option value="requests">Requests</option>
             </select>
+          </div>
+          <div className="field">
+            <label>Token Unit</label>
+            <TokenUnitSelect />
           </div>
           <div className="field">
             <label>Top</label>
@@ -496,10 +503,10 @@ export function AnalyticsPage() {
               })).map((item) => (
                 <tr key={item.key}>
                   <td className="strong-cell">{item.key}</td>
-                  <td>{number.format(item.bucket.total_tokens)}</td>
-                  <td>{number.format(item.bucket.prompt_tokens)}</td>
-                  <td>{number.format(item.bucket.cached_tokens)}</td>
-                  <td>{number.format(item.bucket.completion_tokens)}</td>
+                  <td>{formatTokens(item.bucket.total_tokens, unit)}</td>
+                  <td>{formatTokens(item.bucket.prompt_tokens, unit)}</td>
+                  <td>{formatTokens(item.bucket.cached_tokens, unit)}</td>
+                  <td>{formatTokens(item.bucket.completion_tokens, unit)}</td>
                   <td>{number.format(item.bucket.requests)}</td>
                   <td>{number.format(item.bucket.errors)}</td>
                 </tr>

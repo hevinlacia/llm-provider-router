@@ -21,6 +21,33 @@ export function formatCompact(n: number): string {
   return number.format(n);
 }
 
+// ---- Token 展示单位（默认“万”；全局状态见 lib/tokenUnit.tsx）----
+export type TokenUnit = 'wan' | 'yi' | 'm' | 'raw';
+
+function fmtScaled(n: number): string {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: n >= 10 ? 1 : 2 }).format(n);
+}
+
+// 按所选单位格式化 token 数量；不足一个单位时回退到更小单位/原始数字，避免出现 0.0x万 之类难读的值。
+export function formatTokens(value: number | undefined, unit: TokenUnit = 'wan'): string {
+  const n = (value ?? 0) || 0;
+  switch (unit) {
+    case 'raw':
+      return number.format(n);
+    case 'm':
+      if (n >= 1_000_000) return `${fmtScaled(n / 1_000_000)}M`;
+      if (n >= 1000) return `${fmtScaled(n / 1000)}k`;
+      return number.format(n);
+    case 'yi':
+      if (n >= 100_000_000) return `${fmtScaled(n / 100_000_000)}亿`;
+      return formatTokens(n, 'wan');
+    case 'wan':
+    default:
+      if (n >= 10_000) return `${fmtScaled(n / 10_000)}万`;
+      return number.format(n);
+  }
+}
+
 export function formatFetchedAt(ts?: number | null): string {
   if (!ts) return '';
   return new Date(ts * 1000).toLocaleString();
