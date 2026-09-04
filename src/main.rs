@@ -7,6 +7,7 @@ mod front_proxy;
 mod json_config;
 mod routes;
 mod search;
+mod shutdown;
 mod slot_manager;
 mod state_store;
 mod usage_store;

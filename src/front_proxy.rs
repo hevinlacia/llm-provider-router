@@ -1,4 +1,5 @@
-use crate::slot_manager::{SlotManager, SlotSpec};
+use crate::shutdown::wait_for_shutdown_signal;
+use crate::slot_manager::{SlotInflight, SlotManager, SlotSpec};
 use axum::body::{Body, Bytes};
 use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
@@ -34,6 +35,7 @@ struct Backend {
 struct ProxyState {
     client: reqwest::Client,
     manager: Arc<SlotManager>,
+    inflight: Arc<SlotInflight>,
 }
 
 pub async fn serve() -> anyhow::Result<()> {
@@ -75,6 +77,7 @@ pub async fn serve() -> anyhow::Result<()> {
     let state = ProxyState {
         client,
         manager: manager.clone(),
+        inflight: manager.inflight(),
     };
     // 独立后台任务：定期检查槽健康与闲置情况，执行自动下线/拉起
     let manager_loop = manager.clone();
@@ -87,7 +90,9 @@ pub async fn serve() -> anyhow::Result<()> {
         .with_state(state);
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
     let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(wait_for_shutdown_signal())
+        .await?;
     Ok(())
 }
 
@@ -160,23 +165,48 @@ async fn proxy(
             backend.base_url.trim_end_matches('/'),
             path_and_query
         );
-        let request = state
-            .client
-            .request(method.clone(), target)
-            .headers(clean_request_headers(&headers))
-            .body(body.clone());
-        let response = match request.send().await {
-            Ok(response) => response,
-            Err(exc) => {
-                errors.push(json!({ "slot": backend.slot, "error": exc.to_string() }));
-                continue;
+        // 在途计数 guard：覆盖整个上游请求+响应流生命周期，流结束/客户端断开时自动递减
+        let inflight_guard = state.inflight.enter(&backend.slot);
+        // 连接层失败（目标槽被 idle 下线/刚崩溃）：立即拉起该槽并短等重试一次，
+        // 把“双槽全停”场景的 503 空窗从 auto-heal 的 ~30s 缩到亚秒级。
+        // 只重试传输层错误；4xx/5xx 响应原样透传不重试。
+        let response = {
+            let mut response = None;
+            for attempt in 0..2u8 {
+                let request = state
+                    .client
+                    .request(method.clone(), target.clone())
+                    .headers(clean_request_headers(&headers))
+                    .body(body.clone());
+                match request.send().await {
+                    Ok(resp) => {
+                        response = Some(resp);
+                        break;
+                    }
+                    Err(exc) => {
+                        if attempt == 0 {
+                            errors.push(json!({ "slot": backend.slot, "error": exc.to_string() }));
+                            state.manager.ensure_running(&backend.slot).await;
+                            tokio::time::sleep(Duration::from_millis(400)).await;
+                        }
+                    }
+                }
             }
+            response
+        };
+        let Some(response) = response else {
+            drop(inflight_guard);
+            continue;
         };
         let status = response.status();
         let response_headers = clean_response_headers(response.headers());
-        let stream = response.bytes_stream().map(|item| match item {
-            Ok(bytes) => Ok::<Bytes, std::convert::Infallible>(bytes),
-            Err(exc) => Ok(Bytes::from(format!("\n<!-- proxy stream error: {exc} -->"))),
+        let stream = response.bytes_stream().map(move |item| {
+            // guard 移入闭包：随流存活，流 Drop（完成或客户端断开）时递减在途计数
+            let _keep_inflight = &inflight_guard;
+            match item {
+                Ok(bytes) => Ok::<Bytes, std::convert::Infallible>(bytes),
+                Err(exc) => Ok(Bytes::from(format!("\n<!-- proxy stream error: {exc} -->"))),
+            }
         });
         let mut builder = Response::builder().status(status);
         for (name, value) in response_headers.iter() {

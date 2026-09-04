@@ -169,6 +169,8 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
 
     let addr: SocketAddr = format!("{}:{}", settings.host, settings.port).parse()?;
     let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(crate::shutdown::wait_for_shutdown_signal())
+        .await?;
     Ok(())
 }
