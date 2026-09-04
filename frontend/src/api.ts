@@ -1,4 +1,4 @@
-import type { FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderConfig, ProviderModelsResponse, RouterCapabilities, SearchProvidersConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, WeightConfig } from './types';
+import type { ActiveSessionsResponse, FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderConfig, ProviderModelsResponse, RouterCapabilities, SearchProvidersConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, WeightConfig } from './types';
 
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
@@ -53,6 +53,9 @@ export const api = {
   },
   usage(filters: Partial<FilterState> = {}) {
     return request<UsageSnapshot>(`/api/usage${queryFromFilters({ period: filters.period ?? 'all', start: filters.start ?? '', end: filters.end ?? '' })}`);
+  },
+  sessionsActive() {
+    return request<ActiveSessionsResponse>('/api/sessions/active');
   },
   usageSeries(params: {
     period?: string;

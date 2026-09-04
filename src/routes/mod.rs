@@ -76,6 +76,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         .route("/api/state", get(usage::api_state))
         .route("/api/usage", get(usage::api_usage))
         .route("/api/usage/series", get(usage::api_usage_series))
+        .route("/api/sessions/active", get(usage::api_sessions_active))
         .route("/api/usage/reset", post(usage::api_usage_reset))
         .route("/api/frozen/clear", post(usage::api_frozen_clear))
         .route(

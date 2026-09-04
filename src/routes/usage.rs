@@ -65,6 +65,10 @@ pub(crate) async fn api_usage_series(
     })
 }
 
+pub(crate) async fn api_sessions_active(State(app): State<AppState>) -> Response {
+    with_state_json(&app, |state| state.active_sessions())
+}
+
 pub(crate) async fn api_usage_reset(State(app): State<AppState>) -> Response {
     with_state_json(&app, |state| {
         state.reset_usage()?;

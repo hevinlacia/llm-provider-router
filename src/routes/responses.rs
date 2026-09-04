@@ -238,6 +238,7 @@ async fn call_responses_passthrough(
                 &usage_key_name(app, &key),
                 599,
                 None,
+                session_id.as_deref(),
             );
             continue;
         };
@@ -275,6 +276,7 @@ async fn call_responses_passthrough(
                     &usage_key_name(app, &key),
                     599,
                     None,
+                    session_id.as_deref(),
                 );
                 continue;
             }
@@ -304,6 +306,7 @@ async fn call_responses_passthrough(
                 &usage_key_name(app, &key),
                 status,
                 extract_usage(&content),
+                session_id.as_deref(),
             );
             crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
             continue;
@@ -323,6 +326,7 @@ async fn call_responses_passthrough(
             &usage_key_name(app, &key),
             status,
             extract_usage(&content),
+            session_id.as_deref(),
         );
         crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
 
@@ -377,6 +381,7 @@ async fn call_upstream_responses(
                 &usage_key_name(app, &key),
                 599,
                 None,
+                session_id.as_deref(),
             );
             continue;
         };
@@ -417,6 +422,7 @@ async fn call_upstream_responses(
                     &usage_key_name(app, &key),
                     599,
                     None,
+                    session_id.as_deref(),
                 );
                 continue;
             }
@@ -446,6 +452,7 @@ async fn call_upstream_responses(
                 &usage_key_name(app, &key),
                 status,
                 extract_usage(&content),
+                session_id.as_deref(),
             );
             crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
             continue;
@@ -465,6 +472,7 @@ async fn call_upstream_responses(
             &usage_key_name(app, &key),
             status,
             extract_usage(&content),
+            session_id.as_deref(),
         );
         crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
 

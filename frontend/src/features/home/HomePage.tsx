@@ -3,7 +3,33 @@ import { api } from '../../api';
 import { BarRow, CostTable, KpiCard, TokenTable, UsageTable } from '../../components/tables';
 import { costPer1k, formatMoney, formatPercent, number, providerOf, formatTokens } from '../../lib/format';
 import { TokenUnitSelect, useTokenUnit } from '../../lib/tokenUnit';
-import type { Bucket, FilterState, KeyConfig, StateResponse, TokenPriceConfig, UsageSnapshot } from '../../types';
+import type { ActiveSessionRow, ActiveSessionsResponse, Bucket, FilterState, KeyConfig, StateResponse, TokenPriceConfig, UsageSnapshot } from '../../types';
+
+function timeAgo(ts: number, now: number): string {
+  const seconds = Math.max(0, Math.round(now - ts));
+  if (seconds < 60) return `${seconds}s 前`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m 前`;
+  return `${Math.floor(seconds / 3600)}h 前`;
+}
+
+function sessionState(row: Pick<ActiveSessionRow, 'last_activity'>, now: number): { label: string; cls: string } {
+  const age = now - row.last_activity;
+  if (age < 60) return { label: 'live', cls: 'sess-state live' };
+  if (age < 300) return { label: 'active', cls: 'sess-state active' };
+  return { label: 'idle', cls: 'sess-state idle' };
+}
+
+/// 输出速率：优先 60s 实时窗口；空闲时退回 5 分钟均值（加 ~ 标记）。
+function sessionRate(row: Pick<ActiveSessionRow, 'output_tokens'>, unit: ReturnType<typeof useTokenUnit>['unit']): string {
+  const { '60s': s60, '5m': s5m } = row.output_tokens;
+  if (s60 > 0) return `${formatTokens(s60, unit)}/min`;
+  if (s5m > 0) return `~${formatTokens(Math.round(s5m / 5), unit)}/min`;
+  return '—';
+}
+
+function shortSessionId(id: string): string {
+  return id.length > 12 ? `${id.slice(0, 10)}…` : id;
+}
 
 export function HomePage() {
   const { unit } = useTokenUnit();
@@ -12,6 +38,7 @@ export function HomePage() {
   const [today, setToday] = useState<UsageSnapshot | null>(null);
   const [keyConfig, setKeyConfig] = useState<KeyConfig | null>(null);
   const [tokenPrices, setTokenPrices] = useState<TokenPriceConfig | null>(null);
+  const [sessions, setSessions] = useState<ActiveSessionsResponse | null>(null);
   const [error, setError] = useState('');
 
   const keyProviders = useMemo(() => {
@@ -28,16 +55,18 @@ export function HomePage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [stateData, todayData, keyData, priceData] = await Promise.all([
+      const [stateData, todayData, keyData, priceData, sessionsData] = await Promise.all([
         api.state(filters),
         api.usage({ period: 'today' }),
         api.keys(),
         api.tokenPrices(),
+        api.sessionsActive(),
       ]);
       setState(stateData);
       setToday(todayData);
       setKeyConfig(keyData);
       setTokenPrices(priceData);
+      setSessions(sessionsData);
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -122,6 +151,17 @@ export function HomePage() {
   const frozenRows = Object.entries(state?.frozen ?? {});
   const periodLabel = filters.period === 'month' ? 'This month' : filters.period === 'today' ? 'Today' : filters.period === 'day' ? 'Last 24h' : filters.period === 'all' ? 'All time' : filters.period;
 
+  const nowSec = Date.now() / 1000;
+  const sessionList = sessions?.sessions ?? [];
+  const unidentifiedRow = sessions?.unidentified ?? null;
+  const sessionsSummary = useMemo(() => {
+    if (!sessions) return 'loading…';
+    const identified = sessions.sessions.reduce((sum, row) => sum + row.requests, 0);
+    const total = identified + (sessions.unidentified?.requests ?? 0);
+    const coverage = total > 0 ? Math.round((identified / total) * 100) : 100;
+    return `${sessions.sessions.length} sessions · 识别率 ${coverage}%`;
+  }, [sessions]);
+
   return <section className="page">
     <div className="hero">
       <div className="hero-grid" aria-hidden />
@@ -159,6 +199,55 @@ export function HomePage() {
       <KpiCard label="Top Model (tokens)" value={topModelName} sub={topModelTokens ? `${formatTokens(topModelTokens, unit)} tokens · ${total?.total_tokens ? ((topModelTokens / total.total_tokens) * 100).toFixed(1) : '0'}%` : '—'} />
       <KpiCard label="Top Supplier (tokens)" value={topProviderName} sub={providerRows[0] ? `${formatTokens(providerRows[0][1].total_tokens, unit)} tokens · ${((providerRows[0][1].total_tokens / Math.max(1, total?.total_tokens ?? 1)) * 100).toFixed(1)}%` : '—'} />
       <KpiCard label="Cache Hit" value={formatPercent(total?.cache_hit_rate)} sub={`${formatTokens(total?.cached_tokens, unit)} cached · ${formatTokens((total?.prompt_tokens ?? 0) - (total?.cached_tokens ?? 0), unit)} uncached`} />
+    </section>
+
+    <section className="card panel">
+      <div className="section-title">
+        <h2>活跃会话</h2>
+        <span className="muted">{sessionsSummary}</span>
+      </div>
+      <p className="muted small">近 1 小时有交互的 session · 速率为窗口内输出 tokens/min（60s 实时，空闲时回退 5 分钟均值 ~）</p>
+      {sessionList.length || unidentifiedRow ? (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Session</th><th>状态</th><th>最后活跃</th><th>请求</th><th>错误</th><th>输出 (1h)</th><th>输出速率</th><th>模型</th><th>Key</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sessionList.map((row) => (
+                <tr key={row.session_id}>
+                  <td className="sess-id" title={row.session_id}>{shortSessionId(row.session_id)}</td>
+                  <td><span className={sessionState(row, nowSec).cls}>{sessionState(row, nowSec).label}</span></td>
+                  <td>{timeAgo(row.last_activity, nowSec)}</td>
+                  <td>{number.format(row.requests)}</td>
+                  <td>{number.format(row.errors)}</td>
+                  <td>{formatTokens(row.output_tokens['1h'], unit)}</td>
+                  <td>{sessionRate(row, unit)}</td>
+                  <td className="sess-models">{(row.models ?? []).join(', ') || '—'}</td>
+                  <td className="sess-models">{row.key_name ?? '—'}</td>
+                </tr>
+              ))}
+              {unidentifiedRow && (
+                <tr>
+                  <td className="sess-id muted" title="请求未携带可识别的 session 标识">未识别</td>
+                  <td><span className="sess-state idle">—</span></td>
+                  <td>{timeAgo(unidentifiedRow.last_activity, nowSec)}</td>
+                  <td>{number.format(unidentifiedRow.requests)}</td>
+                  <td>{number.format(unidentifiedRow.errors)}</td>
+                  <td>{formatTokens(unidentifiedRow.output_tokens['1h'], unit)}</td>
+                  <td>{sessionRate(unidentifiedRow, unit)}</td>
+                  <td className="sess-models">—</td>
+                  <td className="sess-models">—</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="muted">近 1 小时没有请求（或所有请求都无 session 标识）。</p>
+      )}
     </section>
 
     <section className="insights">

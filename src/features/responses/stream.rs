@@ -133,7 +133,7 @@ pub(crate) async fn stream_responses_route(
                     }
                 };
                 let Some(key_value) = key_value else {
-                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None);
+                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None, session_id.as_deref());
                     last_error = Some(format!("missing key value for {}", usage_key_name(&app, &key)));
                     continue;
                 };
@@ -167,7 +167,7 @@ pub(crate) async fn stream_responses_route(
                 let response = match response {
                     Some(r) => r,
                     None => {
-                        record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None);
+                        record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None, session_id.as_deref());
                         last_error = Some(last_exc.unwrap_or_else(|| "upstream connect error".to_string()));
                         continue;
                     }
@@ -180,7 +180,7 @@ pub(crate) async fn stream_responses_route(
                     freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
                     let usage = extract_usage_from_stream(&body_text)
                         .or_else(|| serde_json::from_str::<Value>(&body_text).ok().and_then(|v| v.get("usage").filter(|u| u.is_object()).cloned()));
-                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref());
+                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref(), session_id.as_deref());
                     log_upstream_failure(&alias, status, &body_text);
                     // 记录可重试失败：若本 alias 所有 key 都因此类状态（如 429）失败
                     // 且没有后备 target，流尾必须 yield 一个带状态的 SSE error 事件，
@@ -199,7 +199,7 @@ pub(crate) async fn stream_responses_route(
                 if status >= 400 {
                     let body_text = response.text().await.unwrap_or_default();
                     freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
-                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, None);
+                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, None, session_id.as_deref());
                     log_upstream_failure(&alias, status, &body_text);
                     // 转成 Responses SSE error 事件
                     let err = translate::upstream_error_to_responses(&body_text);
@@ -266,7 +266,7 @@ pub(crate) async fn stream_responses_route(
                 freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
                 let usage = extract_usage_from_stream(&body_text)
                     .or_else(|| extract_responses_usage_from_stream(&body_text));
-                record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref());
+                record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref(), session_id.as_deref());
                 log_upstream_failure(&alias, status, &body_text);
                 return;
             }

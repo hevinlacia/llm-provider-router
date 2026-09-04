@@ -67,6 +67,7 @@ impl UsageStore {
             CREATE INDEX IF NOT EXISTS idx_usage_created_at ON usage_events(created_at);
             "#,
         )?;
+        ensure_column(&self.conn, "usage_events", "session_id", "TEXT")?;
         ensure_column(
             &self.conn,
             "usage_events",
@@ -80,12 +81,14 @@ impl UsageStore {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn record(
         &self,
         model: &str,
         key_name: &str,
         status_code: u16,
         usage: Option<&Value>,
+        session_id: Option<&str>,
     ) -> anyhow::Result<()> {
         let prompt_tokens = usage
             .and_then(|u| u.get("prompt_tokens"))
@@ -100,22 +103,24 @@ impl UsageStore {
             .and_then(Value::as_i64)
             .unwrap_or(0);
         let cached_tokens = extract_cached_tokens(usage);
+        let session_id = session_id.filter(|value| !value.is_empty());
         self.conn.execute(
             r#"
             INSERT INTO usage_events(
-                created_at, model, key_name, status_code,
+                created_at, model, key_name, status_code, session_id,
                 prompt_tokens, cached_tokens, completion_tokens, total_tokens
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
             params![
                 now_seconds(),
                 model,
                 key_name,
                 i64::from(status_code),
+                session_id,
                 prompt_tokens,
                 cached_tokens,
                 completion_tokens,
-                total_tokens
+                total_tokens,
             ],
         )?;
         Ok(())
@@ -128,6 +133,103 @@ impl UsageStore {
             params![now_seconds().to_string()],
         )?;
         Ok(())
+    }
+
+    /// 活跃 session 聚合：近 window_secs 内有交互的 session_id 分组，
+    /// 统计 60s / 5min / 全窗三个时间窗的输出 token 与请求错误数。
+    /// 无 session_id 的事件合并进 `unidentified` 一行，便于前端展示识别覆盖率。
+    pub fn active_sessions(&self, window_secs: i64, now: f64) -> anyhow::Result<Value> {
+        let t60 = now - 60.0;
+        let t5m = now - 300.0;
+        let t1h = now - window_secs as f64;
+
+        // SQLite 裸列 + MAX() 语义：非聚合列取自 MAX(created_at) 所在行（即该 session 最近一次请求的 key）。
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                COALESCE(session_id, ''),
+                MAX(created_at),
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN created_at > ?1 THEN completion_tokens ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN created_at > ?2 THEN completion_tokens ELSE 0 END), 0),
+                COALESCE(SUM(completion_tokens), 0),
+                key_name
+            FROM usage_events
+            WHERE created_at > ?3
+            GROUP BY (session_id IS NULL), session_id
+            ORDER BY MAX(created_at) DESC
+            "#,
+        )?;
+        let rows = stmt.query_map(params![t60, t5m, t1h], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, f64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, Option<String>>(7)?,
+            ))
+        })?;
+        let mut sessions: Vec<Value> = Vec::new();
+        let mut unidentified: Option<Value> = None;
+        for row in rows {
+            let (session_id, last_at, requests, errors, out60, out5m, out1h, key_name) = row?;
+            let mut item = json!({
+                "session_id": session_id,
+                "last_activity": last_at,
+                "requests": requests,
+                "errors": errors,
+                "output_tokens": { "60s": out60, "5m": out5m, "1h": out1h },
+                "key_name": key_name,
+            });
+            if session_id.is_empty() {
+                if let Some(obj) = item.as_object_mut() {
+                    obj.remove("session_id");
+                }
+                unidentified = Some(item);
+            } else {
+                sessions.push(item);
+            }
+        }
+
+        // 每个 session 用到的 model（按 token 降序，最多 3 个）
+        let mut models_stmt = self.conn.prepare(
+            r#"
+            SELECT session_id, model, SUM(total_tokens) AS tokens
+            FROM usage_events
+            WHERE created_at > ?1 AND session_id IS NOT NULL
+            GROUP BY session_id, model
+            ORDER BY tokens DESC
+            "#,
+        )?;
+        let mut models_by_session: HashMap<String, Vec<String>> = HashMap::new();
+        let model_rows = models_stmt.query_map(params![t1h], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in model_rows {
+            let (session_id, model) = row?;
+            let list = models_by_session.entry(session_id).or_default();
+            if list.len() < 3 {
+                list.push(model);
+            }
+        }
+        for session in &mut sessions {
+            if let Some(id) = session.get("session_id").and_then(Value::as_str) {
+                if let Some(models) = models_by_session.get(id) {
+                    session["models"] = json!(models);
+                }
+            }
+        }
+
+        Ok(json!({
+            "window_seconds": window_secs,
+            "active_threshold_seconds": 300,
+            "sessions": sessions,
+            "unidentified": unidentified,
+        }))
     }
 
     pub fn snapshot(
@@ -678,8 +780,12 @@ mod tests {
     #[test]
     fn usage_snapshot_casts_status_codes_to_string_keys() {
         let store = UsageStore::new(":memory:").unwrap();
-        store.record("glm-latest-auto", "hevin", 200, None).unwrap();
-        store.record("glm-latest-auto", "hevin", 599, None).unwrap();
+        store
+            .record("glm-latest-auto", "hevin", 200, None, None)
+            .unwrap();
+        store
+            .record("glm-latest-auto", "hevin", 599, None, None)
+            .unwrap();
 
         let snapshot = store.snapshot("all", None, None, None).unwrap();
 
@@ -697,7 +803,7 @@ mod tests {
             "total_tokens": 125
         });
         store
-            .record("glm-latest-auto", "hevin", 200, Some(&usage))
+            .record("glm-latest-auto", "hevin", 200, Some(&usage), None)
             .unwrap();
 
         let snapshot = store.snapshot("all", None, None, None).unwrap();
@@ -711,13 +817,13 @@ mod tests {
     fn series_filters_by_provider_key_names() {
         let store = UsageStore::new(":memory:").unwrap();
         store
-            .record("glm-latest-auto", "providerA/key1", 200, None)
+            .record("glm-latest-auto", "providerA/key1", 200, None, None)
             .unwrap();
         store
-            .record("glm-latest-auto", "providerA/key2", 200, None)
+            .record("glm-latest-auto", "providerA/key2", 200, None, None)
             .unwrap();
         store
-            .record("deepseek-chat", "providerB/key3", 200, None)
+            .record("deepseek-chat", "providerB/key3", 200, None, None)
             .unwrap();
 
         let keys = vec!["providerA/key1".to_string(), "providerA/key2".to_string()];
@@ -735,7 +841,7 @@ mod tests {
     fn series_empty_key_filter_returns_empty() {
         let store = UsageStore::new(":memory:").unwrap();
         store
-            .record("glm-latest-auto", "providerA/key1", 200, None)
+            .record("glm-latest-auto", "providerA/key1", 200, None, None)
             .unwrap();
 
         let series = store
@@ -744,5 +850,52 @@ mod tests {
         let obj = series["series"].as_object().unwrap();
 
         assert!(obj.is_empty());
+    }
+
+    #[test]
+    fn active_sessions_groups_sessions_and_unidentified() {
+        let store = UsageStore::new(":memory:").unwrap();
+        let usage_a = json!({ "prompt_tokens": 10, "completion_tokens": 100, "total_tokens": 110 });
+        let usage_b = json!({ "prompt_tokens": 10, "completion_tokens": 30, "total_tokens": 40 });
+        store
+            .record("model-a", "ark/k1", 200, Some(&usage_a), Some("sess-aaa"))
+            .unwrap();
+        store
+            .record("model-a", "ark/k1", 200, Some(&usage_a), Some("sess-aaa"))
+            .unwrap();
+        store
+            .record(
+                "model-b",
+                "opencode/k2",
+                200,
+                Some(&usage_b),
+                Some("sess-bbb"),
+            )
+            .unwrap();
+        // 无 session 标识的错误请求 → unidentified 聚合行
+        store.record("model-c", "ark/k1", 500, None, None).unwrap();
+
+        let result = store.active_sessions(3600, now_seconds()).unwrap();
+
+        let sessions = result["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 2);
+        let aaa = sessions
+            .iter()
+            .find(|s| s["session_id"] == "sess-aaa")
+            .unwrap();
+        assert_eq!(aaa["requests"], 2);
+        assert_eq!(aaa["output_tokens"]["60s"], 200);
+        assert_eq!(aaa["output_tokens"]["1h"], 200);
+        assert_eq!(aaa["models"][0], "model-a");
+        assert_eq!(aaa["key_name"], "ark/k1");
+        let bbb = sessions
+            .iter()
+            .find(|s| s["session_id"] == "sess-bbb")
+            .unwrap();
+        assert_eq!(bbb["output_tokens"]["5m"], 30);
+
+        let unidentified = result["unidentified"].as_object().unwrap();
+        assert_eq!(unidentified["requests"], 1);
+        assert_eq!(unidentified["errors"], 1);
     }
 }

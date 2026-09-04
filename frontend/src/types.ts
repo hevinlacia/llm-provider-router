@@ -32,6 +32,23 @@ export type UsageSnapshot = {
   db_path: string;
 };
 
+export type ActiveSessionRow = {
+  session_id: string;
+  last_activity: number;
+  requests: number;
+  errors: number;
+  output_tokens: { '60s': number; '5m': number; '1h': number };
+  key_name: string | null;
+  models?: string[];
+};
+
+export type ActiveSessionsResponse = {
+  window_seconds: number;
+  active_threshold_seconds: number;
+  sessions: ActiveSessionRow[];
+  unidentified: (Omit<ActiveSessionRow, 'session_id'>) | null;
+};
+
 export type StateResponse = {
   ok: boolean;
   frozen: Record<string, { seconds_remaining: number; reason: string }>;
