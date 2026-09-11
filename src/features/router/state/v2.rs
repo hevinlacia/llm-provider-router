@@ -127,7 +127,13 @@ impl RouterState {
     /// 物理模型、逻辑模型（策略 + 路由目标）。v2 未启用时返回最小对象。
     pub fn v2_status(&mut self) -> Value {
         let Some(cfg) = self.v2.as_ref() else {
-            return json!({ "v2_enabled": false });
+            let mut status = json!({ "v2_enabled": false });
+            if self.settings.v2_config_enabled {
+                if let Some(err) = &self.v2_load_error {
+                    status["v2_error"] = json!(err);
+                }
+            }
+            return status;
         };
         let mut providers = serde_json::Map::new();
         let provider_models =
@@ -252,7 +258,13 @@ impl RouterState {
     /// 全部不可用时回退到全部目标的 min；未声明窗口的目标按 0 处理（不拉大 min）。
     pub fn router_capabilities(&mut self) -> Value {
         let Some(cfg) = self.v2.as_ref().cloned() else {
-            return json!({ "v2_enabled": false, "models": [] });
+            let mut status = json!({ "v2_enabled": false, "models": [] });
+            if self.settings.v2_config_enabled {
+                if let Some(err) = &self.v2_load_error {
+                    status["v2_error"] = json!(err);
+                }
+            }
+            return status;
         };
         // 为了读 frozen 需要 &mut，但 cfg 已克隆，避免借用冲突
         let mut models_out: Vec<Value> = Vec::new();
@@ -569,13 +581,13 @@ impl RouterState {
         if targets.is_empty() {
             anyhow::bail!("route must have at least one target");
         }
-        // 用磁盘当前配置做引用校验（reload 前）
-        let cfg = config_v2::load_v2_config()?;
+        // 用磁盘当前配置做引用校验（reload 前）；配置本身校验失败时宽容加载，避免修复死锁
+        let cfg = Self::load_cfg_for_edit()?;
         if !cfg.logical_models.contains_key(name) {
             anyhow::bail!("logical model {name} not found");
         }
         Self::auto_register_target_models(self, &cfg, &targets)?;
-        let cfg = config_v2::load_v2_config()?;
+        let cfg = Self::load_cfg_for_edit()?;
         Self::validate_targets(&cfg, name, &targets)?;
         let mut logical = config_v2::load_logical_models_file(config_v2::V2_LOGICAL_MODELS_PATH)?;
         let lm = logical
@@ -606,7 +618,7 @@ impl RouterState {
         if targets.is_empty() {
             anyhow::bail!("route must have at least one target");
         }
-        let cfg = config_v2::load_v2_config()?;
+        let cfg = Self::load_cfg_for_edit()?;
         if cfg.logical_models.contains_key(name) {
             anyhow::bail!("logical model {name} already exists");
         }
@@ -617,7 +629,7 @@ impl RouterState {
             anyhow::bail!("logical model name conflicts with virtual model name: {name}");
         }
         Self::auto_register_target_models(self, &cfg, &targets)?;
-        let cfg = config_v2::load_v2_config()?;
+        let cfg = Self::load_cfg_for_edit()?;
         Self::validate_targets(&cfg, name, &targets)?;
         let mut logical = config_v2::load_logical_models_file(config_v2::V2_LOGICAL_MODELS_PATH)?;
         logical.logical_models.insert(
@@ -728,7 +740,7 @@ impl RouterState {
             anyhow::bail!("upstream model must not be empty");
         }
         // 校验供应商存在
-        let cfg = config_v2::load_v2_config()?;
+        let cfg = Self::load_cfg_for_edit()?;
         if !cfg.providers.contains_key(provider) {
             anyhow::bail!("unknown provider: {provider}");
         }
@@ -771,6 +783,17 @@ impl RouterState {
         Ok(self.v2_status())
     }
 
+    /// 编辑类 API（update/create 模型池与虚拟模型）引用校验用的配置加载：
+    /// 默认严格加载；配置本身校验失败（如某池 targets 为空）时宽容加载，
+    /// 保证坏配置仍能通过编辑/修复恢复，而不是在第一步就死锁。
+    /// targets 引用校验由调用方（validate_targets）完成；文件缺失/解析错误仍返回 Err。
+    fn load_cfg_for_edit() -> anyhow::Result<config_v2::V2Config> {
+        match config_v2::load_v2_config() {
+            Ok(cfg) => Ok(cfg),
+            Err(_) => config_v2::load_v2_config_unvalidated(),
+        }
+    }
+
     /// 重新加载 v2 配置（供应商编辑写回后热生效；热加载 watcher 亦复用）。
     /// 加载失败时保留当前已加载配置（last-good），避免半写/坏文件清空运行时路由能力；
     /// 仅启动期首次加载失败才回退 legacy（v2 = None）。
@@ -781,7 +804,26 @@ impl RouterState {
                 config_v2::V2_MODELS_PATH,
                 config_v2::V2_LOGICAL_MODELS_PATH,
             );
-            self.v2 = keep_last_good_on_error(self.v2.take(), config_v2::load_v2_config());
+            match config_v2::load_v2_config() {
+                Ok(cfg) => {
+                    self.v2 = Some(cfg);
+                    self.v2_load_error = None;
+                }
+                Err(err) => {
+                    // 热加载/编辑回写遇到坏文件（半写、校验失败）时保留 last-good，
+                    // 避免运行时路由能力被清空；仅启动期首次加载失败才回退 legacy。
+                    // v2_load_error 无论是否保留 last-good 都记录，经 v2_status() 透出供诊断。
+                    self.v2_load_error = Some(err.to_string());
+                    if self.v2.is_some() {
+                        eprintln!(
+                            "llm-provider-router v2 config reload failed; keeping last good config: {err:#}"
+                        );
+                    } else {
+                        eprintln!("llm-provider-router v2 config load failed: {err:#}");
+                        self.v2 = None;
+                    }
+                }
+            }
         }
     }
 
@@ -789,50 +831,5 @@ impl RouterState {
     pub fn hot_reload_v2(&mut self) -> bool {
         self.reload_v2();
         self.v2.is_some()
-    }
-}
-
-/// 重载合并策略：成功则替换；失败且已有旧配置时保留旧配置（热加载不因坏文件清空运行时配置），
-/// 失败且无旧配置（启动期）维持 None 回退 legacy。
-fn keep_last_good_on_error<T>(current: Option<T>, result: anyhow::Result<T>) -> Option<T> {
-    match result {
-        Ok(config) => Some(config),
-        Err(error) => {
-            if current.is_some() {
-                eprintln!(
-                    "llm-provider-router v2 config reload failed; keeping last good config: {error:#}"
-                );
-                current
-            } else {
-                eprintln!("llm-provider-router v2 config load failed: {error:#}");
-                None
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::keep_last_good_on_error;
-
-    #[test]
-    fn success_replaces_current() {
-        assert_eq!(keep_last_good_on_error(Some(1), Ok(2)), Some(2));
-    }
-
-    #[test]
-    fn error_keeps_last_good() {
-        assert_eq!(
-            keep_last_good_on_error(Some(1), Err(anyhow::anyhow!("bad json"))),
-            Some(1)
-        );
-    }
-
-    #[test]
-    fn error_without_current_stays_none() {
-        assert_eq!(
-            keep_last_good_on_error::<i32>(None, Err(anyhow::anyhow!("bad json"))),
-            None
-        );
     }
 }

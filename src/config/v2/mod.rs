@@ -21,11 +21,13 @@ mod validate;
 pub use fold::fold_to_aliases;
 #[cfg(test)]
 pub use io::load_v2_config_from;
+#[cfg(test)]
+pub use io::load_v2_config_from_unvalidated;
 pub use io::{
     load_logical_models_file, load_models_file, load_provider_models_file, load_providers_file,
-    load_v2_config, load_virtual_models_file, migrate_legacy_logical_caps,
-    write_logical_models_file, write_models_file, write_provider_models_file, write_providers_file,
-    write_virtual_models_file,
+    load_v2_config, load_v2_config_unvalidated, load_virtual_models_file,
+    migrate_legacy_logical_caps, write_logical_models_file, write_models_file,
+    write_provider_models_file, write_providers_file, write_virtual_models_file,
 };
 pub use mutate::{register_physical_models, rename_provider_in_logical, rename_provider_in_models};
 pub use resolve::{resolve_targets, TargetCandidate};
