@@ -239,6 +239,8 @@ export type V2LogicalModel = {
 
 export type V2Status = {
   v2_enabled: boolean;
+  /** v2 配置加载失败原因（v2_enabled=false 且 v2 开关启用时返回，如某模型池 targets 为空） */
+  v2_error?: string;
   providers?: Record<string, V2ProviderStatus>;
   models?: V2PhysicalModel[];
   logical_models?: Record<string, V2LogicalModel>;

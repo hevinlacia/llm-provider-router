@@ -143,7 +143,7 @@ export function SupplierModelConfigPanel({ v2, tokenPrices, onSaved, onError }: 
   }, [providers, selectedProvider]);
 
   if (!v2) return <section className="card settings-section"><h2>Supplier Model Config</h2><p className="muted">Loading supplier model configuration...</p></section>;
-  if (!v2.v2_enabled) return <section className="card settings-section"><h2>Supplier Model Config</h2><p className="muted">Layered routing disabled (set LLM_PROVIDER_ROUTER_V2=1 to enable).</p></section>;
+  if (!v2.v2_enabled) return <section className="card settings-section"><h2>Supplier Model Config</h2><p className="muted">{v2.v2_error ? `V2 config load failed: ${v2.v2_error}` : 'Layered routing disabled (set LLM_PROVIDER_ROUTER_V2=1 to enable).'}</p></section>;
 
   const prices = tokenPrices?.models ?? [];
   // 只展示实际用到的模型：已注册的物理模型（models.json）；不罗列供应商全量模型列表

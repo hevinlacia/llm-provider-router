@@ -13,7 +13,7 @@ export function V2Panel({ config, onSaved, onError }: { config: V2Status | null;
   const [viewingModels, setViewingModels] = useState<string | null>(null);
   const [viewingVirtual, setViewingVirtual] = useState<string | null>(null);
   if (!config) return <section className="card"><h2>Providers & Logical Models</h2><p className="muted">Loading routing settings...</p></section>;
-  if (!config.v2_enabled) return <section className="card"><div className="section-title"><h2>Providers & Logical Models</h2><span className="muted">disabled</span></div><p className="muted">Layered routing is disabled (set LLM_PROVIDER_ROUTER_V2=1 to enable).</p></section>;
+  if (!config.v2_enabled) return <section className="card"><div className="section-title"><h2>Providers & Logical Models</h2><span className="muted">disabled</span></div><p className="muted">{config.v2_error ? `V2 config load failed: ${config.v2_error}` : 'Layered routing is disabled (set LLM_PROVIDER_ROUTER_V2=1 to enable).'}</p></section>;
   const providers = Object.entries(config.providers ?? {}).sort(([a], [b]) => a.localeCompare(b));
   const logical = Object.entries(config.logical_models ?? {}).sort(([a], [b]) => a.localeCompare(b));
   const editingProvider = editing ? (config.providers?.[editing] ?? null) : null;
