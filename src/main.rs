@@ -4,6 +4,7 @@ mod config_v2;
 mod diag;
 mod features;
 mod front_proxy;
+mod hot_reload;
 mod json_config;
 mod routes;
 mod search;

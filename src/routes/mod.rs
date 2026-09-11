@@ -67,6 +67,8 @@ fn default_series_group_by() -> String {
 
 pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     let app_state = AppState::new(settings.clone())?;
+    // v2 配置热加载：文件变更自动重载，手工编辑 config/*.json 无需 reload-env/重启。
+    crate::hot_reload::spawn_watcher(app_state.clone());
     let app = Router::new()
         .route("/analytics", get(usage::dashboard))
         .route("/health", get(usage::health))
