@@ -771,7 +771,9 @@ impl RouterState {
         Ok(self.v2_status())
     }
 
-    /// 重新加载 v2 配置（供应商编辑写回后热生效）。
+    /// 重新加载 v2 配置（供应商编辑写回后热生效；热加载 watcher 亦复用）。
+    /// 加载失败时保留当前已加载配置（last-good），避免半写/坏文件清空运行时路由能力；
+    /// 仅启动期首次加载失败才回退 legacy（v2 = None）。
     pub(super) fn reload_v2(&mut self) {
         if self.settings.v2_config_enabled {
             // 逻辑模型不再持有能力参数；编辑回写后如残留 legacy 字段（旧版本文件）一并迁移。
@@ -779,7 +781,58 @@ impl RouterState {
                 config_v2::V2_MODELS_PATH,
                 config_v2::V2_LOGICAL_MODELS_PATH,
             );
-            self.v2 = config_v2::load_v2_config().ok();
+            self.v2 = keep_last_good_on_error(self.v2.take(), config_v2::load_v2_config());
         }
+    }
+
+    /// 热加载 watcher 入口：重读 v2 配置文件，返回重载后 v2 是否可用。
+    pub fn hot_reload_v2(&mut self) -> bool {
+        self.reload_v2();
+        self.v2.is_some()
+    }
+}
+
+/// 重载合并策略：成功则替换；失败且已有旧配置时保留旧配置（热加载不因坏文件清空运行时配置），
+/// 失败且无旧配置（启动期）维持 None 回退 legacy。
+fn keep_last_good_on_error<T>(current: Option<T>, result: anyhow::Result<T>) -> Option<T> {
+    match result {
+        Ok(config) => Some(config),
+        Err(error) => {
+            if current.is_some() {
+                eprintln!(
+                    "llm-provider-router v2 config reload failed; keeping last good config: {error:#}"
+                );
+                current
+            } else {
+                eprintln!("llm-provider-router v2 config load failed: {error:#}");
+                None
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::keep_last_good_on_error;
+
+    #[test]
+    fn success_replaces_current() {
+        assert_eq!(keep_last_good_on_error(Some(1), Ok(2)), Some(2));
+    }
+
+    #[test]
+    fn error_keeps_last_good() {
+        assert_eq!(
+            keep_last_good_on_error(Some(1), Err(anyhow::anyhow!("bad json"))),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn error_without_current_stays_none() {
+        assert_eq!(
+            keep_last_good_on_error::<i32>(None, Err(anyhow::anyhow!("bad json"))),
+            None
+        );
     }
 }
