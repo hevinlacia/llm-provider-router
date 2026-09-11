@@ -638,3 +638,35 @@ fn migrate_legacy_logical_caps_sinks_to_physical_and_cleans_logical() {
     let again = super::migrate_legacy_logical_caps(&models_path, &logical_path).unwrap();
     assert!(!again);
 }
+
+#[test]
+fn unvalidated_load_allows_empty_targets_for_repair() {
+    let dir = std::env::temp_dir().join(format!("lpr-v2-test-{}-unvalidated", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    let p = write_temp(&dir, "providers.json", PROVIDERS);
+    let m = write_temp(&dir, "models.json", MODELS);
+    let broken = r#"{
+      "logical_models": {
+        "broken-pool": {
+          "params": {},
+          "route": { "strategy": "priority", "targets": [] }
+        },
+        "good-pool": {
+          "params": {},
+          "route": { "strategy": "priority", "targets": [{ "model": "ark/deepseek-v4-flash", "weight": null }] }
+        }
+      }
+    }"#;
+    let l = write_temp(&dir, "logical.json", broken);
+
+    // 严格加载：单个坏池（空 targets）导致整体失败，错误信息指向坏池。
+    let strict = load_v2_config_from(&p, &m, &l, "/nonexistent/virtual-models.json");
+    assert!(strict.is_err(), "空 targets 应导致严格加载失败");
+    assert!(strict.unwrap_err().to_string().contains("no targets"));
+
+    // 宽容加载：跳过 validate，供编辑类 API 在坏配置下仍能引用校验/修复。
+    let lenient = load_v2_config_from_unvalidated(&p, &m, &l, "/nonexistent/virtual-models.json");
+    let cfg = lenient.expect("宽容加载应成功");
+    assert!(cfg.logical_models.contains_key("broken-pool"));
+    assert!(cfg.logical_models.contains_key("good-pool"));
+}

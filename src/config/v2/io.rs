@@ -12,12 +12,26 @@ use std::path::Path;
 pub fn load_v2_config() -> anyhow::Result<V2Config> {
     // 一次性迁移：把 logical-models.json 遗留的能力参数（thinking map/format/reasoning/input）
     // 下沉到其路由的物理模型，并清理逻辑模型字段（逻辑模型不再持有能力参数）。
-    migrate_legacy_logical_caps(&V2_MODELS_PATH, &V2_LOGICAL_MODELS_PATH)?;
+    migrate_legacy_logical_caps(V2_MODELS_PATH, V2_LOGICAL_MODELS_PATH)?;
     load_v2_config_from(
-        &V2_PROVIDERS_PATH,
-        &V2_MODELS_PATH,
-        &V2_LOGICAL_MODELS_PATH,
-        &V2_VIRTUAL_MODELS_PATH,
+        V2_PROVIDERS_PATH,
+        V2_MODELS_PATH,
+        V2_LOGICAL_MODELS_PATH,
+        V2_VIRTUAL_MODELS_PATH,
+    )
+}
+
+/// 宽容加载：跳过最终 validate（文件缺失/解析错误仍会失败）。
+/// 供坏配置（validate 失败，如某模型池 targets 为空）时的修复路径使用：
+/// 编辑类 API 的引用校验由调用方对当前编辑对象完成，而不是在加载阶段整体拒之门外。
+pub fn load_v2_config_unvalidated() -> anyhow::Result<V2Config> {
+    migrate_legacy_logical_caps(V2_MODELS_PATH, V2_LOGICAL_MODELS_PATH)?;
+    load_v2_config_inner(
+        V2_PROVIDERS_PATH,
+        V2_MODELS_PATH,
+        V2_LOGICAL_MODELS_PATH,
+        V2_VIRTUAL_MODELS_PATH,
+        false,
     )
 }
 
@@ -28,13 +42,43 @@ pub fn load_v2_config_from(
     logical_models_path: &str,
     virtual_models_path: &str,
 ) -> anyhow::Result<V2Config> {
+    load_v2_config_inner(
+        providers_path,
+        models_path,
+        logical_models_path,
+        virtual_models_path,
+        true,
+    )
+}
+
+/// 供测试注入路径的宽容加载入口（跳过 validate）。
+#[cfg(test)]
+pub fn load_v2_config_from_unvalidated(
+    providers_path: &str,
+    models_path: &str,
+    logical_models_path: &str,
+    virtual_models_path: &str,
+) -> anyhow::Result<V2Config> {
+    load_v2_config_inner(
+        providers_path,
+        models_path,
+        logical_models_path,
+        virtual_models_path,
+        false,
+    )
+}
+
+fn load_v2_config_inner(
+    providers_path: &str,
+    models_path: &str,
+    logical_models_path: &str,
+    virtual_models_path: &str,
+    validated: bool,
+) -> anyhow::Result<V2Config> {
     let providers: V2ProviderFile = read_json(providers_path)?;
     let models: V2ModelsFile = read_json(models_path)?;
     let logical: V2LogicalModelsFile = read_json(logical_models_path)?;
-    let virtual_file: V2VirtualModelsFile = match read_json(virtual_models_path) {
-        Ok(file) => file,
-        Err(_) => V2VirtualModelsFile::default(),
-    };
+    let virtual_file: V2VirtualModelsFile = read_json(virtual_models_path).unwrap_or_default();
 
     let cfg = V2Config {
         providers: providers.providers,
@@ -42,7 +86,9 @@ pub fn load_v2_config_from(
         logical_models: logical.logical_models,
         virtual_models: virtual_file.virtual_models,
     };
-    validate(&cfg)?;
+    if validated {
+        validate(&cfg)?;
+    }
     Ok(cfg)
 }
 

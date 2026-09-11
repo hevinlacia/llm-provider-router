@@ -73,6 +73,9 @@ pub struct RouterState {
     api_keys_store: ApiKeysStore,
     /// v2 分层配置（加载失败为 None，回退旧逻辑）。
     v2: Option<config_v2::V2Config>,
+    /// v2 配置加载失败原因（v2 为 None 且 v2_config_enabled 时经 /api/config/v2
+    /// 的 v2_error 字段透出，便于前端诊断是配置损坏而不是开关关闭）。
+    v2_load_error: Option<String>,
 }
 
 impl RouterState {
@@ -170,11 +173,15 @@ impl RouterState {
             }
         }
         // v2 分层配置：默认启用（环境变量 LLM_PROVIDER_ROUTER_V2=0 可回退旧逻辑）。
-        // 加载失败（文件缺失/解析错误）时静默回退，不阻塞启动。
-        let v2 = if settings.v2_config_enabled {
-            config_v2::load_v2_config().ok()
+        // 加载失败（文件缺失/解析错误/校验失败）时静默回退，不阻塞启动；
+        // 失败原因保留在 v2_load_error，经 v2_status() 透出供诊断。
+        let (v2, v2_load_error) = if settings.v2_config_enabled {
+            match config_v2::load_v2_config() {
+                Ok(cfg) => (Some(cfg), None),
+                Err(err) => (None, Some(err.to_string())),
+            }
         } else {
-            None
+            (None, None)
         };
         let state = Self {
             settings,
@@ -189,6 +196,7 @@ impl RouterState {
             model_alias_config,
             api_keys_store,
             v2,
+            v2_load_error,
         };
         Ok(state)
     }
