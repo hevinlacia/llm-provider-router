@@ -1,0 +1,35 @@
+frontend/src/features/settings/v2.tsx
+  62afb6aba7b3663d 16
+src/config/v2/io.rs
+  62afb6aba7b3663d 24-34,44-76,81,89-91
+frontend/src/types.ts
+  62afb6aba7b3663d 242-243
+frontend/src/features/settings/supplierModels.tsx
+  62afb6aba7b3663d 146
+src/features/router/state/v2.rs
+  62afb6aba7b3663d 130-136,261-267,584-585,590,621,632,743,786-796,805-814
+src/config/v2/mod.rs
+  62afb6aba7b3663d 24-25,28-30
+src/features/router/state/mod.rs
+  62afb6aba7b3663d 76-78,176-182,184,199
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "cd7a636f9606be8482a74f5bde7d0e75cd8e75ca",
+  "prompts": {
+    "62afb6aba7b3663d": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a08b17-313b-75e9-877d-ea88d84eff5f",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 115,
+      "total_deletions": 25,
+      "accepted_lines": 115,
+      "overriden_lines": 0
+    }
+  }
+}
