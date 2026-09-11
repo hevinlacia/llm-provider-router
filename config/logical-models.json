@@ -1,203 +1,17 @@
 {
   "logical_models": {
-    "glm-5.3-flash-auto": {
+    "glm-latest-flash-auto": {
       "params": {},
       "route": {
         "strategy": "priority",
         "targets": [
           {
             "model": "ark/glm-5.3-flash",
-            "weight": 1
+            "weight": null
           }
         ]
       },
       "display_name": null
-    },
-    "low-model-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "glm-5.3-flash-auto",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "Low Model Auto"
-    },
-    "deepseek-v4-pro-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "ark/deepseek-v4-pro",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "DeepSeek V4 Pro Auto"
-    },
-    "deepseek-v4-flash-official": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "deepseek-official/deepseek-v4-flash-vision-exp",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "DeepSeek V4 Flash Official"
-    },
-    "deepseek-v4-flash-auto": {
-      "params": {},
-      "route": {
-        "strategy": "weighted",
-        "targets": [
-          {
-            "model": "ark/deepseek-v4-flash-260801",
-            "weight": 2
-          }
-        ]
-      },
-      "display_name": "DeepSeek V4 Flash Auto"
-    },
-    "medium-model-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "ark/glm-5.3-flash",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "Medium Model Auto"
-    },
-    "openai-gpt-5.5-hevin": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "aixhan/gpt-5.5",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "OpenAI GPT-5.5 Hevin"
-    },
-    "gpt-medium-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "aixhan/gpt-5.6-terra",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "GPT Medium Latest Auto"
-    },
-    "picture-model-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "opencode-go/deepseek-v4-flash-vision-exp",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "Picture Model Auto"
-    },
-    "muse-spark-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "opencode-go/muse-spark-1.2-contributor",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "Muse Spark Latest Auto"
-    },
-    "gpt-low-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "aixhan/gpt-5.4",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "GPT Low Latest Auto"
-    },
-    "high-model-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "ark/glm-5.3-flash",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "High Model Auto"
-    },
-    "grok-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "aixhan/grok-4.6",
-            "weight": null
-          },
-          {
-            "model": "aixhan/gpt-5.5",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "Grok Latest Auto"
-    },
-    "minimax-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "ark/minimax-m3",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "MiniMax Latest Auto"
-    },
-    "gpt-high-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "aixhan/gpt-5.6-sol",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "GPT High Latest Auto"
     },
     "glm-latest-auto": {
       "params": {},
@@ -212,6 +26,71 @@
       },
       "display_name": "GLM Latest Auto"
     },
+    "high-model-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "ark/glm-5.3-flash",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "High Model Auto"
+    },
+    "gpt-medium-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "aixhan/gpt-5.5",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "GPT Medium Latest Auto"
+    },
+    "gpt-high-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "aixhan/gpt-6-astra",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "GPT High Latest Auto"
+    },
+    "low-model-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "glm-latest-flash-auto",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "Low Model Auto"
+    },
+    "medium-model-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "ark/glm-5.3-flash",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "Medium Model Auto"
+    },
     "deepseek-v4-pro-official": {
       "params": {},
       "route": {
@@ -224,6 +103,58 @@
         ]
       },
       "display_name": "DeepSeek V4 Pro Official"
+    },
+    "gpt-low-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "aixhan/gpt-5.6-sol",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "GPT Low Latest Auto"
+    },
+    "deepseek-v4-flash-auto": {
+      "params": {},
+      "route": {
+        "strategy": "weighted",
+        "targets": [
+          {
+            "model": "ark/deepseek-v4-flash-260801",
+            "weight": 2
+          }
+        ]
+      },
+      "display_name": "DeepSeek V4 Flash Auto"
+    },
+    "deepseek-v4-flash-official": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "deepseek-official/deepseek-v4-flash-vision-exp",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "DeepSeek V4 Flash Official"
+    },
+    "deepseek-v4-pro-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "ark/deepseek-v4-pro",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "DeepSeek V4 Pro Auto"
     }
   }
 }

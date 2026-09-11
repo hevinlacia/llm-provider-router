@@ -1,9 +1,4 @@
 {
-  "aixhan/gpt-5.4": {
-    "input_uncached_per_million": 0.0,
-    "input_cached_per_million": 0.0,
-    "output_per_million": 0.0
-  },
   "aixhan/gpt-5.5": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
@@ -14,12 +9,7 @@
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "aixhan/gpt-5.6-terra": {
-    "input_uncached_per_million": 0.0,
-    "input_cached_per_million": 0.0,
-    "output_per_million": 0.0
-  },
-  "aixhan/grok-4.6": {
+  "aixhan/gpt-6-astra": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
@@ -44,27 +34,12 @@
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "ark/minimax-m3": {
-    "input_uncached_per_million": 0.0,
-    "input_cached_per_million": 0.0,
-    "output_per_million": 0.0
-  },
   "deepseek-official/deepseek-v4-flash-vision-exp": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
   "deepseek-official/deepseek-v4-pro": {
-    "input_uncached_per_million": 0.0,
-    "input_cached_per_million": 0.0,
-    "output_per_million": 0.0
-  },
-  "opencode-go/deepseek-v4-flash-vision-exp": {
-    "input_uncached_per_million": 0.0,
-    "input_cached_per_million": 0.0,
-    "output_per_million": 0.0
-  },
-  "opencode-go/muse-spark-1.2-contributor": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
