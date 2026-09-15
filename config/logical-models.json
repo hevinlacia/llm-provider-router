@@ -1,17 +1,30 @@
 {
   "logical_models": {
-    "glm-latest-flash-auto": {
+    "gpt-high-latest-auto": {
       "params": {},
       "route": {
         "strategy": "priority",
         "targets": [
           {
-            "model": "ark/glm-5.3-flash",
+            "model": "aixhan/gpt-6-astra",
             "weight": null
           }
         ]
       },
-      "display_name": null
+      "display_name": "GPT High Latest Auto"
+    },
+    "deepseek-v4-flash-auto": {
+      "params": {},
+      "route": {
+        "strategy": "weighted",
+        "targets": [
+          {
+            "model": "ark/deepseek-v4-1-flash-260910",
+            "weight": 2
+          }
+        ]
+      },
+      "display_name": "DeepSeek V4 Flash Auto"
     },
     "glm-latest-auto": {
       "params": {},
@@ -26,6 +39,19 @@
       },
       "display_name": "GLM Latest Auto"
     },
+    "glm-latest-flash-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "ark/glm-5.3-flash",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": null
+    },
     "high-model-auto": {
       "params": {},
       "route": {
@@ -38,45 +64,6 @@
         ]
       },
       "display_name": "High Model Auto"
-    },
-    "gpt-medium-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "aixhan/gpt-5.5",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "GPT Medium Latest Auto"
-    },
-    "gpt-high-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "aixhan/gpt-6-astra",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "GPT High Latest Auto"
-    },
-    "low-model-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "glm-latest-flash-auto",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "Low Model Auto"
     },
     "medium-model-auto": {
       "params": {},
@@ -91,44 +78,18 @@
       },
       "display_name": "Medium Model Auto"
     },
-    "deepseek-v4-pro-official": {
+    "gpt-medium-latest-auto": {
       "params": {},
       "route": {
         "strategy": "priority",
         "targets": [
           {
-            "model": "deepseek-official/deepseek-v4-pro",
+            "model": "aixhan/gpt-5.5",
             "weight": null
           }
         ]
       },
-      "display_name": "DeepSeek V4 Pro Official"
-    },
-    "gpt-low-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "aixhan/gpt-5.6-sol",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "GPT Low Latest Auto"
-    },
-    "deepseek-v4-flash-auto": {
-      "params": {},
-      "route": {
-        "strategy": "weighted",
-        "targets": [
-          {
-            "model": "ark/deepseek-v4-flash-260801",
-            "weight": 2
-          }
-        ]
-      },
-      "display_name": "DeepSeek V4 Flash Auto"
+      "display_name": "GPT Medium Latest Auto"
     },
     "deepseek-v4-flash-official": {
       "params": {},
@@ -143,18 +104,31 @@
       },
       "display_name": "DeepSeek V4 Flash Official"
     },
-    "deepseek-v4-pro-auto": {
+    "low-model-auto": {
       "params": {},
       "route": {
         "strategy": "priority",
         "targets": [
           {
-            "model": "ark/deepseek-v4-pro",
+            "model": "glm-latest-flash-auto",
             "weight": null
           }
         ]
       },
-      "display_name": "DeepSeek V4 Pro Auto"
+      "display_name": "Low Model Auto"
+    },
+    "gpt-low-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "aixhan/gpt-5.6-sol",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "GPT Low Latest Auto"
     }
   }
 }

@@ -58,22 +58,8 @@
         ]
       },
       "keys": {
-        "hevin-private": {
-          "env_var": "AGENT_AI_ARK_HEVIN_PRIVATE_API_KEY",
-          "weight": 1,
-          "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
-        },
-        "hevin2": {
-          "env_var": "AGENT_AI_ARK_HEVIN2_API_KEY",
-          "weight": 1,
-          "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
-        },
-        "moss": {
-          "env_var": "AGENT_AI_ARK_MOSS_API_KEY",
+        "cyril": {
+          "env_var": "AGENT_AI_ARK_CYRIL_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
           "enabled": false,
@@ -86,11 +72,25 @@
           "enabled": true,
           "persist": true
         },
+        "moss": {
+          "env_var": "AGENT_AI_ARK_MOSS_API_KEY",
+          "weight": 1,
+          "billing_type": "subscription",
+          "enabled": false,
+          "persist": true
+        },
         "ronnie": {
           "env_var": "AGENT_AI_ARK_RONNIE_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
           "enabled": false,
+          "persist": true
+        },
+        "hevin-private": {
+          "env_var": "AGENT_AI_ARK_HEVIN_PRIVATE_API_KEY",
+          "weight": 1,
+          "billing_type": "subscription",
+          "enabled": true,
           "persist": true
         },
         "daryl": {
@@ -100,11 +100,11 @@
           "enabled": false,
           "persist": true
         },
-        "cyril": {
-          "env_var": "AGENT_AI_ARK_CYRIL_API_KEY",
-          "weight": 1,
+        "hevin2": {
+          "env_var": "AGENT_AI_ARK_HEVIN2_API_KEY",
+          "weight": 2,
           "billing_type": "subscription",
-          "enabled": false,
+          "enabled": true,
           "persist": true
         }
       }

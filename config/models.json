@@ -8,6 +8,45 @@
     }
   },
   "models": {
+    "ark/glm-5.3-flash": {
+      "provider": "ark",
+      "upstream_model": "glm-5.3-flash",
+      "family": null,
+      "params": {},
+      "context_window": 1024000,
+      "max_output_tokens": 128000,
+      "supports_image": true,
+      "thinking_level_map": null,
+      "thinking_format": null
+    },
+    "deepseek-official/deepseek-v4-flash": {
+      "provider": "deepseek-official",
+      "upstream_model": "deepseek-v4-flash",
+      "family": "deepseek-v4-flash",
+      "params": {},
+      "context_window": 950000,
+      "max_output_tokens": 384000,
+      "supports_image": null,
+      "thinking_level_map": null,
+      "thinking_format": null
+    },
+    "ark/deepseek-v4-flash-260801": {
+      "provider": "ark",
+      "upstream_model": "deepseek-v4-flash-260801",
+      "family": "deepseek-v4-flash",
+      "params": {},
+      "context_window": 950000,
+      "max_output_tokens": 384000,
+      "supports_image": null,
+      "thinking_level_map": {
+        "high": "high",
+        "xhigh": "max",
+        "low": null,
+        "medium": null,
+        "minimal": null
+      },
+      "thinking_format": null
+    },
     "aixhan/gpt-5.6-terra": {
       "provider": "aixhan",
       "upstream_model": "gpt-5.6-terra",
@@ -17,41 +56,13 @@
       "max_output_tokens": 200000,
       "supports_image": true,
       "thinking_level_map": {
+        "high": "high",
         "xhigh": "xhigh",
-        "minimal": null,
         "low": "low",
         "medium": "medium",
-        "high": "high"
+        "minimal": null
       },
       "thinking_format": "reasoning_effort"
-    },
-    "aixhan/gpt-5.6-luna": {
-      "provider": "aixhan",
-      "upstream_model": "gpt-5.6-luna",
-      "family": null,
-      "params": {},
-      "context_window": 600000,
-      "max_output_tokens": 200000,
-      "supports_image": true,
-      "thinking_level_map": {
-        "high": "high",
-        "minimal": null,
-        "xhigh": "xhigh",
-        "low": "low",
-        "medium": "medium"
-      },
-      "thinking_format": "reasoning_effort"
-    },
-    "opencode-go/muse-spark-1.2-contributor": {
-      "provider": "opencode-go",
-      "upstream_model": "muse-spark-1.2-contributor",
-      "family": null,
-      "params": {},
-      "context_window": 1048576,
-      "max_output_tokens": 128000,
-      "supports_image": null,
-      "thinking_level_map": null,
-      "thinking_format": null
     },
     "opencode-go/ox-alpha-free": {
       "provider": "opencode-go",
@@ -66,8 +77,8 @@
       },
       "thinking_format": "reasoning_effort"
     },
-    "deepseek-official/deepseek-v4-flash": {
-      "provider": "deepseek-official",
+    "opencode-go/deepseek-v4-flash": {
+      "provider": "opencode-go",
       "upstream_model": "deepseek-v4-flash",
       "family": "deepseek-v4-flash",
       "params": {},
@@ -77,22 +88,44 @@
       "thinking_level_map": null,
       "thinking_format": null
     },
-    "aixhan/gpt-5.5": {
-      "provider": "aixhan",
-      "upstream_model": "gpt-5.5",
+    "ark/minimax-m3": {
+      "provider": "ark",
+      "upstream_model": "minimax-m3",
+      "family": null,
+      "params": {},
+      "context_window": 600000,
+      "max_output_tokens": 128000,
+      "supports_image": true,
+      "thinking_level_map": null,
+      "thinking_format": null
+    },
+    "ark/glm-5.2": {
+      "provider": "ark",
+      "upstream_model": "glm-5.2",
       "family": null,
       "params": {},
       "context_window": 1000000,
-      "max_output_tokens": 200000,
-      "supports_image": true,
+      "max_output_tokens": 128000,
+      "supports_image": null,
+      "thinking_level_map": null,
+      "thinking_format": null
+    },
+    "deepseek-official/deepseek-v4-pro": {
+      "provider": "deepseek-official",
+      "upstream_model": "deepseek-v4-pro",
+      "family": "deepseek-v4-pro",
+      "params": {},
+      "context_window": 950000,
+      "max_output_tokens": 384000,
+      "supports_image": null,
       "thinking_level_map": {
-        "xhigh": "xhigh",
+        "xhigh": "max",
+        "low": null,
+        "minimal": null,
         "high": "high",
-        "low": "low",
-        "medium": "medium",
-        "minimal": null
+        "medium": null
       },
-      "thinking_format": "reasoning_effort"
+      "thinking_format": null
     },
     "aixhan/gpt-6-astra": {
       "provider": "aixhan",
@@ -105,20 +138,60 @@
       "thinking_level_map": null,
       "thinking_format": null
     },
-    "opencode-go/glm-5.3": {
-      "provider": "opencode-go",
-      "upstream_model": "glm-5.3",
+    "deepseek-official/deepseek-v4-flash-vision-exp": {
+      "provider": "deepseek-official",
+      "upstream_model": "deepseek-v4-flash-vision-exp",
       "family": null,
       "params": {},
-      "context_window": 1000000,
-      "max_output_tokens": 128000,
+      "context_window": null,
+      "max_output_tokens": null,
       "supports_image": null,
-      "thinking_level_map": null,
+      "thinking_level_map": {
+        "xhigh": "max",
+        "minimal": null,
+        "high": "high",
+        "low": null,
+        "medium": null
+      },
       "thinking_format": null
     },
-    "ark/glm-5.2": {
+    "ark/deepseek-v4-pro": {
       "provider": "ark",
-      "upstream_model": "glm-5.2",
+      "upstream_model": "deepseek-v4-pro",
+      "family": "deepseek-v4-pro",
+      "params": {},
+      "context_window": 950000,
+      "max_output_tokens": 384000,
+      "supports_image": null,
+      "thinking_level_map": {
+        "low": null,
+        "high": "high",
+        "minimal": null,
+        "xhigh": "max",
+        "medium": null
+      },
+      "thinking_format": null
+    },
+    "aixhan/grok-4.6": {
+      "provider": "aixhan",
+      "upstream_model": "grok-4.6",
+      "family": null,
+      "params": {},
+      "context_window": 500000,
+      "max_output_tokens": 128000,
+      "supports_image": true,
+      "thinking_level_map": {
+        "low": "low",
+        "high": "high",
+        "medium": "medium",
+        "minimal": null,
+        "xhigh": "xhigh"
+      },
+      "thinking_format": "reasoning_effort"
+    },
+    "ark/glm-5-3-260801": {
+      "provider": "ark",
+      "upstream_model": "glm-5-3-260801",
       "family": null,
       "params": {},
       "context_window": 1000000,
@@ -138,13 +211,13 @@
       "thinking_level_map": null,
       "thinking_format": "reasoning_effort"
     },
-    "opencode-go/deepseek-v4-flash": {
+    "opencode-go/muse-spark-1.2-contributor": {
       "provider": "opencode-go",
-      "upstream_model": "deepseek-v4-flash",
-      "family": "deepseek-v4-flash",
+      "upstream_model": "muse-spark-1.2-contributor",
+      "family": null,
       "params": {},
-      "context_window": 950000,
-      "max_output_tokens": 384000,
+      "context_window": 1048576,
+      "max_output_tokens": 128000,
       "supports_image": null,
       "thinking_level_map": null,
       "thinking_format": null
@@ -166,14 +239,31 @@
       },
       "thinking_format": "reasoning_effort"
     },
-    "ark/glm-5.3-flash": {
-      "provider": "ark",
-      "upstream_model": "glm-5.3-flash",
+    "aixhan/gpt-5.5": {
+      "provider": "aixhan",
+      "upstream_model": "gpt-5.5",
       "family": null,
       "params": {},
-      "context_window": 1024000,
-      "max_output_tokens": 128000,
+      "context_window": 1000000,
+      "max_output_tokens": 200000,
       "supports_image": true,
+      "thinking_level_map": {
+        "xhigh": "xhigh",
+        "low": "low",
+        "minimal": null,
+        "high": "high",
+        "medium": "medium"
+      },
+      "thinking_format": "reasoning_effort"
+    },
+    "opencode-go/glm-5.3": {
+      "provider": "opencode-go",
+      "upstream_model": "glm-5.3",
+      "family": null,
+      "params": {},
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "supports_image": null,
       "thinking_level_map": null,
       "thinking_format": null
     },
@@ -188,111 +278,15 @@
       "thinking_level_map": null,
       "thinking_format": null
     },
-    "ark/minimax-m3": {
+    "ark/deepseek-v4-1-flash-260910": {
       "provider": "ark",
-      "upstream_model": "minimax-m3",
-      "family": null,
-      "params": {},
-      "context_window": 600000,
-      "max_output_tokens": 128000,
-      "supports_image": true,
-      "thinking_level_map": null,
-      "thinking_format": null
-    },
-    "ark/deepseek-v4-pro": {
-      "provider": "ark",
-      "upstream_model": "deepseek-v4-pro",
-      "family": "deepseek-v4-pro",
-      "params": {},
-      "context_window": 950000,
-      "max_output_tokens": 384000,
-      "supports_image": null,
-      "thinking_level_map": {
-        "minimal": null,
-        "medium": null,
-        "xhigh": "max",
-        "low": null,
-        "high": "high"
-      },
-      "thinking_format": null
-    },
-    "ark/glm-5-3-260801": {
-      "provider": "ark",
-      "upstream_model": "glm-5-3-260801",
-      "family": null,
-      "params": {},
-      "context_window": 1000000,
-      "max_output_tokens": 128000,
-      "supports_image": null,
-      "thinking_level_map": null,
-      "thinking_format": null
-    },
-    "aixhan/grok-4.6": {
-      "provider": "aixhan",
-      "upstream_model": "grok-4.6",
-      "family": null,
-      "params": {},
-      "context_window": 500000,
-      "max_output_tokens": 128000,
-      "supports_image": true,
-      "thinking_level_map": {
-        "minimal": null,
-        "xhigh": "xhigh",
-        "high": "high",
-        "medium": "medium",
-        "low": "low"
-      },
-      "thinking_format": "reasoning_effort"
-    },
-    "deepseek-official/deepseek-v4-pro": {
-      "provider": "deepseek-official",
-      "upstream_model": "deepseek-v4-pro",
-      "family": "deepseek-v4-pro",
-      "params": {},
-      "context_window": 950000,
-      "max_output_tokens": 384000,
-      "supports_image": null,
-      "thinking_level_map": {
-        "medium": null,
-        "minimal": null,
-        "xhigh": "max",
-        "high": "high",
-        "low": null
-      },
-      "thinking_format": null
-    },
-    "ark/deepseek-v4-flash-260801": {
-      "provider": "ark",
-      "upstream_model": "deepseek-v4-flash-260801",
-      "family": "deepseek-v4-flash",
-      "params": {},
-      "context_window": 950000,
-      "max_output_tokens": 384000,
-      "supports_image": null,
-      "thinking_level_map": {
-        "xhigh": "max",
-        "low": null,
-        "minimal": null,
-        "high": "high",
-        "medium": null
-      },
-      "thinking_format": null
-    },
-    "deepseek-official/deepseek-v4-flash-vision-exp": {
-      "provider": "deepseek-official",
-      "upstream_model": "deepseek-v4-flash-vision-exp",
+      "upstream_model": "deepseek-v4-1-flash-260910",
       "family": null,
       "params": {},
       "context_window": null,
       "max_output_tokens": null,
       "supports_image": null,
-      "thinking_level_map": {
-        "low": null,
-        "xhigh": "max",
-        "high": "high",
-        "medium": null,
-        "minimal": null
-      },
+      "thinking_level_map": null,
       "thinking_format": null
     },
     "opencode-go/deepseek-v4-flash-vision-exp": {
@@ -305,6 +299,23 @@
       "supports_image": true,
       "thinking_level_map": null,
       "thinking_format": null
+    },
+    "aixhan/gpt-5.6-luna": {
+      "provider": "aixhan",
+      "upstream_model": "gpt-5.6-luna",
+      "family": null,
+      "params": {},
+      "context_window": 600000,
+      "max_output_tokens": 200000,
+      "supports_image": true,
+      "thinking_level_map": {
+        "high": "high",
+        "medium": "medium",
+        "xhigh": "xhigh",
+        "minimal": null,
+        "low": "low"
+      },
+      "thinking_format": "reasoning_effort"
     }
   }
 }

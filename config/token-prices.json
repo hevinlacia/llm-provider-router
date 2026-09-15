@@ -19,11 +19,6 @@
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "ark/deepseek-v4-pro": {
-    "input_uncached_per_million": 0.0,
-    "input_cached_per_million": 0.0,
-    "output_per_million": 0.0
-  },
   "ark/glm-5-3-260801": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
@@ -35,11 +30,6 @@
     "output_per_million": 0.0
   },
   "deepseek-official/deepseek-v4-flash-vision-exp": {
-    "input_uncached_per_million": 0.0,
-    "input_cached_per_million": 0.0,
-    "output_per_million": 0.0
-  },
-  "deepseek-official/deepseek-v4-pro": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
