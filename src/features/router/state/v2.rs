@@ -794,7 +794,9 @@ impl RouterState {
         }
     }
 
-    /// 重新加载 v2 配置（供应商编辑写回后热生效）。
+    /// 重新加载 v2 配置（供应商编辑写回后热生效；热加载 watcher 亦复用）。
+    /// 加载失败时保留当前已加载配置（last-good），避免半写/坏文件清空运行时路由能力；
+    /// 仅启动期首次加载失败才回退 legacy（v2 = None）。
     pub(super) fn reload_v2(&mut self) {
         if self.settings.v2_config_enabled {
             // 逻辑模型不再持有能力参数；编辑回写后如残留 legacy 字段（旧版本文件）一并迁移。
@@ -808,10 +810,26 @@ impl RouterState {
                     self.v2_load_error = None;
                 }
                 Err(err) => {
-                    self.v2 = None;
+                    // 热加载/编辑回写遇到坏文件（半写、校验失败）时保留 last-good，
+                    // 避免运行时路由能力被清空；仅启动期首次加载失败才回退 legacy。
+                    // v2_load_error 无论是否保留 last-good 都记录，经 v2_status() 透出供诊断。
                     self.v2_load_error = Some(err.to_string());
+                    if self.v2.is_some() {
+                        eprintln!(
+                            "llm-provider-router v2 config reload failed; keeping last good config: {err:#}"
+                        );
+                    } else {
+                        eprintln!("llm-provider-router v2 config load failed: {err:#}");
+                        self.v2 = None;
+                    }
                 }
             }
         }
+    }
+
+    /// 热加载 watcher 入口：重读 v2 配置文件，返回重载后 v2 是否可用。
+    pub fn hot_reload_v2(&mut self) -> bool {
+        self.reload_v2();
+        self.v2.is_some()
     }
 }
