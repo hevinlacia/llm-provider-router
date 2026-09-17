@@ -1,0 +1,25 @@
+src/features/router/state/routing.rs
+  04f75083c53daeb1 35
+src/features/router/state/keys.rs
+  04f75083c53daeb1 1,6,31,78,87-89,131-137,145-146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "76b2b5992ce2764eec9d745aadcc97c8f4dbb5df",
+  "prompts": {
+    "04f75083c53daeb1": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0aecc-3add-74f9-8ba3-657c161720f0",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 36,
+      "total_deletions": 172,
+      "accepted_lines": 35,
+      "overriden_lines": 1
+    }
+  }
+}
