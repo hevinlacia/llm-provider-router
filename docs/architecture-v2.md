@@ -1,6 +1,7 @@
 # Architecture v2 — 分层模型 / Provider / Key 架构
 
-> 状态：设计草案（Phase 1 待用户 review）
+> 状态：**已实施并上线**（Phase 1-5 全部完成，运行时默认 `LLM_PROVIDER_ROUTER_V2=1`）。
+> 本文保留为 v2 设计记录（概念模型、schema、机制、迁移映射、Phase 历史）；当前实际架构总览见 `architecture.md`。
 > 目的：把现状扁平的 ModelAlias（别名 = 上游模型 + base_url + keys 绑死）重构为 供应商 → 物理模型 → 逻辑模型 → key 的分层模型，支持跨供应商回退、配置化、两层负载均衡。
 
 ## 1. 设计目标
