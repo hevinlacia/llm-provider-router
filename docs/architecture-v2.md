@@ -253,6 +253,7 @@ fn resolve(alias, session):
   - `config_v2::resolve_targets` 把逻辑模型展开为物理模型候选（多供应商、enabled 过滤、params 合并）；`router_state::order_targets` 按策略排序（priority 原序 / weighted 加权首选 + 降序回退）。
   - `RouterState` 集成 v2：`base_aliases`/`route_aliases` v2 模式展开，`alias_with_runtime_weights` 跳过旧覆盖层，`V2Key.persist` 保持 env-only 语义。
   - 开关：`LLM_PROVIDER_ROUTER_V2`（默认启用，设 0 回退旧逻辑）；API 快照含 `v2_enabled`。
+    > **注（2026-09-17）**：该回退开关已随 v1 退役删除，v2 是唯一配置路径（见 `architecture.md`）。
   - 验证：19 单测 + 真实配置等价性测试 + 端到端请求（`deepseek-v4-flash-auto` → ark `deepseek-v4-flash-260801`，已部署）。
   - **Phase 2 已知限制（已解决）**：第 1 层 `usage-aware` 暂以 weighted 展开 → Phase 3 精细化；v2 模式下 custom model aliases 暂不生效 → Phase 4 接入；token-prices 默认值仍基于旧 `aliases()`（同名逻辑模型命中不受影响）。
 - **Phase 3** ✅：第 1 层 `usage-aware` 精细化 + 供应商冻结/启用状态可视化数据。

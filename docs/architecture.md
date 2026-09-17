@@ -66,21 +66,24 @@ src/
 | `models.json` | **v2 权威** | 物理模型（`<provider>/<upstream_model>`）+ 模型族 + 窗口参数 |
 | `logical-models.json` | **v2 权威** | 逻辑模型（对外 alias）：route strategy/targets + 默认 params |
 | `custom-model-aliases.json` | 活跃 | 运行时 API 手动新增的逻辑模型补充 |
-| `token-prices.json` | 活跃 | 计价（双口径：逻辑模型/物理模型） |
+| `token-prices.json` | 活跃 | 计价（键为物理模型 id，按逻辑名统计时经 `expanded_prices_for_cost` 展开） |
 | `api-keys.json` | 活跃 | key 值持久化（gitignore，persist=true 时写回） |
 | `search-providers.json` | 活跃 | 搜索供应商配置 |
 | `provider-models.json` | 活跃（缓存） | 供应商 `/models` 拉取缓存（gitignore） |
-| `providers.json` / `custom-keys.json` / `key-weights.json` | **v1 遗留** | v2 模式下运行时已旁路（见下节退役计划） |
+
+v1 配置（`providers.json` / `custom-keys.json` / `key-weights.json`）及回退开关
+`LLM_PROVIDER_ROUTER_V2` 已于 2026-09-17 退役删除：v2 是唯一配置路径，启动加载失败
+直接 fail-fast（进程退出，由 systemd 重启暴露问题），运行期重载失败保留 last-good。
+
+## 已知语义漂移：deepseek key 的 persist
+
+v1 硬编码中 `deepseek-official` key 是 env-only（`persist=false`，绝不落盘
+`api-keys.json`）；v2 迁移后 `providers-v2.json` 里写的是 `persist: true`，即该 key
+现在允许持久化到 `api-keys.json`。此漂移在 v2 上线时即已生效（非本次退役引入）。
+若要恢复 env-only 语义：把 `config/providers-v2.json` 中 deepseek-official key 的
+`persist` 改为 `false` 并提交即可（启动 seed/prune 逻辑会自动清理 store 中的残留）。
 
 配置变更：手工编辑 `config/*.json` 会被 `hot_reload.rs` 监听自动重载；API 修改直接写回文件。**config 运行时快照会随服务运行漂移并以 git commit 形式同步**（提交信息 `config(router): 本机运行快照`），属预期行为。
-
-## v1 配置退役计划（未完成项）
-
-v2 上线后以下 v1 结构仍在代码中但已旁路（`features/router/state/config.rs` 明确 v2 以 `providers-v2.json` 为权威、不套旧覆盖层）：
-
-- 仍被持有的死重：`AppState` 的 `weight_config` / `provider_config` / `custom_key_config` 字段（`json_config.rs` 的 `KeyWeightConfig` / `ProviderConfig` / `CustomKeyPoolConfig`）；`/api/config/weights`、`/api/config/providers` 两个 endpoint 及前端对应面板；`config.rs` 的 `DEFAULT_WEIGHT_CONFIG_PATH` 等常量。
-- 退役步骤：确认前端 Settings 面板对应 UI 下线 → 删 endpoint + AppState 字段 + json_config 死结构 + 三个 v1 JSON 文件 → 回归 v1 回退路径（`LLM_PROVIDER_ROUTER_V2=0`）随退役一并删除的决策。
-- 前置条件：v1 回退开关（`LLM_PROVIDER_ROUTER_V2=0`）确认废弃后才能删 v1 读取链路。
 
 ## 验证命令
 
