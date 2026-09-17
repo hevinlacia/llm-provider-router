@@ -1,17 +1,8 @@
 //! 用量快照计费：按 token 价格把用量桶折算成成本（纯函数）。
 
-use crate::config::aliases;
 use crate::json_config::TokenPrice;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-
-pub(crate) fn default_token_prices() -> HashMap<String, TokenPrice> {
-    let mut prices = HashMap::new();
-    for model in aliases().keys() {
-        prices.insert(model.clone(), TokenPrice::default());
-    }
-    prices
-}
 
 pub(crate) fn apply_costs(snapshot: &mut Value, prices: &HashMap<String, TokenPrice>) {
     let by_model_costs = snapshot

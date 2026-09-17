@@ -111,10 +111,7 @@ pub(crate) async fn responses(
     } else {
         let mut last_frozen: Option<NoAvailableKeyError> = None;
         for base_alias in route_aliases {
-            let alias = match app.state.lock() {
-                Ok(mut state) => state.alias_with_runtime_weights(&base_alias),
-                Err(_) => return internal_error("router state lock poisoned"),
-            };
+            let alias = base_alias.clone();
             let result = responses_alias_dispatch(
                 &app,
                 alias,
@@ -621,10 +618,7 @@ pub(crate) async fn compact_response(
         if !base_alias.supports_responses() {
             continue;
         }
-        let alias = match app.state.lock() {
-            Ok(mut state) => state.alias_with_runtime_weights(&base_alias),
-            Err(_) => return internal_error("router state lock poisoned"),
-        };
+        let alias = base_alias.clone();
         let upstream_payload = translate::prepare_passthrough_payload(&payload, &alias);
         match call_responses_passthrough(
             &app,

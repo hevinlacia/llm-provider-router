@@ -13,8 +13,8 @@ use std::collections::HashSet;
 use super::payload::log_upstream_failure;
 use super::payload::prepare_upstream_payload;
 use super::select::{
-    alias_with_runtime_weights_locked, extract_usage, extract_usage_from_stream, freeze_maybe,
-    record_usage, select_key_locked, stream_error_event, upstream_key_value_locked, usage_key_name,
+    extract_usage, extract_usage_from_stream, freeze_maybe, record_usage, select_key_locked,
+    stream_error_event, upstream_key_value_locked, usage_key_name,
 };
 use crate::routes::resp::internal_error;
 
@@ -40,16 +40,10 @@ pub(crate) async fn stream_upstream_route(
         let mut total_tried: usize = 0;
         let mut failed_alias: String = aliases.first().map(|a| a.alias.clone()).unwrap_or_else(|| "router".to_string());
         for base_alias in aliases {
-            let alias = match alias_with_runtime_weights_locked(&app, &base_alias) {
-                Ok(alias) => alias,
-                Err(message) => {
-                    yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(stream_error_event("router", 0, &message)));
-                    return;
-                }
-            };
+            let alias = base_alias.clone();
             // 空地址防护：供应商未配置 chat completions base_url 时给出明确错误
             if alias.base_url.trim().is_empty() {
-                yield Ok(Bytes::from(stream_error_event(
+                yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(stream_error_event(
                     &alias.alias,
                     0,
                     "provider has no chat completions base_url configured",

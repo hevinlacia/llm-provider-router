@@ -23,16 +23,6 @@ pub(crate) fn select_key_locked(
         .map(|mut state| state.select_key_excluding(alias, session_id, tried))
 }
 
-pub(crate) fn alias_with_runtime_weights_locked(
-    app: &AppState,
-    alias: &ModelAlias,
-) -> Result<ModelAlias, String> {
-    app.state
-        .lock()
-        .map_err(|_| "router state lock poisoned".to_string())
-        .map(|mut state| state.alias_with_runtime_weights(alias))
-}
-
 pub(crate) fn upstream_key_value_locked(
     app: &AppState,
     key: &KeyRef,
@@ -56,14 +46,9 @@ pub(crate) fn freeze_maybe(
     }
 }
 
-/// v2 模式下 usage 记录的 key 名带 provider 前缀，避免不同供应商同名 key 合并统计；
-/// 非 v2（旧逻辑）保持原名，避免破坏历史数据兼容。
-pub(crate) fn usage_key_name(app: &AppState, key: &KeyRef) -> String {
-    if app.settings.v2_config_enabled {
-        format!("{}/{}", key.provider, key.name)
-    } else {
-        key.name.clone()
-    }
+/// usage 记录的 key 名带 provider 前缀，避免不同供应商同名 key 合并统计。
+pub(crate) fn usage_key_name(_app: &AppState, key: &KeyRef) -> String {
+    format!("{}/{}", key.provider, key.name)
 }
 
 pub(crate) fn record_usage(

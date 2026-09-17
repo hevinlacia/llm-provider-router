@@ -7,10 +7,10 @@ use crate::features::router::selection::{order_targets, usage_preferred_index};
 
 impl RouterState {
     pub fn route_aliases(&mut self, model_name: &str, session_id: Option<&str>) -> Vec<ModelAlias> {
-        if self.v2.is_some() {
+        {
             // 请求名即逻辑模型名（或 custom alias），resolve_targets 会嵌套展开到物理候选。
             let expanded: Vec<(String, Vec<TargetCandidate>)> = {
-                let cfg = self.v2.as_ref().expect("v2 enabled checked");
+                let cfg = &self.v2;
                 config_v2::resolve_targets(cfg, model_name)
                     .map(|c| vec![(model_name.to_string(), c)])
                     .unwrap_or_default()
@@ -32,9 +32,7 @@ impl RouterState {
             if let Some(model) = customs.get(model_name) {
                 out.push(model.clone());
             }
-            return out;
+            out
         }
-        let aliases = self.base_aliases();
-        aliases.get(model_name).cloned().into_iter().collect()
     }
 }

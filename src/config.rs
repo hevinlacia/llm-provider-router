@@ -4,10 +4,6 @@ use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 
-pub const DEFAULT_ARK_BASE_URL: &str = "https://ark.cn-beijing.volces.com/api/coding/v3";
-pub const DEFAULT_WEIGHT_CONFIG_PATH: &str = "config/key-weights.json";
-pub const DEFAULT_PROVIDER_CONFIG_PATH: &str = "config/providers.json";
-pub const DEFAULT_CUSTOM_KEY_CONFIG_PATH: &str = "config/custom-keys.json";
 pub const DEFAULT_API_KEYS_PATH: &str = "config/api-keys.json";
 pub const DEFAULT_TOKEN_PRICE_CONFIG_PATH: &str = "config/token-prices.json";
 pub const DEFAULT_MODEL_ALIAS_CONFIG_PATH: &str = "config/custom-model-aliases.json";
@@ -34,55 +30,6 @@ pub struct KeyRef {
 
 fn default_persist() -> bool {
     true
-}
-
-impl KeyRef {
-    pub fn new(name: &str, env_var: &str, weight: i64) -> Self {
-        Self::with_provider(name, env_var, weight, "ark", "subscription")
-    }
-
-    pub fn with_provider(
-        name: &str,
-        env_var: &str,
-        weight: i64,
-        provider: &str,
-        billing_type: &str,
-    ) -> Self {
-        Self {
-            name: name.to_string(),
-            env_var: env_var.to_string(),
-            weight,
-            provider: provider.to_string(),
-            billing_type: billing_type.to_string(),
-            persist: true,
-        }
-    }
-
-    /// Key that must come from the environment only; its value is never
-    /// persisted to config/api-keys.json (vault restores it into the env file).
-    pub fn env_only(
-        name: &str,
-        env_var: &str,
-        weight: i64,
-        provider: &str,
-        billing_type: &str,
-    ) -> Self {
-        Self {
-            name: name.to_string(),
-            env_var: env_var.to_string(),
-            weight,
-            provider: provider.to_string(),
-            billing_type: billing_type.to_string(),
-            persist: false,
-        }
-    }
-
-    pub fn with_weight(&self, weight: i64) -> Self {
-        Self {
-            weight,
-            ..self.clone()
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -223,27 +170,6 @@ impl ModelAlias {
             .map(|key| key.provider.clone())
             .unwrap_or_else(|| self.alias.clone())
     }
-
-    pub fn with_key_weights(&self, weights: &HashMap<String, i64>) -> Self {
-        Self {
-            keys: self
-                .keys
-                .iter()
-                .map(|key| key.with_weight(*weights.get(&key.name).unwrap_or(&key.weight)))
-                .collect(),
-            ..self.clone()
-        }
-    }
-
-    pub fn with_provider_base_urls(&self, base_urls: &HashMap<String, String>) -> Self {
-        Self {
-            base_url: base_urls
-                .get(&self.provider())
-                .cloned()
-                .unwrap_or_else(|| self.base_url.clone()),
-            ..self.clone()
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -257,9 +183,6 @@ pub struct Settings {
     pub local_bearer_token: Option<String>,
     pub usage_db_path: String,
     pub state_db_path: String,
-    pub weight_config_path: String,
-    pub provider_config_path: String,
-    pub custom_key_config_path: String,
     pub api_keys_path: String,
     pub token_price_config_path: String,
     pub model_alias_config_path: String,
@@ -270,8 +193,6 @@ pub struct Settings {
     /// 供应商模型列表持久化路径（设置界面“查看供应商详情”缓存）。
     pub provider_models_path: String,
     pub auth_invalid_freeze_seconds: f64,
-    /// v2 分层配置开关（默认启用；设 0 回退旧硬编码 aliases 逻辑）。
-    pub v2_config_enabled: bool,
     /// 诊断日志落盘目录（默认 ~/.local/state/llm-provider-router/logs，journal 不可信时的持久化证据）。
     pub diag_dir: String,
     /// 单个诊断文件最大体积（字节），超限轮转。
@@ -311,18 +232,6 @@ pub fn load_settings() -> anyhow::Result<Settings> {
             }),
         usage_db_path: env_or("LLM_PROVIDER_ROUTER_USAGE_DB_PATH", DEFAULT_USAGE_DB_PATH),
         state_db_path: env_or("LLM_PROVIDER_ROUTER_STATE_DB_PATH", DEFAULT_STATE_DB_PATH),
-        weight_config_path: env_or(
-            "LLM_PROVIDER_ROUTER_WEIGHT_CONFIG_PATH",
-            DEFAULT_WEIGHT_CONFIG_PATH,
-        ),
-        provider_config_path: env_or(
-            "LLM_PROVIDER_ROUTER_PROVIDER_CONFIG_PATH",
-            DEFAULT_PROVIDER_CONFIG_PATH,
-        ),
-        custom_key_config_path: env_or(
-            "LLM_PROVIDER_ROUTER_CUSTOM_KEY_CONFIG_PATH",
-            DEFAULT_CUSTOM_KEY_CONFIG_PATH,
-        ),
         api_keys_path: env_or("LLM_PROVIDER_ROUTER_API_KEYS_PATH", DEFAULT_API_KEYS_PATH),
         token_price_config_path: env_or(
             "LLM_PROVIDER_ROUTER_TOKEN_PRICE_CONFIG_PATH",
@@ -348,7 +257,6 @@ pub fn load_settings() -> anyhow::Result<Settings> {
             "86400",
         )
         .parse()?,
-        v2_config_enabled: env_or("LLM_PROVIDER_ROUTER_V2", "1") != "0",
         diag_dir: env_or("LLM_PROVIDER_ROUTER_DIAG_DIR", DEFAULT_DIAG_DIR),
         diag_max_bytes: env_or("LLM_PROVIDER_ROUTER_DIAG_MAX_BYTES", DEFAULT_DIAG_MAX_BYTES)
             .parse()
@@ -363,132 +271,6 @@ pub fn load_settings() -> anyhow::Result<Settings> {
         .parse()
         .unwrap_or(1),
     })
-}
-
-pub fn aliases() -> HashMap<String, ModelAlias> {
-    let ark_keys = vec![
-        KeyRef::new("garvin", "AGENT_AI_ARK_GARVIN_API_KEY", 6),
-        KeyRef::new("wilford", "AGENT_AI_ARK_WILFORD_API_KEY", 3),
-        KeyRef::new("hevin", "AGENT_AI_ARK_HEVIN_API_KEY", 5),
-        KeyRef::new("khaine", "AGENT_AI_ARK_KHAINE_API_KEY", 6),
-        KeyRef::new("cyril", "AGENT_AI_ARK_CYRIL_API_KEY", 4),
-        KeyRef::new("moss", "AGENT_AI_ARK_MOSS_API_KEY", 4),
-        KeyRef::new("ronnie", "AGENT_AI_ARK_RONNIE_API_KEY", 4),
-    ];
-    let oai_hevin_keys = vec![KeyRef::with_provider(
-        "oai-hevin",
-        "AGENT_AI_OPENAI_HEVIN_API_KEY",
-        1,
-        "openai-relay",
-        "subscription",
-    )];
-    let deepseek_keys = vec![KeyRef::env_only(
-        "deepseek-official",
-        "AGENT_AI_DEEPSEEK_API_KEY",
-        1,
-        "deepseek-official",
-        "payg",
-    )];
-    let ark_retry = RetryPolicy::new(300, 5.0, &[401, 402, 429, 500, 502, 503, 504]);
-    let oai_retry = RetryPolicy::new(1800, 15.0, &[429, 500, 502, 503, 504]);
-
-    let mut map = HashMap::new();
-    for (name, model) in [
-        ("low-model-auto", "openai/deepseek-v4-flash"),
-        ("medium-model-auto", "openai/glm-5.2"),
-        ("picture-model-auto", "openai/minimax-m3"),
-        ("glm-latest-auto", "openai/glm-5.2"),
-        ("deepseek-v4-pro-auto", "openai/deepseek-v4-pro"),
-        ("deepseek-v4-flash-auto", "openai/deepseek-v4-flash-260801"),
-        (
-            "deepseek-v4-flash-260801",
-            "openai/deepseek-v4-flash-260801",
-        ),
-        ("minimax-latest-auto", "openai/minimax-m3"),
-        ("ark-code-latest-auto", "openai/ark-code-latest"),
-    ] {
-        map.insert(
-            name.to_string(),
-            ModelAlias::new(
-                name,
-                model,
-                DEFAULT_ARK_BASE_URL,
-                ark_keys.clone(),
-                Some(ark_retry.clone()),
-            ),
-        );
-    }
-    map.insert(
-        "high-model-auto".to_string(),
-        ModelAlias::new(
-            "high-model-auto",
-            "openai/gpt-5.5",
-            "https://api.aixhan.com/v1",
-            oai_hevin_keys.clone(),
-            Some(oai_retry.clone()),
-        ),
-    );
-    map.insert(
-        "openai-gpt-5.5-hevin".to_string(),
-        ModelAlias::new(
-            "openai-gpt-5.5-hevin",
-            "openai/gpt-5.5",
-            "https://api.aixhan.com/v1",
-            oai_hevin_keys.clone(),
-            Some(oai_retry.clone()),
-        ),
-    );
-    map.insert(
-        "openai-gpt-5.6-sol-hevin".to_string(),
-        ModelAlias::new(
-            "openai-gpt-5.6-sol-hevin",
-            "openai/gpt-5.6-sol",
-            "https://api.aixhan.com/v1",
-            oai_hevin_keys,
-            Some(oai_retry),
-        ),
-    );
-    map.insert(
-        "deepseek-v4-flash-official".to_string(),
-        ModelAlias::new(
-            "deepseek-v4-flash-official",
-            "openai/deepseek-v4-flash",
-            "https://api.deepseek.com",
-            deepseek_keys.clone(),
-            None,
-        ),
-    );
-    map.insert(
-        "deepseek-v4-pro-official".to_string(),
-        ModelAlias::new(
-            "deepseek-v4-pro-official",
-            "openai/deepseek-v4-pro",
-            "https://api.deepseek.com",
-            deepseek_keys,
-            None,
-        ),
-    );
-    map
-}
-
-pub fn default_key_weights() -> HashMap<String, i64> {
-    let mut weights = HashMap::new();
-    for alias in aliases().values() {
-        for key in &alias.keys {
-            weights.insert(key.name.clone(), key.weight);
-        }
-    }
-    weights
-}
-
-pub fn default_provider_base_urls() -> HashMap<String, String> {
-    let mut base_urls = HashMap::new();
-    for alias in aliases().values() {
-        base_urls
-            .entry(alias.provider())
-            .or_insert(alias.base_url.clone());
-    }
-    base_urls
 }
 
 pub fn expand_path(value: &str) -> PathBuf {

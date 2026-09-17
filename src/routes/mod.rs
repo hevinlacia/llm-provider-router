@@ -84,10 +84,6 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         .route("/api/usage/reset", post(usage::api_usage_reset))
         .route("/api/frozen/clear", post(usage::api_frozen_clear))
         .route(
-            "/api/config/weights",
-            get(config::api_config_weights).put(config::api_config_weights_update),
-        )
-        .route(
             "/api/config/model-aliases",
             get(config::api_config_model_aliases).put(config::api_config_model_aliases_update),
         )
@@ -113,10 +109,6 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
                 .delete(config_v2::api_config_v2_logical_models_delete),
         )
         .route(
-            "/api/config/providers",
-            get(config::api_config_providers).put(config::api_config_providers_update),
-        )
-        .route(
             "/api/config/token-prices",
             get(config::api_config_token_prices).put(config::api_config_token_prices_update),
         )
@@ -130,9 +122,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         )
         .route(
             "/api/config/keys",
-            get(config::api_config_keys)
-                .put(config::api_config_keys_update)
-                .post(config::api_config_keys_add),
+            get(config::api_config_keys).put(config::api_config_keys_update),
         )
         .route(
             "/api/config/reload-env",

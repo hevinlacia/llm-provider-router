@@ -12,36 +12,6 @@ use std::collections::{HashMap, HashSet};
 
 use super::resp::{bad_request, internal_error, json_status, merge_ok, with_state_json};
 
-pub(crate) async fn api_config_weights(State(app): State<AppState>) -> Response {
-    with_state_json(&app, |state| Ok(merge_ok(state.key_config_snapshot()?)))
-}
-
-pub(crate) async fn api_config_weights_update(
-    State(app): State<AppState>,
-    Json(payload): Json<Value>,
-) -> Response {
-    let Some(weights_obj) = payload.get("weights").and_then(Value::as_object) else {
-        return bad_request("weights must be an object");
-    };
-    let weights = weights_obj
-        .iter()
-        .map(|(name, value)| (name.clone(), value.as_i64().unwrap_or(0)))
-        .collect::<HashMap<_, _>>();
-    let pool = payload
-        .get("pool")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty() && *value != "__global__")
-        .map(str::to_string);
-    with_state_json(&app, |state| {
-        if let Some(pool) = pool.as_deref() {
-            state.set_pool_key_weights(pool, weights)?;
-        } else {
-            state.set_key_weights(weights)?;
-        }
-        Ok(merge_ok(state.key_config_snapshot()?))
-    })
-}
-
 pub(crate) async fn api_config_model_aliases(State(app): State<AppState>) -> Response {
     with_state_json(&app, |state| {
         Ok(merge_ok(state.model_alias_config_snapshot()))
@@ -75,26 +45,6 @@ pub(crate) async fn api_config_model_aliases_update(
         .collect::<Vec<_>>();
     with_state_json(&app, |state| {
         Ok(merge_ok(state.set_model_aliases(custom_aliases)?))
-    })
-}
-
-pub(crate) async fn api_config_providers(State(app): State<AppState>) -> Response {
-    with_state_json(&app, |state| Ok(merge_ok(state.provider_config_snapshot())))
-}
-
-pub(crate) async fn api_config_providers_update(
-    State(app): State<AppState>,
-    Json(payload): Json<Value>,
-) -> Response {
-    let Some(providers_obj) = payload.get("providers").and_then(Value::as_object) else {
-        return bad_request("providers must be an object");
-    };
-    let providers = providers_obj
-        .iter()
-        .filter_map(|(name, value)| value.as_str().map(|url| (name.clone(), url.to_string())))
-        .collect::<HashMap<_, _>>();
-    with_state_json(&app, |state| {
-        Ok(merge_ok(state.set_provider_base_urls(providers)?))
     })
 }
 
@@ -208,34 +158,6 @@ pub(crate) async fn api_config_keys_update(
         .unwrap_or_default();
     with_state_json(&app, |state| {
         Ok(merge_ok(state.set_key_values(values, delete_names)?))
-    })
-}
-
-pub(crate) async fn api_config_keys_add(
-    State(app): State<AppState>,
-    Json(payload): Json<Value>,
-) -> Response {
-    let Some(aliases) = payload.get("aliases").and_then(Value::as_array) else {
-        return bad_request("aliases must be a list");
-    };
-    let aliases = aliases
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    let name = payload
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let value = payload
-        .get("value")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let weight = payload.get("weight").and_then(Value::as_i64).unwrap_or(1);
-    with_state_json(&app, |state| {
-        Ok(merge_ok(
-            state.add_key_to_pools(name, value, aliases, weight)?,
-        ))
     })
 }
 

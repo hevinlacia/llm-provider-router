@@ -15,8 +15,7 @@ use crate::config::ModelAlias;
 use crate::features::anthropic::stream::SseTranslator;
 use crate::features::anthropic::translate;
 use crate::features::chat::select::{
-    alias_with_runtime_weights_locked, freeze_maybe, record_usage, select_key_locked,
-    upstream_key_value_locked, usage_key_name,
+    freeze_maybe, record_usage, select_key_locked, upstream_key_value_locked, usage_key_name,
 };
 use crate::features::chat::upstream::CallError;
 use crate::features::router::NoAvailableKeyError;
@@ -142,10 +141,7 @@ async fn messages_non_stream(
     let mut responses_payload: Option<Value> = None;
     let mut last_frozen: Option<NoAvailableKeyError> = None;
     for base_alias in route_aliases {
-        let alias = match app.state.lock() {
-            Ok(mut state) => state.alias_with_runtime_weights(&base_alias),
-            Err(_) => return internal_error("router state lock poisoned"),
-        };
+        let alias = base_alias.clone();
         let result = if alias.supports_anthropic() {
             call_anthropic_passthrough(&app, alias, session_id.clone(), payload.clone()).await
         } else {
@@ -312,13 +308,7 @@ async fn stream_anthropic_passthrough(
         let mut last_error: Option<String> = None;
         let mut total_tried: usize = 0;
         'aliases: for base_alias in aliases {
-            let alias = match alias_with_runtime_weights_locked(&app, &base_alias) {
-                Ok(alias) => alias,
-                Err(message) => {
-                    yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(anthropic_sse_error(&message)));
-                    return;
-                }
-            };
+            let alias = base_alias.clone();
             let Some(anthropic_base) = alias
                 .anthropic_base_url
                 .as_deref()
@@ -340,7 +330,7 @@ async fn stream_anthropic_passthrough(
                 let selected_key = match select_key_locked(&app, &alias, session_id.as_deref(), &tried) {
                     Ok(result) => result,
                     Err(message) => {
-                        yield Ok(Bytes::from(anthropic_sse_error(&message)));
+                        yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(anthropic_sse_error(&message)));
                         return;
                     }
                 };

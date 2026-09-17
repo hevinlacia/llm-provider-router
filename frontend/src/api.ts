@@ -1,4 +1,4 @@
-import type { ActiveSessionsResponse, FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderConfig, ProviderModelsResponse, RouterCapabilities, SearchProvidersConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, WeightConfig } from './types';
+import type { ActiveSessionsResponse, FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderModelsResponse, RouterCapabilities, SearchProvidersConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status } from './types';
 
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
@@ -18,24 +18,6 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function normalizeWeightConfig(raw: Partial<WeightConfig>): WeightConfig {
-  const aliases = (raw.aliases ?? {}) as WeightConfig['aliases'];
-  const weights = raw.weights ?? raw.global_weights ?? {};
-  const pools = raw.pools ?? Object.entries(aliases)
-    .filter(([, alias]) => Array.isArray(alias.keys) && alias.keys.length > 0)
-    .map(([name]) => name)
-    .sort();
-  return {
-    ok: raw.ok ?? true,
-    weights,
-    global_weights: raw.global_weights ?? weights,
-    pool_weights: raw.pool_weights ?? {},
-    pools,
-    supports_pool_weights: Boolean(raw.global_weights && raw.pool_weights && raw.pools),
-    aliases,
-    config_path: raw.config_path ?? '',
-  };
-}
 
 export const api = {
   async modelAliases() {
@@ -82,26 +64,6 @@ export const api = {
   },
   clearFrozen() {
     return request<StateResponse>('/api/frozen/clear', { method: 'POST' });
-  },
-  async weights() {
-    return normalizeWeightConfig(await request<Partial<WeightConfig>>('/api/config/weights'));
-  },
-  saveWeights(weights: Record<string, number>, pool?: string) {
-    return request<WeightConfig>('/api/config/weights', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ weights, pool: pool ?? '__global__' }),
-    });
-  },
-  providers() {
-    return request<ProviderConfig>('/api/config/providers');
-  },
-  saveProviders(providers: Record<string, string>) {
-    return request<ProviderConfig>('/api/config/providers', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ providers }),
-    });
   },
   async tokenPrices() {
     try {
@@ -211,13 +173,6 @@ export const api = {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ keys, delete: deleteNames }),
-    });
-  },
-  addKey(payload: { name: string; value: string; weight: number; aliases: string[] }) {
-    return request<KeyConfig>('/api/config/keys', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
     });
   },
   searchProviders() {

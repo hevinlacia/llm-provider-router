@@ -21,8 +21,8 @@ use crate::app::AppState;
 use crate::config::ModelAlias;
 use crate::features::chat::payload::{log_upstream_failure, prepare_upstream_payload};
 use crate::features::chat::select::{
-    alias_with_runtime_weights_locked, extract_usage_from_stream, freeze_maybe, record_usage,
-    select_key_locked, upstream_key_value_locked, usage_key_name,
+    extract_usage_from_stream, freeze_maybe, record_usage, select_key_locked,
+    upstream_key_value_locked, usage_key_name,
 };
 use crate::features::responses::store;
 use crate::features::responses::translate;
@@ -59,13 +59,7 @@ pub(crate) async fn stream_responses_route(
         let mut total_tried: usize = 0;
         let mut failed_alias: String = aliases.first().map(|a| a.alias.clone()).unwrap_or_else(|| "router".to_string());
         for base_alias in aliases {
-            let alias = match alias_with_runtime_weights_locked(&app, &base_alias) {
-                Ok(alias) => alias,
-                Err(message) => {
-                    yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(sse_error_event("router", 0, &message)));
-                    return;
-                }
-            };
+            let alias = base_alias.clone();
             let is_passthrough = alias.supports_responses();
             // 空地址防护：所选模式对应的供应商地址未配置时给出明确错误，而不是发向坏 URL
             let endpoint_missing = if is_passthrough {
@@ -78,7 +72,7 @@ pub(crate) async fn stream_responses_route(
                 alias.base_url.trim().is_empty()
             };
             if endpoint_missing {
-                yield Ok(Bytes::from(sse_error_message(if is_passthrough {
+                yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(sse_error_message(if is_passthrough {
                     "provider responses_base_url is empty; cannot pass through /v1/responses"
                 } else {
                     "provider has no chat completions base_url configured; cannot translate /v1/responses"
