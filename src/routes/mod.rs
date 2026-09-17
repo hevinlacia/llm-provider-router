@@ -3,12 +3,14 @@
 //! 子模块：
 //! - `usage.rs`：health / dashboard / 用量快照
 //! - `models.rs`：模型列表 + 动态上下文协商
-//! - `config.rs`：配置类 handler
+//! - `config.rs`：v1/通用配置 handler（权重、别名、价格、keys、搜索供应商）
+//! - `config_v2.rs`：v2 分层配置管理 handler（供应商/逻辑模型/虚拟模型/物理模型）
 //! - `chat.rs`：OpenAI 兼容入口（转发 features/chat）
 //! - `resp.rs`：共享响应工具
 
 pub(crate) mod chat;
 pub(crate) mod config;
+pub(crate) mod config_v2;
 pub(crate) mod messages;
 pub(crate) mod models;
 pub(crate) mod resp;
@@ -89,26 +91,26 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
             "/api/config/model-aliases",
             get(config::api_config_model_aliases).put(config::api_config_model_aliases_update),
         )
-        .route("/api/config/v2", get(config::api_config_v2))
+        .route("/api/config/v2", get(config_v2::api_config_v2))
         .route(
             "/api/config/v2/providers",
-            post(config::api_config_v2_providers_create)
-                .put(config::api_config_v2_providers_update),
+            post(config_v2::api_config_v2_providers_create)
+                .put(config_v2::api_config_v2_providers_update),
         )
         .route(
             "/api/config/v2/providers/{name}/models",
-            get(config::api_config_v2_provider_models),
+            get(config_v2::api_config_v2_provider_models),
         )
         .route(
             "/api/config/v2/virtual-models",
-            post(config::api_config_v2_virtual_models_upsert)
-                .delete(config::api_config_v2_virtual_models_delete),
+            post(config_v2::api_config_v2_virtual_models_upsert)
+                .delete(config_v2::api_config_v2_virtual_models_delete),
         )
         .route(
             "/api/config/v2/logical-models",
-            post(config::api_config_v2_logical_models_create)
-                .put(config::api_config_v2_logical_models_update)
-                .delete(config::api_config_v2_logical_models_delete),
+            post(config_v2::api_config_v2_logical_models_create)
+                .put(config_v2::api_config_v2_logical_models_update)
+                .delete(config_v2::api_config_v2_logical_models_delete),
         )
         .route(
             "/api/config/providers",
@@ -124,7 +126,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         )
         .route(
             "/api/config/v2/physical-models",
-            put(config::api_config_physical_models_update),
+            put(config_v2::api_config_physical_models_update),
         )
         .route(
             "/api/config/keys",
