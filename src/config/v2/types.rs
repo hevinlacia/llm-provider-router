@@ -7,7 +7,7 @@
 //! - LogicalModel：对外暴露名（alias），无 base_url / 无 key，只有路由目标 + 策略 + 默认参数。
 //!
 //! Phase 1：提供解析器 + 折叠为旧 `ModelAlias` 的适配器 + 校验 + 单测。
-//! 尚未接入运行时路由（Phase 2 切换），运行时默认仍走 `config::aliases()` 旧逻辑。
+//! v2 分层配置的类型定义（Provider / PhysicalModel / LogicalModel / V2Key），运行时唯一配置路径。
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

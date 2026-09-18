@@ -8,8 +8,6 @@
 //! - 不引入 notify 等文件系统 watcher 依赖，2s 轮询对个人工具足够及时且实现最简。
 //! - 编辑器非原子写入（半写状态）由「重载失败保留旧配置」兜底（见
 //!   `RouterState::reload_v2`），文件写完整后的下一次变更检测会自动恢复。
-//! - 仅 v2 模式生效；`LLM_PROVIDER_ROUTER_V2=0` 时启动即跳过（legacy 配置路径不归此管）。
-
 use crate::app::AppState;
 use crate::config_v2;
 use std::collections::BTreeMap;
@@ -45,10 +43,6 @@ fn snapshot(paths: &[&str]) -> Snapshot {
 
 /// 启动 v2 配置热加载 watcher。在每个 backend 实例启动时调用一次。
 pub(crate) fn spawn_watcher(app: AppState) {
-    if !app.settings.v2_config_enabled {
-        eprintln!("llm-provider-router v2 config disabled (LLM_PROVIDER_ROUTER_V2=0); hot-reload watcher not started");
-        return;
-    }
     let mut last = snapshot(WATCH_PATHS);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(POLL_INTERVAL);
@@ -81,7 +75,7 @@ pub(crate) fn spawn_watcher(app: AppState) {
                 if loaded {
                     "config reloaded"
                 } else {
-                    "reload failed, keeping legacy fallback (v2 config invalid)"
+                    "reload failed, keeping last good config (v2 config invalid)"
                 }
             );
         }

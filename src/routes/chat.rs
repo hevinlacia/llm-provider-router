@@ -93,10 +93,7 @@ pub(crate) async fn chat_completions(
     } else {
         let mut last_frozen: Option<NoAvailableKeyError> = None;
         for base_alias in route_aliases {
-            let alias = match app.state.lock() {
-                Ok(mut state) => state.alias_with_runtime_weights(&base_alias),
-                Err(_) => return internal_error("router state lock poisoned"),
-            };
+            let alias = base_alias.clone();
             let upstream_payload = prepare_upstream_payload(&payload, &alias);
             match call_upstream(&app, alias, session_id.clone(), upstream_payload).await {
                 Ok(response) => return response,

@@ -92,8 +92,6 @@ npm run build
 - `GET /api/usage` — usage metrics; supports `period`, `start`, and `end`.
 - `POST /api/usage/reset` — clear usage events.
 - `POST /api/frozen/clear` — clear frozen keys.
-- `GET/PUT /api/config/weights` — key routing weights.
-- `GET/PUT /api/config/providers` — provider base URLs.
 - `GET/PUT/POST /api/config/keys` — encrypted key metadata/update/add.
 - `GET /v1/models` — OpenAI-compatible model list (enriched with `context_window`/`max_output_tokens` for dynamic context negotiation).
 - `GET /api/router/capabilities` — dynamic context negotiation view: per logical model `effective: {contextWindow,maxTokens}` (conservative min across available physical targets) + per-target windows/availability.
@@ -185,9 +183,6 @@ LLM_PROVIDER_ROUTER_REQUEST_TIMEOUT_SECONDS=600
 LLM_PROVIDER_ROUTER_BEARER_TOKEN=<optional; local auth token, read from environment only; falls back to LLM_PROVIDER_ROUTER_API_KEY>
 LLM_PROVIDER_ROUTER_USAGE_DB_PATH=~/.local/state/llm-provider-router/usage.sqlite3
 LLM_PROVIDER_ROUTER_STATE_DB_PATH=~/.local/state/llm-provider-router/state.sqlite3
-LLM_PROVIDER_ROUTER_WEIGHT_CONFIG_PATH=config/key-weights.json
-LLM_PROVIDER_ROUTER_PROVIDER_CONFIG_PATH=config/providers.json
-LLM_PROVIDER_ROUTER_CUSTOM_KEY_CONFIG_PATH=config/custom-keys.json
 LLM_PROVIDER_ROUTER_SEARCH_PROVIDERS_PATH=config/search-providers.json
 ```
 

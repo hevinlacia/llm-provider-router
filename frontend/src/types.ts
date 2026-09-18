@@ -68,31 +68,6 @@ export type WeightKey = {
   probability: number;
 };
 
-export type WeightAlias = {
-  model: string;
-  base_url: string;
-  effective_base_url: string;
-  provider: string;
-  keys: WeightKey[];
-};
-
-export type WeightConfig = {
-  ok: boolean;
-  weights: Record<string, number>;
-  global_weights: Record<string, number>;
-  pool_weights: Record<string, Record<string, number>>;
-  pools: string[];
-  supports_pool_weights: boolean;
-  aliases: Record<string, WeightAlias>;
-  config_path: string;
-};
-
-export type ProviderConfig = {
-  ok: boolean;
-  providers: Array<{ name: string; base_url: string; default_base_url: string }>;
-  config_path: string;
-};
-
 export type CustomModelAlias = {
   alias: string;
   upstream_model: string;
@@ -133,9 +108,7 @@ export type KeyConfig = {
     env_configured: boolean;
     source: string;
   }>;
-  auto_aliases: string[];
   config_path: string;
-  custom_key_config_path: string;
 };
 
 export type FilterState = {

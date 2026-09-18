@@ -168,7 +168,7 @@ fn missing_files_return_error() {
 }
 
 /// 读取仓库真实迁移配置文件（providers-v2/models/logical-models），
-/// 验证折叠结果与旧 config::aliases() 的主目标完全一致（迁移等价性）。    /// 需要仓库内的真实配置，默认 ignore，用 `cargo test -- --ignored` 显式运行。
+/// 验证折叠覆盖全部对外 alias 与意图档位迁移语义。需要仓库内的真实配置，默认 ignore，用 `cargo test -- --ignored` 显式运行。
 #[test]
 #[ignore = "requires real config files in repo"]
 fn real_repo_config_folds_equivalent_to_legacy() {
@@ -195,25 +195,7 @@ fn real_repo_config_folds_equivalent_to_legacy() {
         );
     }
 
-    // 与旧 aliases() 主目标等价性校验：litellm_model / base_url 应一致。
-    // 迁移后 high/low-model-auto 由 model-routes.json 档位迁为"逻辑模型指向逻辑模型"，
-    // 折叠到的是指向逻辑模型的主目标，与旧硬编码的物理直连语义不同，单独断言（见下）。
-    let legacy = crate::config::aliases();
-    for (name, alias) in &aliases {
-        if name == "high-model-auto" || name == "low-model-auto" {
-            continue;
-        }
-        let Some(old) = legacy.get(name) else {
-            continue;
-        };
-        assert_eq!(
-            alias.litellm_model, old.litellm_model,
-            "alias {name} 上游模型不一致"
-        );
-        assert_eq!(alias.base_url, old.base_url, "alias {name} base_url 不一致");
-    }
-
-    // 意图档位迁移语义：
+    // 意图档位迁移语义（原 model-routes.json 档位迁为"逻辑模型指向逻辑模型"）：
     // - high-model-auto → glm-latest-auto → ark/glm-5.2（主目标）
     // - low-model-auto → deepseek-v4-flash-auto（首物理目标）+ 回退 glm-latest-auto
     assert_eq!(

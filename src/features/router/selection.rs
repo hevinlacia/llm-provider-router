@@ -134,21 +134,3 @@ pub fn weighted_pick(keys: &[KeyRef], session_id: Option<&str>, alias: &str) -> 
     }
     keys.last().cloned()
 }
-
-pub fn normalize_custom_key_name(value: &str) -> String {
-    let mut name = value.trim().to_string();
-    let upper = name.to_uppercase();
-    for prefix in ["AGENT_AI_ARK_", "AI_ARK_"] {
-        if upper.starts_with(prefix) {
-            name = name[prefix.len()..].to_string();
-            break;
-        }
-    }
-    if name.to_uppercase().ends_with("_API_KEY") {
-        let len = name.len() - "_API_KEY".len();
-        name.truncate(len);
-    }
-    name.trim_matches(&['_', '-'][..])
-        .to_lowercase()
-        .replace('_', "-")
-}

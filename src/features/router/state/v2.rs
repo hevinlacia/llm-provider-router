@@ -1,7 +1,7 @@
 //! RouterState v2 分层配置：providers / logical models / virtual models 编辑与视图。
 
 use super::RouterState;
-use crate::config::{aliases, KeyRef, ModelAlias, DEFAULT_ARK_BASE_URL};
+use crate::config::{KeyRef, ModelAlias};
 use crate::config_v2::{self, is_provider_scoped_virtual, V2Strategy};
 use crate::state_store::now_seconds;
 use serde_json::{json, Value};
@@ -11,11 +11,7 @@ impl RouterState {
     /// v2 折叠视图：每个逻辑模型取主目标（route.targets[0]）折叠为 ModelAlias，
     /// 再接入 custom model aliases（运行时 API 手动新增的扁平逻辑模型）。
     fn v2_aliases(&mut self) -> HashMap<String, ModelAlias> {
-        let mut aliases = self
-            .v2
-            .as_ref()
-            .and_then(|cfg| config_v2::fold_to_aliases(cfg).ok())
-            .unwrap_or_default();
+        let mut aliases = config_v2::fold_to_aliases(&self.v2).unwrap_or_default();
         aliases.extend(self.custom_alias_models());
         aliases
     }
@@ -23,45 +19,32 @@ impl RouterState {
     /// v2 模式下 custom model aliases 接入：base_url / keys 取自其声明 provider（v2 供应商），
     /// retry 用 custom 自身配置，折叠为单物理模型 ModelAlias。
     pub(super) fn custom_alias_models(&mut self) -> HashMap<String, ModelAlias> {
-        let provider_urls = self.provider_base_urls();
+        let cfg = self.v2.clone();
         let mut out = HashMap::new();
         for custom in self.model_alias_config.get() {
-            let base_url = provider_urls
-                .get(&custom.provider)
-                .cloned()
-                .or_else(|| {
-                    self.v2.as_ref().and_then(|cfg| {
-                        cfg.providers
-                            .get(&custom.provider)
-                            .map(|p| p.base_url.clone())
-                    })
+            // set_model_aliases 已校验 provider 存在；供应商事后被删时跳过该 custom alias
+            let Some(provider) = cfg.providers.get(&custom.provider) else {
+                continue;
+            };
+            let keys = provider
+                .keys
+                .iter()
+                .filter(|(_, k)| k.enabled)
+                .map(|(name, key)| KeyRef {
+                    name: name.clone(),
+                    env_var: key.env_var.clone(),
+                    weight: key.weight,
+                    provider: custom.provider.clone(),
+                    billing_type: key.billing_type.clone(),
+                    persist: key.persist,
                 })
-                .unwrap_or_else(|| DEFAULT_ARK_BASE_URL.to_string());
-            let keys = self
-                .v2
-                .as_ref()
-                .and_then(|cfg| cfg.providers.get(&custom.provider))
-                .map(|prov| {
-                    prov.keys
-                        .iter()
-                        .filter(|(_, k)| k.enabled)
-                        .map(|(name, key)| KeyRef {
-                            name: name.clone(),
-                            env_var: key.env_var.clone(),
-                            weight: key.weight,
-                            provider: custom.provider.clone(),
-                            billing_type: key.billing_type.clone(),
-                            persist: key.persist,
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+                .collect();
             out.insert(
                 custom.alias.clone(),
                 ModelAlias::new(
                     &custom.alias,
                     &custom.upstream_model,
-                    &base_url,
+                    &provider.base_url,
                     keys,
                     Some(crate::config::RetryPolicy::new(
                         custom.max_retry_seconds,
@@ -74,67 +57,14 @@ impl RouterState {
         out
     }
 
-    pub fn base_aliases(&mut self) -> HashMap<String, ModelAlias> {
-        if self.v2.is_some() {
-            return self.v2_aliases();
-        }
-        let mut aliases = aliases();
-        // Add custom model aliases
-        let provider_urls = self.provider_base_urls();
-        for custom_alias in self.model_alias_config.get() {
-            // Use provider's base URL, falling back to Ark's default
-            let base_url = provider_urls
-                .get(&custom_alias.provider)
-                .cloned()
-                .unwrap_or_else(|| DEFAULT_ARK_BASE_URL.to_string());
-            // Copy keys from an existing alias with the same provider (or use default keys)
-            let keys = aliases
-                .values()
-                .find(|alias| alias.provider() == custom_alias.provider)
-                .map(|alias| alias.keys.clone())
-                .unwrap_or_default();
-            aliases.insert(
-                custom_alias.alias.clone(),
-                ModelAlias::new(
-                    &custom_alias.alias,
-                    &custom_alias.upstream_model,
-                    &base_url,
-                    keys,
-                    Some(crate::config::RetryPolicy::new(
-                        custom_alias.max_retry_seconds,
-                        custom_alias.retry_delay_seconds,
-                        &[401, 402, 429, 500, 502, 503, 504],
-                    )),
-                ),
-            );
-        }
-        // Merge custom keys into all aliases
-        for key in self.custom_key_refs() {
-            for alias_name in self.custom_key_aliases(&key.name) {
-                if let Some(alias) = aliases.get_mut(&alias_name) {
-                    alias.keys.push(key.clone());
-                }
-            }
-        }
-        aliases
-    }
-
     pub fn settings_aliases(&mut self) -> HashMap<String, ModelAlias> {
-        self.base_aliases()
+        self.v2_aliases()
     }
 
     /// v2 架构完整状态视图：供应商（含 key enabled/frozen/可用性聚合）、
-    /// 物理模型、逻辑模型（策略 + 路由目标）。v2 未启用时返回最小对象。
+    /// 物理模型、逻辑模型（策略 + 路由目标）。
     pub fn v2_status(&mut self) -> Value {
-        let Some(cfg) = self.v2.as_ref() else {
-            let mut status = json!({ "v2_enabled": false });
-            if self.settings.v2_config_enabled {
-                if let Some(err) = &self.v2_load_error {
-                    status["v2_error"] = json!(err);
-                }
-            }
-            return status;
-        };
+        let cfg = &self.v2;
         let mut providers = serde_json::Map::new();
         let provider_models =
             config_v2::load_provider_models_file(&self.settings.provider_models_path);
@@ -257,15 +187,7 @@ impl RouterState {
     /// `effective` 取“可用目标”的最小窗口（跨供应商取 min，available=false 的目标不计入）；
     /// 全部不可用时回退到全部目标的 min；未声明窗口的目标按 0 处理（不拉大 min）。
     pub fn router_capabilities(&mut self) -> Value {
-        let Some(cfg) = self.v2.as_ref().cloned() else {
-            let mut status = json!({ "v2_enabled": false, "models": [] });
-            if self.settings.v2_config_enabled {
-                if let Some(err) = &self.v2_load_error {
-                    status["v2_error"] = json!(err);
-                }
-            }
-            return status;
-        };
+        let cfg = self.v2.clone();
         // 为了读 frozen 需要 &mut，但 cfg 已克隆，避免借用冲突
         let mut models_out: Vec<Value> = Vec::new();
         let mut aliases: Vec<String> = cfg.logical_models.keys().cloned().collect();
@@ -430,7 +352,7 @@ impl RouterState {
     /// v2 供应商探测信息：Chat Completions API 地址（base_url）+ Responses API 地址 + enabled key 的 env_var 列表（用于拉取模型名列表）。
     /// 探测统一走 Chat Completions API：模型名拉取优先 base_url，未配置时回退 responses_base_url。
     pub fn v2_provider_probe(&self, name: &str) -> Option<(String, Option<String>, Vec<String>)> {
-        let cfg = self.v2.as_ref()?;
+        let cfg = &self.v2;
         let provider = cfg.providers.get(name)?;
         let mut env_vars: Vec<String> = provider
             .keys
@@ -797,39 +719,32 @@ impl RouterState {
     /// 重新加载 v2 配置（供应商编辑写回后热生效；热加载 watcher 亦复用）。
     /// 加载失败时保留当前已加载配置（last-good），避免半写/坏文件清空运行时路由能力；
     /// 仅启动期首次加载失败才回退 legacy（v2 = None）。
-    pub(super) fn reload_v2(&mut self) {
-        if self.settings.v2_config_enabled {
-            // 逻辑模型不再持有能力参数；编辑回写后如残留 legacy 字段（旧版本文件）一并迁移。
-            let _ = config_v2::migrate_legacy_logical_caps(
-                config_v2::V2_MODELS_PATH,
-                config_v2::V2_LOGICAL_MODELS_PATH,
-            );
-            match config_v2::load_v2_config() {
-                Ok(cfg) => {
-                    self.v2 = Some(cfg);
-                    self.v2_load_error = None;
-                }
-                Err(err) => {
-                    // 热加载/编辑回写遇到坏文件（半写、校验失败）时保留 last-good，
-                    // 避免运行时路由能力被清空；仅启动期首次加载失败才回退 legacy。
-                    // v2_load_error 无论是否保留 last-good 都记录，经 v2_status() 透出供诊断。
-                    self.v2_load_error = Some(err.to_string());
-                    if self.v2.is_some() {
-                        eprintln!(
-                            "llm-provider-router v2 config reload failed; keeping last good config: {err:#}"
-                        );
-                    } else {
-                        eprintln!("llm-provider-router v2 config load failed: {err:#}");
-                        self.v2 = None;
-                    }
-                }
+    pub(super) fn reload_v2(&mut self) -> bool {
+        // 逻辑模型不再持有能力参数；编辑回写后如残留 legacy 字段（旧版本文件）一并迁移。
+        let _ = config_v2::migrate_legacy_logical_caps(
+            config_v2::V2_MODELS_PATH,
+            config_v2::V2_LOGICAL_MODELS_PATH,
+        );
+        match config_v2::load_v2_config() {
+            Ok(cfg) => {
+                self.v2 = cfg;
+                self.v2_load_error = None;
+                true
+            }
+            Err(err) => {
+                // 热加载/编辑回写遇到坏文件（半写、校验失败）时保留 last-good，
+                // 避免运行时路由能力被清空；失败原因经 v2_status() 透出供诊断。
+                eprintln!(
+                    "llm-provider-router v2 config reload failed; keeping last good config: {err:#}"
+                );
+                self.v2_load_error = Some(err.to_string());
+                false
             }
         }
     }
 
-    /// 热加载 watcher 入口：重读 v2 配置文件，返回重载后 v2 是否可用。
+    /// 热加载 watcher 入口：重读 v2 配置文件，返回本次重载是否成功。
     pub fn hot_reload_v2(&mut self) -> bool {
-        self.reload_v2();
-        self.v2.is_some()
+        self.reload_v2()
     }
 }

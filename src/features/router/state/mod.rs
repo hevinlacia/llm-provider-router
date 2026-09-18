@@ -6,18 +6,12 @@
 //! - `routing`：route_aliases 模型展开
 //! - `keys`：key 引用与物理引用推导
 
-use crate::config::{
-    aliases, default_key_weights, default_provider_base_urls, expand_path, KeyRef, ModelAlias,
-    Settings,
-};
+use crate::config::{expand_path, KeyRef, ModelAlias, Settings};
 use crate::config_v2;
-use crate::features::router::costing::{apply_costs, default_token_prices};
+use crate::features::router::costing::apply_costs;
 use crate::features::router::freeze::key_state_id;
 use crate::features::router::selection::weighted_pick;
-use crate::json_config::{
-    ApiKeysStore, CustomKeyPoolConfig, KeyWeightConfig, ModelAliasConfig, ProviderConfig,
-    TokenPriceConfig,
-};
+use crate::json_config::{ApiKeysStore, ModelAliasConfig, TokenPriceConfig};
 use crate::state_store::{now_seconds, StateStore};
 use crate::usage_store::UsageStore;
 use anyhow::Context;
@@ -65,16 +59,13 @@ pub struct RouterState {
     frozen: HashMap<String, FrozenKey>,
     bindings: HashMap<(String, String), SessionBinding>,
     usage_store: UsageStore,
-    weight_config: KeyWeightConfig,
-    provider_config: ProviderConfig,
-    custom_key_config: CustomKeyPoolConfig,
     token_price_config: TokenPriceConfig,
     model_alias_config: ModelAliasConfig,
     api_keys_store: ApiKeysStore,
-    /// v2 分层配置（加载失败为 None，回退旧逻辑）。
-    v2: Option<config_v2::V2Config>,
-    /// v2 配置加载失败原因（v2 为 None 且 v2_config_enabled 时经 /api/config/v2
-    /// 的 v2_error 字段透出，便于前端诊断是配置损坏而不是开关关闭）。
+    /// v2 分层配置（唯一配置路径；启动加载失败直接 fail-fast）。
+    v2: config_v2::V2Config,
+    /// 最近一次 v2 配置重载失败原因（运行期坏文件保留 last-good 时记录，
+    /// 经 /api/config/v2 的 v2_error 字段透出供诊断）。
     v2_load_error: Option<String>,
 }
 
@@ -100,22 +91,22 @@ impl RouterState {
             })
             .collect();
         let usage_store = UsageStore::new(&settings.usage_db_path)?;
-        let weight_config =
-            KeyWeightConfig::new(&settings.weight_config_path, default_key_weights());
-        let provider_config =
-            ProviderConfig::new(&settings.provider_config_path, default_provider_base_urls());
-        let mut custom_key_config = CustomKeyPoolConfig::new(&settings.custom_key_config_path);
         let model_alias_config = ModelAliasConfig::new(&settings.model_alias_config_path);
+        // 默认价格传空：运行期 sync_token_price_defaults 会按 v2 物理模型补默认价。
         let token_price_config =
-            TokenPriceConfig::new(&settings.token_price_config_path, default_token_prices());
+            TokenPriceConfig::new(&settings.token_price_config_path, HashMap::new());
         let api_keys_store = ApiKeysStore::new(&settings.api_keys_path);
+        // v2 分层配置是唯一配置路径：启动加载失败直接 fail-fast（systemd 重启暴露问题），
+        // 不静默回退——legacy 硬编码别名已随 v1 退役删除。
+        let v2 = config_v2::load_v2_config()
+            .context("load v2 config (providers-v2/models/logical-models) failed")?;
         // First run (file missing): seed from environment so existing keys are
         // captured into the sole source of truth. Otherwise: apply stored key
         // values to the process environment without overriding existing vars.
         if !api_keys_store.exists() {
             let mut seed: HashMap<String, String> = HashMap::new();
-            for alias in aliases().values() {
-                for key in &alias.keys {
+            for provider in v2.providers.values() {
+                for key in provider.keys.values() {
                     // Env-only keys (e.g. deepseek-official) are never
                     // persisted to api-keys.json; they come from the
                     // environment only.
@@ -129,25 +120,14 @@ impl RouterState {
                     }
                 }
             }
-            for (name, item) in custom_key_config.get().keys {
-                let env_var = if item.env_var.is_empty() {
-                    format!("AGENT_AI_ARK_{}_API_KEY", name.to_uppercase())
-                } else {
-                    item.env_var
-                };
-                if let Ok(value) = env::var(&env_var) {
-                    if !value.is_empty() {
-                        seed.insert(env_var, value);
-                    }
-                }
-            }
             if !seed.is_empty() {
                 let _ = api_keys_store.write(&seed);
             }
         } else {
-            let env_only_vars: HashSet<String> = aliases()
+            let env_only_vars: HashSet<String> = v2
+                .providers
                 .values()
-                .flat_map(|alias| alias.keys.iter())
+                .flat_map(|provider| provider.keys.values())
                 .filter(|key| !key.persist)
                 .map(|key| key.env_var.clone())
                 .collect();
@@ -172,31 +152,17 @@ impl RouterState {
                 let _ = api_keys_store.write(&remaining);
             }
         }
-        // v2 分层配置：默认启用（环境变量 LLM_PROVIDER_ROUTER_V2=0 可回退旧逻辑）。
-        // 加载失败（文件缺失/解析错误/校验失败）时静默回退，不阻塞启动；
-        // 失败原因保留在 v2_load_error，经 v2_status() 透出供诊断。
-        let (v2, v2_load_error) = if settings.v2_config_enabled {
-            match config_v2::load_v2_config() {
-                Ok(cfg) => (Some(cfg), None),
-                Err(err) => (None, Some(err.to_string())),
-            }
-        } else {
-            (None, None)
-        };
         let state = Self {
             settings,
             state_store,
             frozen,
             bindings,
             usage_store,
-            weight_config,
-            provider_config,
-            custom_key_config,
             token_price_config,
             model_alias_config,
             api_keys_store,
             v2,
-            v2_load_error,
+            v2_load_error: None,
         };
         Ok(state)
     }
@@ -235,7 +201,7 @@ impl RouterState {
             imported += 1;
         }
         // 重读 v2 配置：新增的 key/provider 即时生效。
-        self.reload_v2();
+        let _ = self.reload_v2();
         Ok(serde_json::json!({
             "reloaded": imported,
             "path": expanded.display().to_string(),
@@ -453,16 +419,12 @@ impl RouterState {
     }
 
     /// 解析某供应商下所有 key 名（供 usage series 按供应商过滤）。
-    /// v2 模式 key 名带 `provider/key` 前缀、以 KeyRef.provider 归属；非 v2 用原始 key 名。
+    /// 与 usage_key_name 的 `provider/key` 记录格式保持一致。
     pub fn key_names_for_provider(&mut self, provider: &str) -> Vec<String> {
-        let refs = if self.v2.is_some() {
-            self.v2_key_refs()
-        } else {
-            self.all_key_refs()
-        };
-        refs.into_iter()
+        self.all_key_refs()
+            .into_iter()
             .filter(|k| k.provider.eq_ignore_ascii_case(provider))
-            .map(|k| k.name)
+            .map(|k| format!("{}/{}", k.provider, k.name))
             .collect()
     }
 

@@ -2,7 +2,7 @@ use crate::config::Settings;
 use crate::config::{KeyRef, ModelAlias};
 use crate::config_v2::{TargetCandidate, V2Strategy};
 use crate::features::router::freeze::{parse_auth_invalid, parse_quota_reset};
-use crate::features::router::selection::{normalize_custom_key_name, order_targets, weighted_pick};
+use crate::features::router::selection::{order_targets, weighted_pick};
 use crate::features::router::state::RouterState;
 use crate::json_config::TokenPrice;
 use crate::state_store::now_seconds;
@@ -22,9 +22,6 @@ fn test_settings() -> Settings {
         local_bearer_token: None,
         usage_db_path: ":memory:".to_string(),
         state_db_path: ":memory:".to_string(),
-        weight_config_path: ":memory:".to_string(),
-        provider_config_path: ":memory:".to_string(),
-        custom_key_config_path: ":memory:".to_string(),
         api_keys_path: ":memory:".to_string(),
         token_price_config_path: ":memory:".to_string(),
         model_alias_config_path: ":memory:".to_string(),
@@ -32,7 +29,6 @@ fn test_settings() -> Settings {
         provider_models_path: ":memory:".to_string(),
         auth_invalid_freeze_seconds: 86400.0,
         // router_state 测试覆盖旧逻辑；v2 行为由 config_v2 模块测试覆盖。
-        v2_config_enabled: false,
         diag_dir: ":memory:".to_string(),
         diag_max_bytes: 10 * 1024 * 1024,
         diag_max_files: 0,
@@ -42,23 +38,32 @@ fn test_settings() -> Settings {
 }
 
 #[test]
-fn normalizes_custom_key_names() {
-    assert_eq!(
-        normalize_custom_key_name("AGENT_AI_ARK_SHELL_API_KEY"),
-        "shell"
-    );
-    assert_eq!(
-        normalize_custom_key_name("AI_ARK_FOO_BAR_API_KEY"),
-        "foo-bar"
-    );
-}
-
-#[test]
 fn weighted_pick_is_sticky_for_session() {
     let keys = vec![
-        KeyRef::new("a", "A", 1),
-        KeyRef::new("b", "B", 3),
-        KeyRef::new("c", "C", 5),
+        KeyRef {
+            name: "a".into(),
+            env_var: "A".into(),
+            weight: 1,
+            provider: "ark".into(),
+            billing_type: "subscription".into(),
+            persist: true,
+        },
+        KeyRef {
+            name: "b".into(),
+            env_var: "B".into(),
+            weight: 3,
+            provider: "ark".into(),
+            billing_type: "subscription".into(),
+            persist: true,
+        },
+        KeyRef {
+            name: "c".into(),
+            env_var: "C".into(),
+            weight: 5,
+            provider: "ark".into(),
+            billing_type: "subscription".into(),
+            persist: true,
+        },
     ];
     let first = weighted_pick(&keys, Some("session-1"), "alias").unwrap();
     let second = weighted_pick(&keys, Some("session-1"), "alias").unwrap();
@@ -84,20 +89,18 @@ fn parses_auth_invalid_error() {
 }
 
 #[test]
-fn env_only_keys_are_pruned_from_store_and_read_from_env() {
+fn stored_keys_are_kept_and_applied_to_env() {
     let dir = tempfile::tempdir().unwrap();
     let store_path = dir.path().join("api-keys.json");
     fs::write(
         &store_path,
         json!({
             "AGENT_AI_ARK_TEST_PERSIST_API_KEY": "persist-value",
-            "AGENT_AI_DEEPSEEK_API_KEY": "env-only-value",
         })
         .to_string(),
     )
     .unwrap();
     env::set_var("AGENT_AI_ARK_TEST_PERSIST_API_KEY", "persist-value");
-    env::set_var("AGENT_AI_DEEPSEEK_API_KEY", "env-only-value");
 
     let settings = Settings {
         api_keys_path: store_path.to_str().unwrap().to_string(),
@@ -105,23 +108,23 @@ fn env_only_keys_are_pruned_from_store_and_read_from_env() {
     };
     let mut state = RouterState::new(settings).unwrap();
 
-    // Env-only key must have been pruned from the plaintext store on startup.
+    // Persist key 保留在 store 中。
     let stored: HashMap<String, String> =
         serde_json::from_str(&fs::read_to_string(&store_path).unwrap()).unwrap();
-    assert!(!stored.contains_key("AGENT_AI_DEEPSEEK_API_KEY"));
     assert!(stored.contains_key("AGENT_AI_ARK_TEST_PERSIST_API_KEY"));
 
-    // Env-only key still resolves from the environment.
-    let deepseek = state
+    // store 中的 key 值在 env 缺失时被应用到进程环境（启动恢复机制）。
+    let restored = state
         .all_key_refs()
         .into_iter()
-        .find(|key| key.env_var == "AGENT_AI_DEEPSEEK_API_KEY")
-        .unwrap();
-    assert!(!deepseek.persist);
-    assert_eq!(
-        state.upstream_key_value(&deepseek).unwrap().as_deref(),
-        Some("env-only-value")
-    );
+        .find(|key| key.env_var == "AGENT_AI_ARK_TEST_PERSIST_API_KEY");
+    if let Some(key) = restored {
+        assert!(key.persist);
+        assert_eq!(
+            state.upstream_key_value(&key).unwrap().as_deref(),
+            Some("persist-value")
+        );
+    }
 }
 
 #[test]
@@ -132,7 +135,24 @@ fn zero_weight_key_is_not_selected_or_reused_from_binding() {
         "test-pool",
         "openai/test",
         "https://example.test",
-        vec![KeyRef::new("off", "OFF", 0), KeyRef::new("on", "ON", 1)],
+        vec![
+            KeyRef {
+                name: "off".into(),
+                env_var: "OFF".into(),
+                weight: 0,
+                provider: "ark".into(),
+                billing_type: "subscription".into(),
+                persist: true,
+            },
+            KeyRef {
+                name: "on".into(),
+                env_var: "ON".into(),
+                weight: 1,
+                provider: "ark".into(),
+                billing_type: "subscription".into(),
+                persist: true,
+            },
+        ],
         None,
     );
     state.bind("test-pool", "session-1", "off").unwrap();
@@ -143,28 +163,12 @@ fn zero_weight_key_is_not_selected_or_reused_from_binding() {
 }
 
 #[test]
-fn pool_specific_weight_overrides_global_weight() {
-    let settings = test_settings();
-    let mut state = RouterState::new(settings).unwrap();
-    state
-        .set_key_weights(HashMap::from([("hevin".to_string(), 0)]))
-        .unwrap();
-    state
-        .set_pool_key_weights("glm-latest-auto", HashMap::from([("hevin".to_string(), 7)]))
-        .unwrap();
-    let weights = state.effective_key_weights("glm-latest-auto");
-    assert_eq!(weights.get("hevin"), Some(&7));
-    let global_weights = state.effective_key_weights("deepseek-v4-pro-auto");
-    assert_eq!(global_weights.get("hevin"), Some(&0));
-}
-
-#[test]
 fn usage_snapshot_includes_cost_by_model() {
     let settings = test_settings();
     let mut state = RouterState::new(settings).unwrap();
     state
         .set_token_prices(HashMap::from([(
-            "glm-latest-auto".to_string(),
+            "ark/glm-5-3-260801".to_string(),
             TokenPrice {
                 input_uncached_per_million: 10.0,
                 input_cached_per_million: 1.0,

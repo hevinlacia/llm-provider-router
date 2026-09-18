@@ -18,3 +18,6 @@ config/api-keys.sops.json
 
 # runtime-generated provider model cache (settings UI "view provider details")
 config/provider-models.json
+
+# local dev worktrees (tools/ convention)
+worktree/
