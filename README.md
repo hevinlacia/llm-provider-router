@@ -186,6 +186,21 @@ LLM_PROVIDER_ROUTER_STATE_DB_PATH=~/.local/state/llm-provider-router/state.sqlit
 LLM_PROVIDER_ROUTER_SEARCH_PROVIDERS_PATH=config/search-providers.json
 ```
 
+## Provider Key Vault
+
+Providers read key values from environment variables named by each key's `env_var`. Two extra paths exist:
+
+- **Dashboard inline values**（Settings → Providers → Edit → Keys → Value column）：直接粘贴明文值，立即生效（`env::set_var`）并持久化到 `config/api-keys.json`（gitignored 明文本机文件），重启后自动重新注入。UI 只显示 set/missing 状态，不回显明文。
+- **SOPS 加密副本**（`config/api-keys.sops.json`）：明文原件不进 git；加密副本提交，规则在 `config/.sops.yaml`（age）。
+
+```bash
+bin/vault.sh encrypt   # dashboard 改 key 后重新生成加密副本（git add & commit）
+bin/vault.sh decrypt   # 新机器恢复：解密回明文（需 ~/.config/sops/age/keys.txt）
+bin/vault.sh status    # 校验副本存在与可解密（不回显内容）
+```
+
+新增 key 后：Settings 里保存 provider → Set 值 → `bin/vault.sh encrypt` → commit。
+
 ## Search Key Pool
 
 The router exposes a **unified web search endpoint** `POST /v1/search` that hides multiple search providers (Tavily / Exa / Brave) behind the router's single local bearer token — clients only need one key.

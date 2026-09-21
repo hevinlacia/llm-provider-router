@@ -1,0 +1,6 @@
+# SOPS 加密规则：仅加密 dashboard/vault 管理的供应商 key 明文副本。
+# 明文原件 config/api-keys.json 已 gitignore，只保留本机；
+# 加密副本 api-keys.sops.json 提交 git（跨机恢复：sops -d 覆盖回明文）。
+creation_rules:
+  - path_regex: api-keys\.sops\.json$
+    age: age1n4kxrm8969pqaax2u63akszmdgvu5dr2tfnwpt2d957ewtwx4sescvvz7d
