@@ -420,7 +420,7 @@ td input[type="checkbox"] { width: auto; accent-color: var(--cyan); }
 .search-providers-toolbar { margin-top: 16px; justify-content: space-between; align-items: center; }
 
 .modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; z-index: 100; backdrop-filter: blur(8px); }
-.modal { background: rgba(16, 24, 40, 0.98); border: 1px solid rgba(148,163,184,.18); border-radius: 20px; padding: 20px; max-width: 760px; width: 92%; max-height: 84vh; overflow: auto; box-shadow: 0 28px 78px rgba(0, 0, 0, 0.5); }
+.modal { background: rgba(16, 24, 40, 0.98); border: 1px solid rgba(148,163,184,.18); border-radius: 20px; padding: 20px; max-width: min(1180px, 92%); width: 92%; max-height: 84vh; overflow: auto; box-shadow: 0 28px 78px rgba(0, 0, 0, 0.5); }
 .modal h3 { margin: 0 0 12px; color: #fff; }
 .modal h4 { margin: 14px 0 8px; font-size: 14px; color: #e0f2fe; }
 .modal .field { margin-bottom: 10px; }
