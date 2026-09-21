@@ -206,7 +206,7 @@ export type ThinkingMapsConfig = {
 export type V2LogicalModel = {
   params: Record<string, unknown>;
   strategy: string;
-  targets: Array<{ model: string; weight?: number | null }>;
+  targets: Array<{ model: string; weight?: number | null; keys?: string[] | null }>;
   display_name?: string | null;
 };
 

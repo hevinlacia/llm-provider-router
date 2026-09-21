@@ -652,3 +652,71 @@ fn unvalidated_load_allows_empty_targets_for_repair() {
     assert!(cfg.logical_models.contains_key("broken-pool"));
     assert!(cfg.logical_models.contains_key("good-pool"));
 }
+
+/// 方案 B 回归：target.keys 白名单过滤 resolve 展开的 key 集合；
+/// 白名单全不命中 enabled key 时该 target 被跳过（fallback 到下一 target）。
+#[test]
+fn target_keys_allowlist_filters_resolved_keys() {
+    let dir = std::env::temp_dir().join(format!("lpr-v2-test-{}-allow", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    let p = write_temp(&dir, "providers.json", PROVIDERS);
+    let m = write_temp(&dir, "models.json", MODELS);
+    let l = write_temp(
+        &dir,
+        "logical.json",
+        r#"{
+              "logical_models": {
+                "allow-hevin": { "route": { "strategy": "priority", "targets": [ { "model": "ark/deepseek-v4-flash", "keys": ["hevin"] } ] } },
+                "allow-disabled": { "route": { "strategy": "priority", "targets": [ { "model": "ark/deepseek-v4-flash", "keys": ["wilford"] }, { "model": "deepseek-official/deepseek-v4-flash" } ] } }
+              }
+            }"#,
+    );
+    let cfg = load_v2_config_from(&p, &m, &l, "/nonexistent/virtual-models.json").unwrap();
+
+    // 白名单命中 enabled key：candidate 只保留 hevin
+    let candidates = resolve_targets(&cfg, "allow-hevin").unwrap();
+    assert_eq!(candidates.len(), 1);
+    let names: Vec<&str> = candidates[0]
+        .model
+        .keys
+        .iter()
+        .map(|k| k.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["hevin"]);
+
+    // 白名单只含 disabled key：ark target 被跳过，fallback 到 official target
+    let candidates = resolve_targets(&cfg, "allow-disabled").unwrap();
+    assert_eq!(candidates.len(), 1, "ark target 白名单无可用 key 应被跳过");
+    assert_eq!(candidates[0].model.base_url, "https://api.deepseek.com");
+}
+
+/// 方案 B 回归：fold（/models 列表与 keys 聚合视图）同样尊重 target.keys 白名单；
+/// 白名单全不命中时逻辑模型被跳过而不是生成零 key alias。
+#[test]
+fn fold_respects_target_keys_allowlist() {
+    let dir = std::env::temp_dir().join(format!("lpr-v2-test-{}-fold-allow", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    let p = write_temp(&dir, "providers.json", PROVIDERS);
+    let m = write_temp(&dir, "models.json", MODELS);
+    let l = write_temp(
+        &dir,
+        "logical.json",
+        r#"{
+              "logical_models": {
+                "allow-hevin": { "route": { "strategy": "priority", "targets": [ { "model": "ark/deepseek-v4-flash", "keys": ["hevin"] } ] } },
+                "allow-none": { "route": { "strategy": "priority", "targets": [ { "model": "ark/deepseek-v4-flash", "keys": ["wilford"] } ] } }
+              }
+            }"#,
+    );
+    let cfg = load_v2_config_from(&p, &m, &l, "/nonexistent/virtual-models.json").unwrap();
+    let aliases = fold_to_aliases(&cfg).unwrap();
+
+    let alias = aliases.get("allow-hevin").expect("白名单命中时应折叠");
+    let names: Vec<&str> = alias.keys.iter().map(|k| k.name.as_str()).collect();
+    assert_eq!(names, vec!["hevin"]);
+
+    assert!(
+        !aliases.contains_key("allow-none"),
+        "白名单全不命中 enabled key 时逻辑模型应被跳过"
+    );
+}

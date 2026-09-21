@@ -1,4 +1,4 @@
-use super::types::{V2Config, V2Strategy};
+use super::types::{V2Config, V2Provider, V2Strategy};
 use crate::config::{KeyRef, ModelAlias, RetryPolicy};
 use std::collections::{HashMap, HashSet};
 #[derive(Clone, Debug)]
@@ -42,16 +42,27 @@ fn resolve_targets_inner(
     let mut candidates = Vec::with_capacity(lm.route.targets.len());
     for target in &lm.route.targets {
         if cfg.models.contains_key(&target.model) {
-            if let Some(candidate) =
-                physical_candidate(cfg, alias, &target.model, target.weight, &lm.route.strategy)
-            {
+            if let Some(candidate) = physical_candidate(
+                cfg,
+                alias,
+                &target.model,
+                target.weight,
+                target.keys.as_deref(),
+                &lm.route.strategy,
+            ) {
                 candidates.push(candidate);
             }
-        } else if let Some(virtual_cands) =
-            virtual_candidates(cfg, alias, &target.model, target.weight, &lm.route.strategy)
-        {
+        } else if let Some(virtual_cands) = virtual_candidates(
+            cfg,
+            alias,
+            &target.model,
+            target.weight,
+            target.keys.as_deref(),
+            &lm.route.strategy,
+        ) {
             candidates.extend(virtual_cands);
         } else if let Some(nested) = resolve_targets_inner(cfg, &target.model, visited) {
+            // 嵌套逻辑模型：外层 target.keys 不透传，沿用嵌套自身 targets 的 keys 配置
             candidates.extend(nested);
         }
     }
@@ -68,6 +79,7 @@ fn virtual_candidates(
     alias: &str,
     target: &str,
     weight: Option<i64>,
+    keys_allow: Option<&[String]>,
     strategy: &V2Strategy,
 ) -> Option<Vec<TargetCandidate>> {
     let mut out = Vec::new();
@@ -78,7 +90,7 @@ fn virtual_candidates(
         for provider in providers {
             if let Some(upstream) = mappings.get(provider) {
                 if let Some(candidate) =
-                    virtual_candidate(cfg, alias, provider, upstream, weight, strategy)
+                    virtual_candidate(cfg, alias, provider, upstream, weight, keys_allow, strategy)
                 {
                     out.push(candidate);
                 }
@@ -90,7 +102,7 @@ fn virtual_candidates(
     if let Some((provider, rest)) = target.split_once('/') {
         if let Some(upstream) = cfg.virtual_models.get(rest).and_then(|m| m.get(provider)) {
             if let Some(candidate) =
-                virtual_candidate(cfg, alias, provider, upstream, weight, strategy)
+                virtual_candidate(cfg, alias, provider, upstream, weight, keys_allow, strategy)
             {
                 out.push(candidate);
             }
@@ -101,20 +113,16 @@ fn virtual_candidates(
 }
 
 /// 虚拟模型 → 单个物理候选（base_url/keys/retry 来自所属供应商）。
-fn virtual_candidate(
-    cfg: &V2Config,
-    alias: &str,
+/// 收集 provider 的 enabled keys；`keys_allow` 非空时按 target 白名单（key 名，不含 provider 前缀）过滤。
+fn enabled_keys_filtered(
+    prov: &V2Provider,
     provider_name: &str,
-    upstream_model: &str,
-    weight: Option<i64>,
-    strategy: &V2Strategy,
-) -> Option<TargetCandidate> {
-    let prov = cfg.providers.get(provider_name)?;
-
-    let keys: Vec<KeyRef> = prov
-        .keys
+    keys_allow: Option<&[String]>,
+) -> Vec<KeyRef> {
+    prov.keys
         .iter()
         .filter(|(_, key)| key.enabled)
+        .filter(|(key_name, _)| keys_allow.is_none_or(|names| names.iter().any(|n| n == *key_name)))
         .map(|(key_name, key)| KeyRef {
             name: key_name.clone(),
             env_var: key.env_var.clone(),
@@ -123,7 +131,22 @@ fn virtual_candidate(
             billing_type: key.billing_type.clone(),
             persist: key.persist,
         })
-        .collect();
+        .collect()
+}
+
+/// 虚拟模型 → 单个物理候选（base_url/keys/retry 来自所属供应商）。
+fn virtual_candidate(
+    cfg: &V2Config,
+    alias: &str,
+    provider_name: &str,
+    upstream_model: &str,
+    weight: Option<i64>,
+    keys_allow: Option<&[String]>,
+    strategy: &V2Strategy,
+) -> Option<TargetCandidate> {
+    let prov = cfg.providers.get(provider_name)?;
+
+    let keys = enabled_keys_filtered(prov, provider_name, keys_allow);
     if keys.is_empty() {
         return None;
     }
@@ -163,29 +186,22 @@ fn virtual_candidate(
 }
 
 /// 单个物理模型候选（enabled 已过滤，params 为逻辑默认 + 物理覆写合并）。
+/// `keys_allow` 非空时按 target 白名单过滤 key；过滤后无可用 key 时返回 None（跳过该 target）。
 fn physical_candidate(
     cfg: &V2Config,
     alias: &str,
     model_id: &str,
     weight: Option<i64>,
+    keys_allow: Option<&[String]>,
     strategy: &V2Strategy,
 ) -> Option<TargetCandidate> {
     let pm = cfg.models.get(model_id)?;
     let prov = cfg.providers.get(&pm.provider)?;
 
-    let keys: Vec<KeyRef> = prov
-        .keys
-        .iter()
-        .filter(|(_, key)| key.enabled)
-        .map(|(key_name, key)| KeyRef {
-            name: key_name.clone(),
-            env_var: key.env_var.clone(),
-            weight: key.weight,
-            provider: pm.provider.clone(),
-            billing_type: key.billing_type.clone(),
-            persist: key.persist,
-        })
-        .collect();
+    let keys = enabled_keys_filtered(prov, &pm.provider, keys_allow);
+    if keys_allow.is_some() && keys.is_empty() {
+        return None;
+    }
 
     let retry = prov.retry.as_ref().map(|r| {
         RetryPolicy::new(

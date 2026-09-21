@@ -90,21 +90,25 @@ export function LogicalModelEditor({ name, logical, candidates, isNew = false, o
 }) {
   const [poolName, setPoolName] = useState(name);
   const [strategy, setStrategy] = useState(logical.strategy);
-  const [targets, setTargets] = useState<Array<{ model: string; weight: string }>>(() =>
-    logical.targets.map((t) => ({ model: t.model, weight: t.weight != null ? String(t.weight) : '' })),
+  const [targets, setTargets] = useState<Array<{ model: string; weight: string; keys: string }>>(() =>
+    logical.targets.map((t) => ({ model: t.model, weight: t.weight != null ? String(t.weight) : '', keys: (t.keys ?? []).join(', ') })),
   );
-  function updateTarget(index: number, patch: Partial<{ model: string; weight: string }>) {
+  function updateTarget(index: number, patch: Partial<{ model: string; weight: string; keys: string }>) {
     const next = [...targets];
     next[index] = { ...next[index], ...patch };
     setTargets(next);
   }
-  function addTarget() { setTargets([...targets, { model: '', weight: '' }]); }
+  function addTarget() { setTargets([...targets, { model: '', weight: '', keys: '' }]); }
   function removeTarget(index: number) { setTargets(targets.filter((_, i) => i !== index)); }
   async function save() {
     const cleaned = targets.filter((t) => t.model.trim());
     if (!cleaned.length) { onError('At least one target is required'); return; }
     if (!poolName.trim()) { onError('Model pool name must not be empty'); return; }
-    const parsed = cleaned.map((t) => ({ model: t.model.trim(), weight: t.weight.trim() === '' ? null : Math.max(0, Number(t.weight) || 0) }));
+    const parsed = cleaned.map((t) => ({
+      model: t.model.trim(),
+      weight: t.weight.trim() === '' ? null : Math.max(0, Number(t.weight) || 0),
+      keys: t.keys.split(',').map((s) => s.trim()).filter(Boolean),
+    }));
     try {
       if (isNew) {
         onSaved(await api.createV2LogicalModel({ name: poolName.trim(), strategy, targets: parsed }));
@@ -126,10 +130,10 @@ export function LogicalModelEditor({ name, logical, candidates, isNew = false, o
         <option value="usage-aware">usage-aware</option>
       </select>
     </div>
-    <h4>Targets — physical model (provider/upstream), model pool, or virtual model</h4>
+    <h4>Targets — physical model (provider/upstream), model pool, or virtual model. Keys: optional comma-separated key-name allowlist (empty = all enabled keys of the provider).</h4>
     <datalist id={datalistId}>{candidates.filter((g) => g.items.length > 0).map((group) => <optgroup key={group.group} label={group.group}>{group.items.map((candidate) => <option key={candidate} value={candidate} />)}</optgroup>)}</datalist>
-    <div className="table-wrap"><table><thead><tr><th>Target</th><th>Weight</th><th></th></tr></thead><tbody>
-      {targets.map((t, i) => <tr key={i}><td><input list={datalistId} value={t.model} placeholder="e.g. openai-relay/grok-4.6 (physical), a pool name, or a virtual model" onChange={(event) => updateTarget(i, { model: event.target.value })} /></td><td><input className="weight-input" type="number" min="0" value={t.weight} placeholder="optional" onChange={(event) => updateTarget(i, { weight: event.target.value })} /></td><td><button className="secondary" onClick={() => removeTarget(i)}>Delete</button></td></tr>)}
+    <div className="table-wrap"><table><thead><tr><th>Target</th><th>Weight</th><th>Keys allowlist</th><th></th></tr></thead><tbody>
+      {targets.map((t, i) => <tr key={i}><td><input list={datalistId} value={t.model} placeholder="e.g. openai-relay/grok-4.6 (physical), a pool name, or a virtual model" onChange={(event) => updateTarget(i, { model: event.target.value })} /></td><td><input className="weight-input" type="number" min="0" value={t.weight} placeholder="optional" onChange={(event) => updateTarget(i, { weight: event.target.value })} /></td><td><input value={t.keys} placeholder="optional, e.g. hevin, hevin2" onChange={(event) => updateTarget(i, { keys: event.target.value })} /></td><td><button className="secondary" onClick={() => removeTarget(i)}>Delete</button></td></tr>)}
     </tbody></table></div>
     <button className="secondary" onClick={addTarget}>Add Target</button>
     <div className="toolbar"><button className="secondary" onClick={onCancel}>Cancel</button><button onClick={() => void save()}>{isNew ? 'Create' : 'Save'}</button></div>

@@ -155,6 +155,13 @@ pub struct V2Target {
     pub model: String,
     #[serde(default)]
     pub weight: Option<i64>,
+    /// 可选：该目标可用的 key 名白名单（provider 内的 key 名，不含 provider 前缀）。
+    /// 仅对直接指向物理模型 / 虚拟模型的目标生效；嵌套逻辑模型沿用其自身 targets 的
+    /// keys 配置。None / 缺省 = 使用该 provider 全部 enabled key。
+    /// 用途：同一 provider 多账号 key 的 coding plan 支持的模型不同时，
+    /// 把不支持某模型的目标限定到支持的 key，避免每次请求先撞一批 404。
+    #[serde(default)]
+    pub keys: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
