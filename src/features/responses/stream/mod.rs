@@ -195,6 +195,12 @@ pub(crate) async fn stream_responses_route(
                     freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
                     record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, None, session_id.as_deref());
                     log_upstream_failure(&alias, status, &body_text);
+                    // 上游明确拒绝：解除会话粘性绑定，避免会话被钉死在坏 key 上。
+                    if let Some(sid) = session_id.as_deref() {
+                        if let Ok(mut state) = app.state.lock() {
+                            state.unbind(&alias.alias, sid);
+                        }
+                    }
                     // 转成 Responses SSE error 事件
                     let err = translate::upstream_error_to_responses(&body_text);
                     let message = err.get("error").and_then(|e| e.get("message")).and_then(Value::as_str).unwrap_or("upstream error");
@@ -214,6 +220,12 @@ pub(crate) async fn stream_responses_route(
                                 yield Ok(chunk);
                             }
                             Err(exc) => {
+                                // 中流断开：解除粘性绑定，下次请求重新选 key。
+                                if let Some(sid) = session_id.as_deref() {
+                                    if let Ok(mut state) = app.state.lock() {
+                                        state.unbind(&alias.alias, sid);
+                                    }
+                                }
                                 yield Ok(Bytes::from(sse_error_event(&alias.alias, tried.len(), &exc.to_string())));
                                 return;
                             }
@@ -244,6 +256,12 @@ pub(crate) async fn stream_responses_route(
                                 }
                             }
                             Err(exc) => {
+                                // 中流断开：解除粘性绑定，下次请求重新选 key。
+                                if let Some(sid) = session_id.as_deref() {
+                                    if let Ok(mut state) = app.state.lock() {
+                                        state.unbind(&alias.alias, sid);
+                                    }
+                                }
                                 yield Ok(Bytes::from(sse_error_event(&alias.alias, tried.len(), &exc.to_string())));
                                 return;
                             }

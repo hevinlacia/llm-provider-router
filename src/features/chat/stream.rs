@@ -161,6 +161,33 @@ pub(crate) async fn stream_upstream_route(
                     continue;
                 }
 
+                if status >= 400 {
+                    // 非重试上游错误（如 404 模型不在账号 coding plan 内）：与 responses 流
+                    // 一致，以 SSE error 事件收尾并携带上游真实 message，而不是把错误 body
+                    // 当 200 空流透传——空流会让客户端报 "Stream ended without finish_reason"
+                    // 而无法定位真因。
+                    let body_text = response.text().await.unwrap_or_default();
+                    freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
+                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, None, session_id.as_deref());
+                    log_upstream_failure(&alias, status, &body_text);
+                    // 上游明确拒绝：解除会话粘性绑定，避免会话被钉死在坏 key 上。
+                    if let Some(sid) = session_id.as_deref() {
+                        if let Ok(mut state) = app.state.lock() {
+                            state.unbind(&alias.alias, sid);
+                        }
+                    }
+                    let message = serde_json::from_str::<Value>(&body_text)
+                        .ok()
+                        .and_then(|v| v.get("error").and_then(|e| e.get("message")).and_then(Value::as_str).map(str::to_string))
+                        .unwrap_or_else(|| "upstream error".to_string());
+                    yield Ok(Bytes::from(stream_error_event(
+                        &alias.alias,
+                        tried.len(),
+                        &format!("upstream {status}: {message}"),
+                    )));
+                    return;
+                }
+
                 let mut body_text = Vec::new();
                 let mut bytes_stream = response.bytes_stream();
                 // 兼容不标准上游（如 muse-spark 的 finish_reason 为 null 且无 [DONE]）：
@@ -194,6 +221,13 @@ pub(crate) async fn stream_upstream_route(
                             yield Ok(chunk);
                         }
                         Err(exc) => {
+                            // 中流断开：解除粘性绑定，下次请求重新选 key（可能是网络抖动，
+                            // 也可能是该 key 持续异常）。
+                            if let Some(sid) = session_id.as_deref() {
+                                if let Ok(mut state) = app.state.lock() {
+                                    state.unbind(&alias.alias, sid);
+                                }
+                            }
                             yield Ok(Bytes::from(stream_error_event(&alias.alias, tried.len(), &exc.to_string())));
                             return;
                         }
@@ -264,4 +298,147 @@ pub(crate) async fn stream_upstream_route(
     builder
         .body(Body::from_stream(stream))
         .unwrap_or_else(|_| internal_error("failed to create streaming response"))
+}
+
+#[cfg(test)]
+mod tests {
+    //! 回归：非重试上游错误状态（如 404 模型不在账号 coding plan）必须以 SSE error
+    //! 事件收尾并携带上游真实 message，而不是把错误 body 当 200 空流透传。
+
+    use super::*;
+    use crate::config::{KeyRef, ModelAlias, RetryPolicy, Settings};
+    use axum::routing::post;
+    use axum::{Json, Router};
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// 上游返回 404（不在 retry_on_status）时，流尾必须有带真实文案的 error 事件。
+    #[tokio::test]
+    async fn nonretryable_upstream_404_ends_with_error_event_not_empty_stream() {
+        // 本地 mock 上游：无论收到什么请求都回 404 + coding plan 文案。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_server = hits.clone();
+        let app = Router::new().route(
+            "/chat/completions",
+            post(move || {
+                let hits = hits_for_server.clone();
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    (
+                        axum::http::StatusCode::NOT_FOUND,
+                        Json(json!({
+                            "error": {
+                                "message": "The requested model does not support the coding plan feature.",
+                                "code": "model_not_supported",
+                            }
+                        })),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        // key 值从环境变量读取（upstream_key_value 只读 env）。
+        std::env::set_var("CHAT_TEST_ROUTER_404_KEY", "test-key-value");
+
+        let settings = Settings {
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            session_ttl_seconds: 3600.0,
+            monthly_quota_fallback_seconds: 86400.0,
+            five_hour_quota_fallback_seconds: 5400.0,
+            request_timeout_seconds: 30.0,
+            local_bearer_token: None,
+            usage_db_path: ":memory:".to_string(),
+            state_db_path: ":memory:".to_string(),
+            api_keys_path: ":memory:".to_string(),
+            token_price_config_path: ":memory:".to_string(),
+            model_alias_config_path: ":memory:".to_string(),
+            search_providers_path: ":memory:".to_string(),
+            provider_models_path: ":memory:".to_string(),
+            auth_invalid_freeze_seconds: 86400.0,
+            diag_dir: ":memory:".to_string(),
+            diag_max_bytes: 10 * 1024 * 1024,
+            diag_max_files: 0,
+            diag_sample_every: 1,
+            env_file_path: None,
+        };
+        let app_state = AppState::new(settings).unwrap();
+
+        // 单 key、retry 策略不含 404（模拟 ark coding 端点现状）。
+        let alias = ModelAlias::new(
+            "mock/test-model",
+            "openai/mock-test-model",
+            &format!("http://{addr}"),
+            vec![KeyRef {
+                name: "test-key".into(),
+                env_var: "CHAT_TEST_ROUTER_404_KEY".into(),
+                weight: 1,
+                provider: "mock-provider".into(),
+                billing_type: "subscription".into(),
+                persist: true,
+            }],
+            Some(RetryPolicy::new(
+                300,
+                5.0,
+                &[401, 402, 429, 500, 502, 503, 504],
+            )),
+        );
+
+        let response = stream_upstream_route(
+            app_state.clone(),
+            vec![alias],
+            Some("sess-unbind-1".to_string()),
+            json!({
+                "model": "mock/test-model",
+                "messages": [{ "role": "user", "content": "hi" }],
+                "stream": true,
+            }),
+        )
+        .await;
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&body);
+        server.abort();
+
+        // 核心断言：不是空流，且 error 事件携带上游真实状态与文案。
+        // 修复前：404 body 被当 200 SSE 透传，客户端只能看到
+        // "Stream ended without finish_reason"，无法定位真因。
+        assert!(
+            !text.is_empty(),
+            "stream must not end empty on non-retryable 404"
+        );
+        assert!(
+            text.contains("upstream 404"),
+            "expected upstream status in error event, got: {text}"
+        );
+        assert!(
+            text.contains("coding plan"),
+            "expected real upstream message in error event, got: {text}"
+        );
+        assert!(
+            text.contains("data: [DONE]"),
+            "error event must be followed by [DONE], got: {text}"
+        );
+        // 非重试状态不应空转重试同一 key。
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        // 选中成功会建立粘性绑定，上游明确拒绝后必须解绑，
+        // 否则该会话会被钉死在坏 key 上（404 不触发 freeze）。
+        assert!(
+            app_state
+                .state
+                .lock()
+                .unwrap()
+                .binding_for("mock/test-model", "sess-unbind-1")
+                .is_none(),
+            "session binding must be cleared after non-retryable upstream rejection"
+        );
+    }
 }
