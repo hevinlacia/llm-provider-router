@@ -1,0 +1,23 @@
+frontend/src/features/settings/editors.tsx
+  fa734cbbe30e146b 30-33,36-39,41-42,44-45,50-51,96-101,105-109,111-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "b80e46492c8a502ee8cad1ed99cf292ecec197f7",
+  "prompts": {
+    "fa734cbbe30e146b": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0c28d-d12f-714a-891a-9f01ae6aa967",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 67,
+      "total_deletions": 35,
+      "accepted_lines": 66,
+      "overriden_lines": 1
+    }
+  }
+}
