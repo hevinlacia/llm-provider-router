@@ -11,8 +11,8 @@ use std::collections::HashSet;
 
 use super::payload::log_upstream_failure;
 use super::select::{
-    extract_usage, freeze_maybe, record_usage, select_key_locked, upstream_key_value_locked,
-    usage_key_name,
+    clear_unsupported_if_ok, extract_usage, freeze_maybe, maybe_mark_unsupported, record_usage,
+    select_key_locked, upstream_key_value_locked, usage_key_name,
 };
 use crate::routes::resp::{internal_error, json_status, status_code};
 
@@ -156,6 +156,7 @@ pub(crate) async fn call_upstream(
                 &body_text,
                 &app.settings,
             );
+            maybe_mark_unsupported(app, &key, &alias, status, &body_text);
             record_usage(
                 &app.state,
                 &alias.alias,
@@ -176,6 +177,7 @@ pub(crate) async fn call_upstream(
             &body_text,
             &app.settings,
         );
+        maybe_mark_unsupported(app, &key, &alias, status, &body_text);
         record_usage(
             &app.state,
             &alias.alias,
@@ -185,6 +187,7 @@ pub(crate) async fn call_upstream(
             session_id.as_deref(),
         );
         log_upstream_failure(&alias, status, &body_text);
+        clear_unsupported_if_ok(app, &key, &alias, status);
         let mut resp = json_status(status_code(status), content);
         inject_router_headers(resp.headers_mut(), &alias);
         return Ok(resp);

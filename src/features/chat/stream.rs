@@ -13,8 +13,9 @@ use std::collections::HashSet;
 use super::payload::log_upstream_failure;
 use super::payload::prepare_upstream_payload;
 use super::select::{
-    extract_usage, extract_usage_from_stream, freeze_maybe, record_usage, select_key_locked,
-    stream_error_event, upstream_key_value_locked, usage_key_name,
+    clear_unsupported_if_ok, extract_usage, extract_usage_from_stream, freeze_maybe,
+    maybe_mark_unsupported, record_usage, select_key_locked, stream_error_event,
+    upstream_key_value_locked, usage_key_name,
 };
 use crate::routes::resp::internal_error;
 
@@ -148,6 +149,7 @@ pub(crate) async fn stream_upstream_route(
                 if retry_policy.as_ref().is_some_and(|policy| policy.retry_on_status.contains(&status)) {
                     let body_text = response.text().await.unwrap_or_default();
                     freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
+                    maybe_mark_unsupported(&app, &key, &alias, status, &body_text);
                     let usage = extract_usage_from_stream(&body_text).or_else(|| serde_json::from_str::<Value>(&body_text).ok().and_then(|value| extract_usage(&value).cloned()));
                     record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref(), session_id.as_deref());
                     log_upstream_failure(&alias, status, &body_text);
@@ -168,6 +170,7 @@ pub(crate) async fn stream_upstream_route(
                     // 而无法定位真因。
                     let body_text = response.text().await.unwrap_or_default();
                     freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
+                    maybe_mark_unsupported(&app, &key, &alias, status, &body_text);
                     record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, None, session_id.as_deref());
                     log_upstream_failure(&alias, status, &body_text);
                     // 上游明确拒绝：解除会话粘性绑定，避免会话被钉死在坏 key 上。
@@ -259,6 +262,7 @@ pub(crate) async fn stream_upstream_route(
                 let usage = extract_usage_from_stream(&body_text);
                 record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref(), session_id.as_deref());
                 log_upstream_failure(&alias, status, &body_text);
+                clear_unsupported_if_ok(&app, &key, &alias, status);
                 return;
             }
         }
@@ -440,5 +444,17 @@ mod tests {
                 .is_none(),
             "session binding must be cleared after non-retryable upstream rejection"
         );
+        // 404 not-support 信号：自动记录 key × 模型“不支持”，进入阶梯退避。
+        let unsupported = app_state.state.lock().unwrap().unsupported_view();
+        let hit = unsupported
+            .iter()
+            .find(|r| {
+                r["provider"] == "mock-provider"
+                    && r["key"] == "test-key"
+                    && r["model"] == "mock-test-model"
+            })
+            .expect("404 not-support must be recorded into unsupported ladder");
+        assert_eq!(hit["attempt"].as_u64().unwrap(), 1);
+        assert!(!hit["permanent"].as_bool().unwrap());
     }
 }

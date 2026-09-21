@@ -90,6 +90,10 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         )
         .route("/api/config/v2", get(config_v2::api_config_v2))
         .route(
+            "/api/config/v2/unsupported-keys",
+            get(config_v2::api_unsupported_keys).post(config_v2::api_unsupported_keys_refresh),
+        )
+        .route(
             "/api/config/v2/providers",
             post(config_v2::api_config_v2_providers_create)
                 .put(config_v2::api_config_v2_providers_update),

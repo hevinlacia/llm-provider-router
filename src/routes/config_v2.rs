@@ -18,6 +18,32 @@ pub(crate) async fn api_config_v2(State(app): State<AppState>) -> Response {
     with_state_json(&app, |state| Ok(state.v2_status()))
 }
 
+/// GET /api/config/v2/unsupported-keys：key × 模型“不支持”学习记录列表。
+pub(crate) async fn api_unsupported_keys(State(app): State<AppState>) -> Response {
+    with_state_json(&app, |state| {
+        Ok(json!({ "unsupported": state.unsupported_view() }))
+    })
+}
+
+/// POST /api/config/v2/unsupported-keys/refresh：按前缀过滤重置退避
+///（body 可选 { provider?, key?, model? }，缺省维度不限制，全空 = 全部重置）。
+pub(crate) async fn api_unsupported_keys_refresh(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let provider = payload.get("provider").and_then(Value::as_str);
+    let key = payload.get("key").and_then(Value::as_str);
+    let model = payload.get("model").and_then(Value::as_str);
+    let locked = app.state.lock();
+    match locked {
+        Ok(mut state) => match state.refresh_unsupported(provider, key, model) {
+            Ok(removed) => json_status(StatusCode::OK, json!({ "ok": true, "removed": removed })),
+            Err(err) => internal_error(&err.to_string()),
+        },
+        Err(_) => internal_error("router state lock poisoned"),
+    }
+}
+
 /// 解析 v2 供应商对象：{ name, base_url, keys } -> (name, base_url, keys)。
 /// 供新增/编辑供应商 handler 复用，错误返回可直接透传给 bad_request 的文案。
 fn parse_v2_provider_body(

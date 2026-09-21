@@ -11,8 +11,8 @@ use crate::app::AppState;
 use crate::config::ModelAlias;
 use crate::features::chat::payload::prepare_upstream_payload;
 use crate::features::chat::select::{
-    extract_usage, freeze_maybe, record_usage, select_key_locked, upstream_key_value_locked,
-    usage_key_name,
+    clear_unsupported_if_ok, extract_usage, freeze_maybe, maybe_mark_unsupported, record_usage,
+    select_key_locked, upstream_key_value_locked, usage_key_name,
 };
 use crate::features::chat::upstream::CallError;
 use crate::features::responses::{store, translate};
@@ -297,6 +297,7 @@ async fn call_responses_passthrough(
                 &body_text,
                 &app.settings,
             );
+            maybe_mark_unsupported(app, &key, &alias, status, &body_text);
             record_usage(
                 &app.state,
                 &alias.alias,
@@ -317,6 +318,7 @@ async fn call_responses_passthrough(
             &body_text,
             &app.settings,
         );
+        maybe_mark_unsupported(app, &key, &alias, status, &body_text);
         record_usage(
             &app.state,
             &alias.alias,
@@ -326,6 +328,7 @@ async fn call_responses_passthrough(
             session_id.as_deref(),
         );
         crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
+        clear_unsupported_if_ok(app, &key, &alias, status);
 
         // 响应原样透传（上游已是 Responses 格式；4xx/5xx 也是 OpenAI/Responses 错误体）
         let mut resp = json_status(status_code(status), content);
@@ -443,6 +446,7 @@ async fn call_upstream_responses(
                 &body_text,
                 &app.settings,
             );
+            maybe_mark_unsupported(app, &key, &alias, status, &body_text);
             record_usage(
                 &app.state,
                 &alias.alias,
@@ -463,6 +467,7 @@ async fn call_upstream_responses(
             &body_text,
             &app.settings,
         );
+        maybe_mark_unsupported(app, &key, &alias, status, &body_text);
         record_usage(
             &app.state,
             &alias.alias,
@@ -472,6 +477,7 @@ async fn call_upstream_responses(
             session_id.as_deref(),
         );
         crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
+        clear_unsupported_if_ok(app, &key, &alias, status);
 
         if status >= 400 {
             // 上游错误体翻译成 Responses 错误

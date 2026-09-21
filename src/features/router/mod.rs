@@ -24,3 +24,15 @@ pub(crate) mod util;
 pub use freeze::maybe_freeze_key;
 pub(crate) use state::config::PhysicalModelPatch;
 pub use state::{NoAvailableKeyError, RouterState};
+
+/// key × 模型级“不支持”状态：同一供应商不同 key 的订阅/套餐支持的模型不同，
+/// 上游明确拒绝（如 ark coding plan 404）时记录，按阶梯退避定期 probe，
+/// 达到 1 天及以上即永久失效，仅可通过 dashboard 刷新按钮重置。
+#[derive(Clone, Debug)]
+pub struct UnsupportedEntry {
+    pub last_error: String,
+    pub attempt: u32,
+    pub last_error_at: f64,
+    pub retry_at: f64,
+    pub permanent: bool,
+}

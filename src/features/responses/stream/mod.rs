@@ -21,8 +21,8 @@ use crate::app::AppState;
 use crate::config::ModelAlias;
 use crate::features::chat::payload::{log_upstream_failure, prepare_upstream_payload};
 use crate::features::chat::select::{
-    extract_usage_from_stream, freeze_maybe, record_usage, select_key_locked,
-    upstream_key_value_locked, usage_key_name,
+    clear_unsupported_if_ok, extract_usage_from_stream, freeze_maybe, maybe_mark_unsupported,
+    record_usage, select_key_locked, upstream_key_value_locked, usage_key_name,
 };
 use crate::features::responses::store;
 use crate::features::responses::translate;
@@ -172,6 +172,7 @@ pub(crate) async fn stream_responses_route(
                 if retry_policy.as_ref().is_some_and(|p| p.retry_on_status.contains(&status)) {
                     let body_text = response.text().await.unwrap_or_default();
                     freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
+                    maybe_mark_unsupported(&app, &key, &alias, status, &body_text);
                     let usage = extract_usage_from_stream(&body_text)
                         .or_else(|| serde_json::from_str::<Value>(&body_text).ok().and_then(|v| v.get("usage").filter(|u| u.is_object()).cloned()));
                     record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref(), session_id.as_deref());
@@ -193,6 +194,7 @@ pub(crate) async fn stream_responses_route(
                 if status >= 400 {
                     let body_text = response.text().await.unwrap_or_default();
                     freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
+                    maybe_mark_unsupported(&app, &key, &alias, status, &body_text);
                     record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, None, session_id.as_deref());
                     log_upstream_failure(&alias, status, &body_text);
                     // 上游明确拒绝：解除会话粘性绑定，避免会话被钉死在坏 key 上。
@@ -280,6 +282,7 @@ pub(crate) async fn stream_responses_route(
                     .or_else(|| extract_responses_usage_from_stream(&body_text));
                 record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref(), session_id.as_deref());
                 log_upstream_failure(&alias, status, &body_text);
+                clear_unsupported_if_ok(&app, &key, &alias, status);
                 return;
             }
         }
