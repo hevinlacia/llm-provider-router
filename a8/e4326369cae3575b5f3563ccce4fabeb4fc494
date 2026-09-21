@@ -1,0 +1,23 @@
+frontend/src/styles.css
+  fa734cbbe30e146b 117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "a8e4326369cae3575b5f3563ccce4fabeb4fc494",
+  "prompts": {
+    "fa734cbbe30e146b": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0c28d-d12f-714a-891a-9f01ae6aa967",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
