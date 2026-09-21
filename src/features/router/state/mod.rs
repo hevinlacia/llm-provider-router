@@ -113,8 +113,9 @@ impl RouterState {
                 for key in provider.keys.values() {
                     // Env-only keys (e.g. deepseek-official) are never
                     // persisted to api-keys.json; they come from the
-                    // environment only.
-                    if !key.persist {
+                    // environment only. Empty env_var (dashboard inline key)
+                    // has nothing to seed from either.
+                    if !key.persist || key.env_var.is_empty() {
                         continue;
                     }
                     if let Ok(value) = env::var(&key.env_var) {
@@ -135,9 +136,22 @@ impl RouterState {
                 .filter(|key| !key.persist)
                 .map(|key| key.env_var.clone())
                 .collect();
+            let known_env_vars: HashSet<String> = v2
+                .providers
+                .values()
+                .flat_map(|provider| provider.keys.values())
+                .filter(|key| !key.env_var.is_empty())
+                .map(|key| key.env_var.clone())
+                .collect();
             let stored = api_keys_store.load();
             let mut prune: Vec<String> = Vec::new();
             for (env_var, value) in &stored {
+                // Vault-by-name entries (dashboard inline keys without an
+                // env var) are read by upstream_key_value from the store;
+                // never inject them as environment variables.
+                if !known_env_vars.contains(env_var) {
+                    continue;
+                }
                 // One-time cleanup: env-only keys must not linger in the
                 // plaintext store; the environment is their only source.
                 if env_only_vars.contains(env_var) {

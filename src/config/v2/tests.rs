@@ -720,3 +720,31 @@ fn fold_respects_target_keys_allowlist() {
         "白名单全不命中 enabled key 时逻辑模型应被跳过"
     );
 }
+
+/// 空 env_var（dashboard 明文直配 key）应通过校验：值走 api-keys.json vault。
+#[test]
+fn validate_accepts_empty_env_var() {
+    let dir = std::env::temp_dir().join(format!("lpr-v2-test-{}-emptyenv", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    let providers = r#"{
+      "providers": {
+        "ark": {
+          "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "keys": {
+            "inline-key": { "env_var": "", "weight": 1, "billing_type": "subscription" }
+          }
+        }
+      }
+    }"#;
+    let models = r#"{
+      "models": { "ark/test-model": { "provider": "ark", "upstream_model": "test-model" } }
+    }"#;
+    let logical = r#"{
+      "logical_models": { "test-pool": { "route": { "strategy": "priority", "targets": [ { "model": "ark/test-model" } ] } } }
+    }"#;
+    let p = write_temp(&dir, "providers.json", providers);
+    let m = write_temp(&dir, "models.json", models);
+    let l = write_temp(&dir, "logical.json", logical);
+    let cfg = load_v2_config_from(&p, &m, &l, "/nonexistent/virtual-models.json");
+    assert!(cfg.is_ok(), "空 env_var 不应再被拒绝: {:?}", cfg.err());
+}

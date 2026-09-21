@@ -194,14 +194,24 @@ impl RouterState {
 
     pub fn key_secret_snapshot(&mut self) -> anyhow::Result<Value> {
         let refs = self.all_key_refs();
+        let stored = self.api_keys_store.load();
         let mut keys = Vec::new();
         for key in refs {
-            let env_configured = env::var(&key.env_var)
-                .ok()
+            // 取值优先级与 upstream_key_value 一致：env 优先，vault（按 key 名）兑底。
+            let env_configured = !key.env_var.is_empty()
+                && env::var(&key.env_var)
+                    .ok()
+                    .filter(|value| !value.is_empty())
+                    .is_some();
+            let vault_configured = stored
+                .get(&key.name)
                 .filter(|value| !value.is_empty())
                 .is_some();
+            let configured = env_configured || vault_configured;
             let source = if env_configured {
                 "environment"
+            } else if vault_configured {
+                "vault"
             } else {
                 "missing"
             };
@@ -210,7 +220,7 @@ impl RouterState {
                 "provider": key.provider,
                 "billing_type": key.billing_type,
                 "env_var": key.env_var,
-                "configured": env_configured,
+                "configured": configured,
                 "env_configured": env_configured,
                 "source": source,
                 "persist": key.persist,
@@ -247,36 +257,61 @@ impl RouterState {
             .all_key_refs()
             .into_iter()
             .filter(|key| key.persist)
+            .filter(|key| !key.env_var.is_empty())
             .map(|key| key.env_var)
             .collect();
         for (name, value) in &values {
-            if let Some(env_var) = env_vars.get(name) {
-                if value.is_empty() {
+            let Some(env_var) = env_vars.get(name) else {
+                continue;
+            };
+            if value.is_empty() {
+                if !env_var.is_empty() {
                     env::remove_var(env_var);
-                    stored.remove(env_var.as_str());
-                } else {
-                    env::set_var(env_var, value);
-                    // Env-only keys (persist=false) stay out of the store;
-                    // persistent changes go through the env file / vault.
-                    if persist_env_vars.contains(env_var) {
-                        stored.insert(env_var.clone(), value.clone());
-                    }
+                }
+                stored.remove(env_var.as_str());
+                stored.remove(name.as_str());
+            } else if env_var.is_empty() {
+                // 纯 vault key（未绑定环境变量名）：值按 key 名存，
+                // upstream_key_value 读取时 fallback 到 store。
+                stored.insert(name.clone(), value.clone());
+            } else {
+                env::set_var(env_var, value);
+                // Env-only keys (persist=false) stay out of the store;
+                // persistent changes go through the env file / vault.
+                if persist_env_vars.contains(env_var) {
+                    stored.insert(env_var.clone(), value.clone());
                 }
             }
         }
         for name in &delete_names {
-            if let Some(env_var) = env_vars.get(name) {
+            let Some(env_var) = env_vars.get(name) else {
+                continue;
+            };
+            if !env_var.is_empty() {
                 env::remove_var(env_var);
-                stored.remove(env_var.as_str());
             }
+            stored.remove(env_var.as_str());
+            stored.remove(name.as_str());
         }
         self.api_keys_store.write(&stored)?;
         self.key_secret_snapshot()
     }
 
     pub fn upstream_key_value(&mut self, key: &KeyRef) -> anyhow::Result<Option<String>> {
-        Ok(env::var(&key.env_var)
-            .ok()
+        // 取值优先级：环境变量（env_var 非空时）→ api-keys.json vault（按 key 名，
+        // dashboard 明文直配且 env_var 为空的 key）。
+        if !key.env_var.is_empty() {
+            if let Some(value) = env::var(&key.env_var)
+                .ok()
+                .filter(|value| !value.is_empty())
+            {
+                return Ok(Some(value));
+            }
+        }
+        Ok(self
+            .api_keys_store
+            .load()
+            .remove(&key.name)
             .filter(|value| !value.is_empty()))
     }
 }
