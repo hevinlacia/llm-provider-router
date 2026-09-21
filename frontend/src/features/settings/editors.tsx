@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../api';
 import type { TargetCandidateGroup, V2LogicalModel, V2ProviderStatus, V2Status } from '../../types';
 
@@ -27,6 +27,47 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
   const [keys, setKeys] = useState<KeyDraft[]>(() =>
     Object.entries(provider.keys).map(([k, v]) => ({ name: k, env_var: v.env_var, weight: v.weight, billing_type: v.billing_type, enabled: v.enabled })),
   );
+  // —— 明文 key 值（dashboard 直接配置，存 api-keys.json，立即生效）——
+  // 状态来自 /api/config/keys snapshot，只含 configured 布尔，不回显明文。
+  const [valueState, setValueState] = useState<Record<string, boolean>>({});
+  const [editingValue, setEditingValue] = useState<string | null>(null);
+  const [valueDraft, setValueDraft] = useState('');
+  const [showValue, setShowValue] = useState(false);
+  const [savingValue, setSavingValue] = useState(false);
+  const loadValueState = useCallback(async () => {
+    try {
+      const snap = await api.keys();
+      const map: Record<string, boolean> = {};
+      for (const k of snap.keys ?? []) map[k.name] = k.configured;
+      setValueState(map);
+    } catch { /* snapshot 不可用时仅状态列退化 */ }
+  }, []);
+  useEffect(() => { if (!isNew) void loadValueState(); }, [isNew, loadValueState]);
+  async function saveKeyValue(keyName: string) {
+    if (!valueDraft) { setEditingValue(null); return; }
+    setSavingValue(true);
+    try {
+      await api.saveKeys({ [keyName]: valueDraft }, []);
+      setValueState((prev) => ({ ...prev, [keyName]: true }));
+      setEditingValue(null); setValueDraft(''); setShowValue(false);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingValue(false);
+    }
+  }
+  async function clearKeyValue(keyName: string) {
+    if (!confirm(`Clear stored value for key "${keyName}"? The key becomes missing until a new value is set.`)) return;
+    setSavingValue(true);
+    try {
+      await api.saveKeys({}, [keyName]);
+      setValueState((prev) => { const next = { ...prev }; delete next[keyName]; return next; });
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingValue(false);
+    }
+  }
   function updateKey(index: number, patch: Partial<KeyDraft>) {
     const next = [...keys];
     next[index] = { ...next[index], ...patch };
@@ -70,9 +111,9 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
     <div className="field"><label>Chat Completions API</label><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" /></div>
     <div className="field"><label>Responses API</label><input value={responsesBaseUrl} onChange={(event) => setResponsesBaseUrl(event.target.value)} placeholder="https://api.example.com/v1（留空则翻译）" /></div>
     <div className="field"><label>Anthropic API</label><input value={anthropicBaseUrl} onChange={(event) => setAnthropicBaseUrl(event.target.value)} placeholder="https://api.anthropic.com" /></div>
-    <h4>Keys</h4>
-    <div className="table-wrap"><table><thead><tr><th>Key</th><th>Env Var</th><th>Weight</th><th>Billing</th><th>Enabled</th><th></th></tr></thead><tbody>
-      {keys.map((k, i) => <tr key={i}><td><input value={k.name} onChange={(event) => updateKey(i, { name: event.target.value })} /></td><td><input className="env-input" value={k.env_var} onChange={(event) => updateKey(i, { env_var: event.target.value })} /></td><td><input className="weight-input" type="number" min="0" step="1" value={k.weight} onChange={(event) => updateKey(i, { weight: Number(event.target.value) || 0 })} /></td><td><select value={k.billing_type} onChange={(event) => updateKey(i, { billing_type: event.target.value })}><option value="subscription">subscription</option><option value="payg">payg</option></select></td><td><input type="checkbox" checked={k.enabled} onChange={(event) => updateKey(i, { enabled: event.target.checked })} /></td><td><button className="secondary" onClick={() => removeKey(i)}>Delete</button></td></tr>)}
+    <h4>Keys — paste a plaintext value to configure without env vars (stored locally, encrypted copy via bin/vault.sh for git)</h4>
+    <div className="table-wrap"><table><thead><tr><th>Key</th><th>Env Var</th><th>Value</th><th>Weight</th><th>Billing</th><th>Enabled</th><th></th></tr></thead><tbody>
+      {keys.map((k, i) => <tr key={i}><td><input value={k.name} onChange={(event) => updateKey(i, { name: event.target.value })} /></td><td><input className="env-input" value={k.env_var} onChange={(event) => updateKey(i, { env_var: event.target.value })} /></td><td>{editingValue === k.name ? <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}><input type={showValue ? 'text' : 'password'} value={valueDraft} placeholder="paste key value" autoFocus onChange={(event) => setValueDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void saveKeyValue(k.name); }} /><button type="button" className="secondary" onClick={() => setShowValue(!showValue)}>{showValue ? 'Hide' : 'Show'}</button><button type="button" disabled={!valueDraft || savingValue} onClick={() => void saveKeyValue(k.name)}>{savingValue ? '...' : 'Save'}</button><button type="button" className="secondary" onClick={() => { setEditingValue(null); setValueDraft(''); setShowValue(false); }}>✕</button></span> : <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}><span className={`status ${valueState[k.name] ? 'ok' : valueState[k.name] === undefined ? '' : 'warn'}`}>{valueState[k.name] === undefined ? '—' : valueState[k.name] ? 'set' : 'missing'}</span>{!isNew && <button type="button" className="secondary compact-button" onClick={() => { setEditingValue(k.name); setValueDraft(''); setShowValue(false); }}>{valueState[k.name] ? 'Change' : 'Set'}</button>}{!isNew && valueState[k.name] && <button type="button" className="secondary compact-button" disabled={savingValue} onClick={() => void clearKeyValue(k.name)}>Clear</button>}{isNew && <span className="muted small-text" title="Save provider first, then set the value">save first</span>}</span>}</td><td><input className="weight-input" type="number" min="0" step="1" value={k.weight} onChange={(event) => updateKey(i, { weight: Number(event.target.value) || 0 })} /></td><td><select value={k.billing_type} onChange={(event) => updateKey(i, { billing_type: event.target.value })}><option value="subscription">subscription</option><option value="payg">payg</option></select></td><td><input type="checkbox" checked={k.enabled} onChange={(event) => updateKey(i, { enabled: event.target.checked })} /></td><td><button className="secondary" onClick={() => removeKey(i)}>Delete</button></td></tr>)}
     </tbody></table></div>
     <button className="secondary" onClick={addKey}>Add Key</button>
     <div className="toolbar"><button className="secondary" onClick={onCancel}>Cancel</button><button onClick={() => void save()}>Save</button></div>
