@@ -13,44 +13,44 @@
       },
       "display_name": "Muse Spark Latest Auto"
     },
-    "deepseek-v4-pro-auto": {
+    "deepseek-v4-pro-official": {
       "params": {},
       "route": {
         "strategy": "priority",
         "targets": [
           {
-            "model": "ark/deepseek-v4-pro",
+            "model": "deepseek-official/deepseek-v4-pro",
             "weight": null
           }
         ]
       },
-      "display_name": "DeepSeek V4 Pro Auto"
+      "display_name": "DeepSeek V4 Pro Official"
     },
-    "deepseek-v4-flash-official": {
+    "gpt-low-latest-auto": {
       "params": {},
       "route": {
         "strategy": "priority",
         "targets": [
           {
-            "model": "deepseek-official/deepseek-v4-flash-vision-exp",
+            "model": "aixhan/gpt-5.5",
             "weight": null
           }
         ]
       },
-      "display_name": "DeepSeek V4 Flash Official"
+      "display_name": "GPT Low Latest Auto"
     },
-    "low-model-auto": {
+    "glm-latest-auto": {
       "params": {},
       "route": {
         "strategy": "priority",
         "targets": [
           {
-            "model": "glm-5.3-flash-auto",
+            "model": "ark/glm-5-3-260801",
             "weight": null
           }
         ]
       },
-      "display_name": "Low Model Auto"
+      "display_name": "GLM Latest Auto"
     },
     "grok-latest-auto": {
       "params": {},
@@ -69,70 +69,31 @@
       },
       "display_name": "Grok Latest Auto"
     },
-    "gpt-high-latest-auto": {
+    "gpt-medium-latest-auto": {
       "params": {},
       "route": {
         "strategy": "priority",
         "targets": [
           {
-            "model": "aixhan/gpt-6-astra",
+            "model": "aixhan/gpt-5.6-sol",
             "weight": null
           }
         ]
       },
-      "display_name": "GPT High Latest Auto"
+      "display_name": "GPT Medium Latest Auto"
     },
-    "glm-5.3-flash-auto": {
+    "deepseek-v4-flash-official": {
       "params": {},
       "route": {
         "strategy": "priority",
         "targets": [
           {
-            "model": "ark/glm-5.3-flash",
-            "weight": 1
-          }
-        ]
-      },
-      "display_name": null
-    },
-    "glm-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "ark/glm-5-3-260801",
+            "model": "deepseek-official/deepseek-v4-flash-vision-exp",
             "weight": null
           }
         ]
       },
-      "display_name": "GLM Latest Auto"
-    },
-    "deepseek-v4-pro-official": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "deepseek-official/deepseek-v4-pro",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "DeepSeek V4 Pro Official"
-    },
-    "deepseek-v4-flash-auto": {
-      "params": {},
-      "route": {
-        "strategy": "weighted",
-        "targets": [
-          {
-            "model": "ark/deepseek-v4-flash-260801",
-            "weight": 2
-          }
-        ]
-      },
-      "display_name": "DeepSeek V4 Flash Auto"
+      "display_name": "DeepSeek V4 Flash Official"
     },
     "medium-model-auto": {
       "params": {},
@@ -160,44 +121,19 @@
       },
       "display_name": "High Model Auto"
     },
-    "gpt-medium-latest-auto": {
+    "deepseek-v4-flash-auto": {
       "params": {},
       "route": {
-        "strategy": "priority",
+        "strategy": "weighted",
         "targets": [
           {
-            "model": "aixhan/gpt-5.6-sol",
-            "weight": null
+            "model": "ark/deepseek-v4.1-flash",
+            "weight": 1,
+            "keys": ["hevin"]
           }
         ]
       },
-      "display_name": "GPT Medium Latest Auto"
-    },
-    "minimax-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "ark/minimax-m3",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "MiniMax Latest Auto"
-    },
-    "gpt-low-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "aixhan/gpt-5.5",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "GPT Low Latest Auto"
+      "display_name": "DeepSeek V4 Flash Auto"
     },
     "picture-model-auto": {
       "params": {},
@@ -212,6 +148,45 @@
       },
       "display_name": "Picture Model Auto"
     },
+    "low-model-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "glm-5.3-flash-auto",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "Low Model Auto"
+    },
+    "minimax-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "ark/minimax-m3",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "MiniMax Latest Auto"
+    },
+    "deepseek-v4-pro-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "ark/deepseek-v4-pro",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "DeepSeek V4 Pro Auto"
+    },
     "openai-gpt-5.5-hevin": {
       "params": {},
       "route": {
@@ -224,6 +199,32 @@
         ]
       },
       "display_name": "OpenAI GPT-5.5 Hevin"
+    },
+    "gpt-high-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "aixhan/gpt-6-astra",
+            "weight": null
+          }
+        ]
+      },
+      "display_name": "GPT High Latest Auto"
+    },
+    "glm-5.3-flash-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "ark/glm-5.3-flash",
+            "weight": 1
+          }
+        ]
+      },
+      "display_name": null
     }
   }
 }
