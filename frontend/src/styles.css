@@ -114,7 +114,7 @@ nav { display: flex; flex-direction: column; gap: 8px; }
 .shell.collapsed .brand::before { display: none; }
 .shell.collapsed .brand-copy { display: none; }
 .shell.collapsed .sidebar-toggle { margin-left: 0; }
-.shell.collapsed .nav-button { grid-template-columns: 20px; justify-items: center; padding: 9px 0; }
+.shell.collapsed .nav-button { display: flex; align-items: center; justify-content: center; padding: 9px 0; }
 .shell.collapsed .nav-button:hover { transform: none; }
 .shell.collapsed .nav-label { display: none; }
 .shell.collapsed .side-card { display: none; }
