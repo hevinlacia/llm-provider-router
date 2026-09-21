@@ -73,8 +73,11 @@ button, input, select, textarea { font: inherit; }
 .sidebar-toggle {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  /* 全局 button { padding: 10px 14px } + 固定 width/height 会产生负内容区，
+     图标溢出、border 盒异常放大；用正 padding 定尺寸避免。 */
+  padding: 5px;
+  min-width: 26px;
+  min-height: 26px;
   flex: 0 0 auto;
   margin-left: auto;
   border: 1px solid rgba(148, 163, 184, 0.22);
