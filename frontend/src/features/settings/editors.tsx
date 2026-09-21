@@ -27,46 +27,28 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
   const [keys, setKeys] = useState<KeyDraft[]>(() =>
     Object.entries(provider.keys).map(([k, v]) => ({ name: k, env_var: v.env_var, weight: v.weight, billing_type: v.billing_type, enabled: v.enabled })),
   );
-  // —— 明文 key 值（dashboard 直接配置，存 api-keys.json，立即生效）——
-  // 状态来自 /api/config/keys snapshot，只含 configured 布尔，不回显明文。
-  const [valueState, setValueState] = useState<Record<string, boolean>>({});
-  const [editingValue, setEditingValue] = useState<string | null>(null);
-  const [valueDraft, setValueDraft] = useState('');
-  const [showValue, setShowValue] = useState(false);
-  const [savingValue, setSavingValue] = useState(false);
-  const loadValueState = useCallback(async () => {
+  // —— 密钥配置状态（/api/config/keys snapshot：environment / vault / missing，不回显明文）——
+  const [keySource, setKeySource] = useState<Record<string, string>>({});
+  const [keyConfigEditing, setKeyConfigEditing] = useState<{ index: number; name: string; mode: 'env' | 'plain' } | null>(null);
+  const loadKeySource = useCallback(async () => {
     try {
       const snap = await api.keys();
-      const map: Record<string, boolean> = {};
-      for (const k of snap.keys ?? []) map[k.name] = k.configured;
-      setValueState(map);
-    } catch { /* snapshot 不可用时仅状态列退化 */ }
+      const map: Record<string, string> = {};
+      for (const k of snap.keys ?? []) map[k.name] = k.source;
+      setKeySource(map);
+    } catch { /* snapshot 不可用时状态列退化 */ }
   }, []);
-  useEffect(() => { if (!isNew) void loadValueState(); }, [isNew, loadValueState]);
-  async function saveKeyValue(keyName: string) {
-    if (!valueDraft) { setEditingValue(null); return; }
-    setSavingValue(true);
+  useEffect(() => { if (!isNew) void loadKeySource(); }, [isNew, loadKeySource]);
+  async function savePlainValue(keyName: string, value: string) {
     try {
-      await api.saveKeys({ [keyName]: valueDraft }, []);
-      setValueState((prev) => ({ ...prev, [keyName]: true }));
-      setEditingValue(null); setValueDraft(''); setShowValue(false);
+      await api.saveKeys(value ? { [keyName]: value } : {}, value ? [] : [keyName]);
+      await loadKeySource();
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSavingValue(false);
     }
   }
-  async function clearKeyValue(keyName: string) {
-    if (!confirm(`Clear stored value for key "${keyName}"? The key becomes missing until a new value is set.`)) return;
-    setSavingValue(true);
-    try {
-      await api.saveKeys({}, [keyName]);
-      setValueState((prev) => { const next = { ...prev }; delete next[keyName]; return next; });
-    } catch (err) {
-      onError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSavingValue(false);
-    }
+  function sourceOf(keyName: string): string {
+    return keySource[keyName] ?? 'missing';
   }
   function updateKey(index: number, patch: Partial<KeyDraft>) {
     const next = [...keys];
@@ -111,12 +93,62 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
     <div className="field"><label>Chat Completions API</label><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" /></div>
     <div className="field"><label>Responses API</label><input value={responsesBaseUrl} onChange={(event) => setResponsesBaseUrl(event.target.value)} placeholder="https://api.example.com/v1（留空则翻译）" /></div>
     <div className="field"><label>Anthropic API</label><input value={anthropicBaseUrl} onChange={(event) => setAnthropicBaseUrl(event.target.value)} placeholder="https://api.anthropic.com" /></div>
-    <h4>Keys — paste a plaintext value to configure without env vars (stored locally, encrypted copy via bin/vault.sh for git)</h4>
-    <div className="table-wrap"><table><thead><tr><th>Key</th><th>Env Var</th><th>Value</th><th>Weight</th><th>Billing</th><th>Enabled</th><th></th></tr></thead><tbody>
-      {keys.map((k, i) => <tr key={i}><td><input value={k.name} onChange={(event) => updateKey(i, { name: event.target.value })} /></td><td><input className="env-input" value={k.env_var} onChange={(event) => updateKey(i, { env_var: event.target.value })} /></td><td>{editingValue === k.name ? <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}><input type={showValue ? 'text' : 'password'} value={valueDraft} placeholder="paste key value" autoFocus onChange={(event) => setValueDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void saveKeyValue(k.name); }} /><button type="button" className="secondary" onClick={() => setShowValue(!showValue)}>{showValue ? 'Hide' : 'Show'}</button><button type="button" disabled={!valueDraft || savingValue} onClick={() => void saveKeyValue(k.name)}>{savingValue ? '...' : 'Save'}</button><button type="button" className="secondary" onClick={() => { setEditingValue(null); setValueDraft(''); setShowValue(false); }}>✕</button></span> : <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}><span className={`status ${valueState[k.name] ? 'ok' : valueState[k.name] === undefined ? '' : 'warn'}`}>{valueState[k.name] === undefined ? '—' : valueState[k.name] ? 'set' : 'missing'}</span>{!isNew && <button type="button" className="secondary compact-button" onClick={() => { setEditingValue(k.name); setValueDraft(''); setShowValue(false); }}>{valueState[k.name] ? 'Change' : 'Set'}</button>}{!isNew && valueState[k.name] && <button type="button" className="secondary compact-button" disabled={savingValue} onClick={() => void clearKeyValue(k.name)}>Clear</button>}{isNew && <span className="muted small-text" title="Save provider first, then set the value">save first</span>}</span>}</td><td><input className="weight-input" type="number" min="0" step="1" value={k.weight} onChange={(event) => updateKey(i, { weight: Number(event.target.value) || 0 })} /></td><td><select value={k.billing_type} onChange={(event) => updateKey(i, { billing_type: event.target.value })}><option value="subscription">subscription</option><option value="payg">payg</option></select></td><td><input type="checkbox" checked={k.enabled} onChange={(event) => updateKey(i, { enabled: event.target.checked })} /></td><td><button className="secondary" onClick={() => removeKey(i)}>Delete</button></td></tr>)}
+    <h4>Keys — 通过「密钥配置」列选择环境变量或明文密钥（明文保存后立即生效；git 副本经 bin/vault.sh 加密）</h4>
+    <div className="table-wrap"><table><thead><tr><th>Key</th><th>密钥配置</th><th>Weight</th><th>Billing</th><th>Enabled</th><th></th></tr></thead><tbody>
+      {keys.map((k, i) => {
+        const src = sourceOf(k.name);
+        return <tr key={i}><td><input value={k.name} onChange={(event) => updateKey(i, { name: event.target.value })} /></td><td><span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><button type="button" className={`secondary compact-button ${src === 'environment' ? 'key-src-active' : ''}`} title={k.env_var ? `当前环境变量：${k.env_var}` : '绑定环境变量名，值从进程环境读取'} onClick={() => setKeyConfigEditing({ index: i, name: k.name, mode: 'env' })}>环境变量</button><button type="button" className={`secondary compact-button ${src === 'vault' ? 'key-src-active' : ''}`} title={src === 'vault' ? '已设置明文密钥（立即生效）' : '直接粘贴明文密钥值，存本机 vault'} onClick={() => setKeyConfigEditing({ index: i, name: k.name, mode: 'plain' })}>明文密钥</button>{src === 'missing' && <span className="muted small-text">未配置</span>}{src === 'environment' && k.env_var && <span className="muted small-text" title={k.env_var}>{k.env_var.length > 26 ? `${k.env_var.slice(0, 26)}…` : k.env_var}</span>}{src === 'vault' && <span className="status ok">已设置</span>}</span></td><td><input className="weight-input" type="number" min="0" step="1" value={k.weight} onChange={(event) => updateKey(i, { weight: Number(event.target.value) || 0 })} /></td><td><select value={k.billing_type} onChange={(event) => updateKey(i, { billing_type: event.target.value })}><option value="subscription">subscription</option><option value="payg">payg</option></select></td><td><input type="checkbox" checked={k.enabled} onChange={(event) => updateKey(i, { enabled: event.target.checked })} /></td><td><button className="secondary" onClick={() => removeKey(i)}>Delete</button></td></tr>;
+      })}
     </tbody></table></div>
     <button className="secondary" onClick={addKey}>Add Key</button>
     <div className="toolbar"><button className="secondary" onClick={onCancel}>Cancel</button><button onClick={() => void save()}>Save</button></div>
+    {keyConfigEditing && <KeyConfigModal
+      keyName={keyConfigEditing.name}
+      mode={keyConfigEditing.mode}
+      currentEnvVar={keys[keyConfigEditing.index]?.env_var ?? ''}
+      source={sourceOf(keyConfigEditing.name)}
+      known={keySource[keyConfigEditing.name] !== undefined}
+      onClose={() => setKeyConfigEditing(null)}
+      onSaveEnvVar={(value) => updateKey(keyConfigEditing.index, { env_var: value })}
+      onSavePlain={(value) => { void savePlainValue(keyConfigEditing.name, value); }}
+      onClearPlain={() => { void savePlainValue(keyConfigEditing.name, ''); }}
+    />}
+  </div></div>;
+}
+
+/// 密钥配置二次弹窗：环境变量模式（随主弹窗 Save 生效）/ 明文密钥模式（立即生效）。
+function KeyConfigModal({ keyName, mode, currentEnvVar, source, known, onClose, onSaveEnvVar, onSavePlain, onClearPlain }: {
+  keyName: string;
+  mode: 'env' | 'plain';
+  currentEnvVar: string;
+  source: string;
+  known: boolean;
+  onClose: () => void;
+  onSaveEnvVar: (value: string) => void;
+  onSavePlain: (value: string) => void;
+  onClearPlain: () => void;
+}) {
+  const [envVar, setEnvVar] = useState(currentEnvVar);
+  const [value, setValue] = useState('');
+  const [show, setShow] = useState(false);
+  const isEnv = mode === 'env';
+  return <div className="modal-overlay high" onClick={onClose}><div className="modal modal-sm" onClick={(event) => event.stopPropagation()}>
+    <h3>密钥配置：{keyName}</h3>
+    {isEnv ? <>
+      <div className="field"><label>环境变量名</label><input value={envVar} autoFocus placeholder="e.g. AGENT_AI_ARK_HEVIN_API_KEY" onChange={(event) => setEnvVar(event.target.value)} /></div>
+      <p className="muted small-text">密钥值从进程环境变量读取（systemd env 文件或启动环境注入）。确定后需点击主弹窗 Save 保存供应商配置才生效。</p>
+      <div className="toolbar"><button type="button" className="secondary" onClick={onClose}>取消</button><button type="button" onClick={() => { onSaveEnvVar(envVar.trim()); onClose(); }}>确定</button></div>
+    </> : <>
+      {source === 'vault' && <p className="muted small-text">当前已设置明文密钥（值不回显）。重新粘贴将覆盖；清除后 key 变为 missing。</p>}
+      {!known && <p className="muted small-text">该 key 尚未保存到供应商配置，请先在主弹窗点击 Save，再回来设置明文值。</p>}
+      <div className="field"><label>明文密钥</label><span style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input style={{ flex: 1 }} type={show ? 'text' : 'password'} value={value} placeholder="paste key value" autoFocus disabled={!known} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && value) { onSavePlain(value); onClose(); } }} /><button type="button" className="secondary" onClick={() => setShow(!show)}>{show ? '隐藏' : '显示'}</button></span></div>
+      <p className="muted small-text">保存后立即生效；明文存本机 config/api-keys.json，git 副本经 bin/vault.sh 加密。</p>
+      <div className="toolbar">
+        {source === 'vault' && <button type="button" className="secondary" onClick={() => { onClearPlain(); onClose(); }}>清除明文</button>}
+        <button type="button" className="secondary" onClick={onClose}>取消</button>
+        <button type="button" disabled={!known || !value} onClick={() => { onSavePlain(value); onClose(); }}>保存明文</button>
+      </div>
+    </>}
   </div></div>;
 }
 
