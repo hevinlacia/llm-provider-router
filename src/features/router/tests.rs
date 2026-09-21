@@ -486,3 +486,61 @@ fn unsupported_all_blocked_still_probes() {
         "全阻塞时应放开过滤给出候选"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 空 env_var（dashboard 明文直配）key 的 vault-by-name 读写链路
+// ---------------------------------------------------------------------------
+
+#[test]
+fn inline_key_value_reads_from_store_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let keys_path = dir.path().join("api-keys.json");
+    fs::write(
+        &keys_path,
+        json!({ "vault-key": "vault-value" }).to_string(),
+    )
+    .unwrap();
+    let settings = Settings {
+        api_keys_path: keys_path.to_str().unwrap().to_string(),
+        ..test_settings()
+    };
+    let mut state = RouterState::new(settings).unwrap();
+    // vault-by-name：env_var 为空 → upstream_key_value fallback 到 store 按 key 名读取
+    let inline = KeyRef {
+        name: "vault-key".into(),
+        env_var: "".into(),
+        weight: 1,
+        provider: "ark".into(),
+        billing_type: "subscription".into(),
+        persist: true,
+    };
+    assert_eq!(
+        state.upstream_key_value(&inline).unwrap().as_deref(),
+        Some("vault-value")
+    );
+    // env 优先：env_var 非空且有值时优先取 env
+    env::set_var("INLINE_KEY_ENV_TEST", "env-wins");
+    let with_env = KeyRef {
+        name: "env-key".into(),
+        env_var: "INLINE_KEY_ENV_TEST".into(),
+        weight: 1,
+        provider: "ark".into(),
+        billing_type: "subscription".into(),
+        persist: true,
+    };
+    assert_eq!(
+        state.upstream_key_value(&with_env).unwrap().as_deref(),
+        Some("env-wins")
+    );
+    // 两者皆无 → None
+    let missing = KeyRef {
+        name: "no-value-key".into(),
+        env_var: "".into(),
+        weight: 1,
+        provider: "ark".into(),
+        billing_type: "subscription".into(),
+        persist: true,
+    };
+    assert_eq!(state.upstream_key_value(&missing).unwrap(), None);
+    env::remove_var("INLINE_KEY_ENV_TEST");
+}
