@@ -349,3 +349,140 @@ fn reload_env_reads_env_file_and_injects_vars() {
     );
     std::env::remove_var("AGENT_TEST_RELOAD_KEY");
 }
+
+// ---------------------------------------------------------------------------
+// key × 模型“不支持”学习（阶梯退避 + 永久失效 + dashboard 刷新）
+// ---------------------------------------------------------------------------
+
+use crate::features::chat::select::is_unsupported_signal;
+
+fn two_key_alias() -> ModelAlias {
+    ModelAlias::new(
+        "ark/test-model",
+        "openai/test-model",
+        "https://ark.example.com/api/coding/v3",
+        vec![
+            KeyRef {
+                name: "good".into(),
+                env_var: "TWO_KEY_A".into(),
+                weight: 1,
+                provider: "ark".into(),
+                billing_type: "subscription".into(),
+                persist: true,
+            },
+            KeyRef {
+                name: "bad".into(),
+                env_var: "TWO_KEY_B".into(),
+                weight: 1,
+                provider: "ark".into(),
+                billing_type: "subscription".into(),
+                persist: true,
+            },
+        ],
+        None,
+    )
+}
+
+#[test]
+fn unsupported_signal_matches_only_404_not_support() {
+    let body = json!({
+        "error": { "message": "The requested model does not support the coding plan feature." }
+    })
+    .to_string();
+    assert!(is_unsupported_signal(404, &body));
+    // 非 404 / 无文案 / 普通错误不记
+    assert!(!is_unsupported_signal(429, &body));
+    assert!(!is_unsupported_signal(
+        404,
+        &json!({"error": {"message": "rate limited"}}).to_string()
+    ));
+    assert!(!is_unsupported_signal(404, "not json"));
+}
+
+#[test]
+fn unsupported_ladder_escalates_then_permanent() {
+    let mut state = RouterState::new(test_settings()).unwrap();
+    let model = "test-model";
+    let delays = [60.0, 300.0, 1800.0, 7200.0, 28800.0];
+    for (i, expected) in delays.iter().enumerate() {
+        state.mark_key_model_unsupported("ark", "bad", model, "does not support");
+        let entry = state
+            .unsupported_view()
+            .iter()
+            .find(|r| r["key"] == "bad")
+            .unwrap()
+            .clone();
+        assert_eq!(entry["attempt"].as_u64().unwrap(), (i + 1) as u64);
+        assert!(!entry["permanent"].as_bool().unwrap());
+        let retry_in = entry["retry_in_seconds"].as_u64().unwrap();
+        assert!(
+            (retry_in as f64 - *expected).abs() < 5.0,
+            "attempt {}: retry_in={retry_in}, expected ~{expected}",
+            i + 1
+        );
+    }
+    // 第 6 次失败：间隔达到 1 天 → 永久失效
+    state.mark_key_model_unsupported("ark", "bad", model, "does not support");
+    let entry = state
+        .unsupported_view()
+        .iter()
+        .find(|r| r["key"] == "bad")
+        .unwrap()
+        .clone();
+    assert_eq!(entry["attempt"].as_u64().unwrap(), 6);
+    assert!(entry["permanent"].as_bool().unwrap());
+    assert!(entry["retry_in_seconds"].is_null());
+}
+
+#[test]
+fn unsupported_select_skips_blocked_key_and_success_clears() {
+    let mut state = RouterState::new(test_settings()).unwrap();
+    let alias = two_key_alias();
+    // bad key 被标记为永久不支持 → select 永远只出 good
+    state.mark_key_model_unsupported("ark", "bad", "test-model", "does not support");
+    state.mark_key_model_unsupported("ark", "bad", "test-model", "does not support");
+    state.mark_key_model_unsupported("ark", "bad", "test-model", "does not support");
+    state.mark_key_model_unsupported("ark", "bad", "test-model", "does not support");
+    state.mark_key_model_unsupported("ark", "bad", "test-model", "does not support");
+    state.mark_key_model_unsupported("ark", "bad", "test-model", "does not support"); // permanent
+    for _ in 0..10 {
+        let key = state
+            .select_key_excluding(&alias, None, &HashSet::new())
+            .unwrap();
+        assert_eq!(key.name, "good", "永久不支持的 key 不应再被选中");
+    }
+    // dashboard 刷新（重置退避）后恢复参与
+    let removed = state
+        .refresh_unsupported(Some("ark"), Some("bad"), Some("test-model"))
+        .unwrap();
+    assert_eq!(removed, 1);
+    let names: HashSet<String> = (0..20)
+        .filter_map(|_| {
+            state
+                .select_key_excluding(&alias, None, &HashSet::new())
+                .ok()
+        })
+        .map(|k| k.name)
+        .collect();
+    assert!(names.contains("bad"), "刷新后 bad key 应重新参与");
+    // 成功跑通 → 清除记录
+    state.mark_key_model_unsupported("ark", "bad", "test-model", "does not support");
+    state.clear_key_model_unsupported("ark", "bad", "test-model");
+    assert!(state.unsupported_view().iter().all(|r| r["key"] != "bad"));
+}
+
+#[test]
+fn unsupported_all_blocked_still_probes() {
+    let mut state = RouterState::new(test_settings()).unwrap();
+    let alias = two_key_alias();
+    // 两个 key 都在退避窗口内（非永久）→ select 放开过滤继续 probe
+    state.mark_key_model_unsupported("ark", "good", "test-model", "does not support");
+    state.mark_key_model_unsupported("ark", "bad", "test-model", "does not support");
+    let key = state
+        .select_key_excluding(&alias, None, &HashSet::new())
+        .unwrap();
+    assert!(
+        key.name == "good" || key.name == "bad",
+        "全阻塞时应放开过滤给出候选"
+    );
+}

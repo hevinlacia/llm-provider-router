@@ -68,6 +68,71 @@ pub(crate) fn extract_usage(content: &Value) -> Option<&Value> {
     content.get("usage").filter(|value| value.is_object())
 }
 
+/// 上游“模型不支持”信号识别：HTTP 404 且 error.message 含 "not support"
+///（大小写不敏感）。覆盖 ark coding plan 的
+/// "The requested model does not support the coding plan feature"；
+/// 新供应商的同类报错模式在此扩展。普通 404（如路径错误）不带该文案，不会误记。
+pub(crate) fn is_unsupported_signal(status: u16, body_text: &str) -> bool {
+    if status != 404 {
+        return false;
+    }
+    serde_json::from_str::<Value>(body_text)
+        .ok()
+        .and_then(|v| {
+            v.get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .map(|message| message.to_lowercase().contains("not support"))
+        .unwrap_or(false)
+}
+
+/// 上游对该 key × 模型明确拒绝时记录（阶梯退避，详见 RouterState::mark_key_model_unsupported）。
+pub(crate) fn maybe_mark_unsupported(
+    app: &AppState,
+    key: &KeyRef,
+    alias: &ModelAlias,
+    status: u16,
+    body_text: &str,
+) {
+    if !is_unsupported_signal(status, body_text) {
+        return;
+    }
+    let message = serde_json::from_str::<Value>(body_text)
+        .ok()
+        .and_then(|v| {
+            v.get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "model not supported".to_string());
+    if let Ok(mut state) = app.state.lock() {
+        state.mark_key_model_unsupported(
+            &key.provider,
+            &key.name,
+            &alias.upstream_model(),
+            &message,
+        );
+    }
+}
+
+/// 该 key × 模型成功跑通：清除“不支持”记录（套餐升级后自动恢复参与）。
+pub(crate) fn clear_unsupported_if_ok(
+    app: &AppState,
+    key: &KeyRef,
+    alias: &ModelAlias,
+    status: u16,
+) {
+    if status >= 400 {
+        return;
+    }
+    if let Ok(mut state) = app.state.lock() {
+        state.clear_key_model_unsupported(&key.provider, &key.name, &alias.upstream_model());
+    }
+}
+
 pub(crate) fn extract_usage_from_stream(body_text: &str) -> Option<Value> {
     let mut usage = None;
     for line in body_text.lines().map(str::trim) {

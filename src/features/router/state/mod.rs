@@ -11,6 +11,7 @@ use crate::config_v2;
 use crate::features::router::costing::apply_costs;
 use crate::features::router::freeze::key_state_id;
 use crate::features::router::selection::weighted_pick;
+use crate::features::router::UnsupportedEntry;
 use crate::json_config::{ApiKeysStore, ModelAliasConfig, TokenPriceConfig};
 use crate::state_store::{now_seconds, StateStore};
 use crate::usage_store::UsageStore;
@@ -58,6 +59,8 @@ pub struct RouterState {
     state_store: StateStore,
     frozen: HashMap<String, FrozenKey>,
     bindings: HashMap<(String, String), SessionBinding>,
+    /// key × 模型级“不支持”记录（阶梯退避 + 永久失效），键为 (provider, key_name, upstream_model)
+    unsupported: HashMap<(String, String, String), UnsupportedEntry>,
     usage_store: UsageStore,
     token_price_config: TokenPriceConfig,
     model_alias_config: ModelAliasConfig,
@@ -90,6 +93,7 @@ impl RouterState {
                 )
             })
             .collect();
+        let unsupported = state_store.load_unsupported()?;
         let usage_store = UsageStore::new(&settings.usage_db_path)?;
         let model_alias_config = ModelAliasConfig::new(&settings.model_alias_config_path);
         // 默认价格传空：运行期 sync_token_price_defaults 会按 v2 物理模型补默认价。
@@ -157,6 +161,7 @@ impl RouterState {
             state_store,
             frozen,
             bindings,
+            unsupported,
             usage_store,
             token_price_config,
             model_alias_config,
@@ -306,6 +311,153 @@ impl RouterState {
             .map(|b| b.key_name.as_str())
     }
 
+    // -----------------------------------------------------------------------
+    // key × 模型“不支持”学习（阶梯退避，类比 RocketMQ 延迟重试）
+    //
+    // 同一供应商不同 key 的订阅套餐支持的模型不同（如 ark coding plan 404）。
+    // 上游明确拒绝时记录，按 [1m, 5m, 30m, 2h, 8h] 阶梯拉长 probe 间隔，
+    // 下一次失败间隔达到 1 天即 permanent（不再自动尝试），仅可通过
+    // dashboard 刷新按钮重置。成功跑通该模型即清除记录（套餐升级后自动恢复）。
+    // -----------------------------------------------------------------------
+
+    /// probe 间隔阶梯（秒）；超出末档后 permanent。
+    const UNSUPPORTED_RETRY_LADDER: [f64; 5] = [60.0, 300.0, 1800.0, 7200.0, 28800.0];
+    /// 退避间隔达到该值即永久失效。
+    const UNSUPPORTED_PERMANENT_THRESHOLD: f64 = 86_400.0;
+
+    /// 上游对该 key × 模型明确拒绝：记录并推进退避阶梯。
+    pub fn mark_key_model_unsupported(
+        &mut self,
+        provider: &str,
+        key_name: &str,
+        model: &str,
+        error: &str,
+    ) {
+        let key_id = (
+            provider.to_string(),
+            key_name.to_string(),
+            model.to_string(),
+        );
+        let attempt = self
+            .unsupported
+            .get(&key_id)
+            .map(|e| e.attempt)
+            .unwrap_or(0)
+            + 1;
+        let idx = (attempt as usize).saturating_sub(1);
+        let delay = if idx < Self::UNSUPPORTED_RETRY_LADDER.len() {
+            Self::UNSUPPORTED_RETRY_LADDER[idx]
+        } else {
+            Self::UNSUPPORTED_PERMANENT_THRESHOLD
+        };
+        // 阶梯耗尽后固定 1d，且一旦计算出的间隔达到 1d 即永久失效。
+        let permanent = delay >= Self::UNSUPPORTED_PERMANENT_THRESHOLD;
+        let now = now_seconds();
+        let entry = UnsupportedEntry {
+            last_error: error.chars().take(300).collect(),
+            attempt,
+            last_error_at: now,
+            retry_at: now + delay,
+            permanent,
+        };
+        if let Err(err) = self
+            .state_store
+            .upsert_unsupported(provider, key_name, model, &entry)
+        {
+            eprintln!(
+                "llm-provider-router mark_unsupported failed {provider}/{key_name} {model}: {err}"
+            );
+        }
+        self.unsupported.insert(key_id, entry);
+    }
+
+    /// 该 key × 模型当前是否应被跳过（permanent，或仍在退避窗口内）。
+    fn key_model_blocked(&self, provider: &str, key_name: &str, model: &str) -> bool {
+        self.unsupported
+            .get(&(
+                provider.to_string(),
+                key_name.to_string(),
+                model.to_string(),
+            ))
+            .map(|e| e.permanent || now_seconds() < e.retry_at)
+            .unwrap_or(false)
+    }
+
+    /// 该 key × 模型成功跑通：清除记录（套餐升级后自动恢复参与）。
+    pub fn clear_key_model_unsupported(&mut self, provider: &str, key_name: &str, model: &str) {
+        let key_id = (
+            provider.to_string(),
+            key_name.to_string(),
+            model.to_string(),
+        );
+        if self.unsupported.remove(&key_id).is_some() {
+            if let Err(err) =
+                self.state_store
+                    .delete_unsupported(Some(provider), Some(key_name), Some(model))
+            {
+                eprintln!(
+                    "llm-provider-router clear_unsupported failed {provider}/{key_name} {model}: {err}"
+                );
+            }
+        }
+    }
+
+    /// dashboard 刷新：按前缀过滤重置退避（删除记录）。返回删除条数。
+    pub fn refresh_unsupported(
+        &mut self,
+        provider: Option<&str>,
+        key_name: Option<&str>,
+        model: Option<&str>,
+    ) -> anyhow::Result<usize> {
+        let removed = self
+            .state_store
+            .delete_unsupported(provider, key_name, model)?;
+        self.unsupported.retain(|(p, k, m), _| {
+            let provider_match = provider.is_none_or(|v| v == p);
+            let key_match = key_name.is_none_or(|v| v == k);
+            let model_match = model.is_none_or(|v| v == m);
+            !(provider_match && key_match && model_match)
+        });
+        Ok(removed)
+    }
+
+    /// 诊断视图（dashboard Settings 页展示）。
+    pub fn unsupported_view(&self) -> Vec<Value> {
+        let now = now_seconds();
+        let mut rows: Vec<Value> = self
+            .unsupported
+            .iter()
+            .map(|((p, k, m), e)| {
+                json!({
+                    "provider": p,
+                    "key": k,
+                    "model": m,
+                    "attempt": e.attempt,
+                    "permanent": e.permanent,
+                    "retry_in_seconds": if e.permanent { Value::Null } else {
+                        json!((e.retry_at - now).max(0.0) as u64)
+                    },
+                    "last_error_at": e.last_error_at,
+                    "last_error": e.last_error,
+                })
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            let ka = (
+                a["provider"].as_str().unwrap_or_default(),
+                a["key"].as_str().unwrap_or_default(),
+                a["model"].as_str().unwrap_or_default(),
+            );
+            let kb = (
+                b["provider"].as_str().unwrap_or_default(),
+                b["key"].as_str().unwrap_or_default(),
+                b["model"].as_str().unwrap_or_default(),
+            );
+            ka.cmp(&kb)
+        });
+        rows
+    }
+
     pub fn select_key_excluding(
         &mut self,
         alias: &ModelAlias,
@@ -314,6 +466,8 @@ impl RouterState {
     ) -> Result<KeyRef, NoAvailableKeyError> {
         self.cleanup()
             .map_err(|_| NoAvailableKeyError { retry_after: 60 })?;
+        // key × 模型“不支持”学习：跳过仍在退避窗口/永久失效的 (key, upstream_model)。
+        let upstream_model = alias.upstream_model().to_string();
         if let Some(session_id) = session_id {
             let binding = self
                 .bindings
@@ -323,11 +477,11 @@ impl RouterState {
                 if !excluded.contains(&binding.key_name)
                     && !self.is_frozen(&binding.key_name).unwrap_or(true)
                 {
-                    if let Some(key) = alias
-                        .keys
-                        .iter()
-                        .find(|key| key_state_id(key) == binding.key_name && key.weight > 0)
-                    {
+                    if let Some(key) = alias.keys.iter().find(|key| {
+                        key_state_id(key) == binding.key_name
+                            && key.weight > 0
+                            && !self.key_model_blocked(&key.provider, &key.name, &upstream_model)
+                    }) {
                         let key = key.clone();
                         let _ = self.bind(&alias.alias, session_id, &key_state_id(&key));
                         return Ok(key);
@@ -335,14 +489,25 @@ impl RouterState {
                 }
             }
         }
-        let mut candidates = Vec::new();
-        for key in &alias.keys {
-            if key.weight > 0
-                && !excluded.contains(&key.name)
-                && !self.is_frozen(&key_state_id(key)).unwrap_or(true)
-            {
-                candidates.push(key.clone());
-            }
+        let mut collect = |respect_unsupported: bool| -> Vec<KeyRef> {
+            alias
+                .keys
+                .iter()
+                .filter(|key| {
+                    key.weight > 0
+                        && !excluded.contains(&key.name)
+                        && !self.is_frozen(&key_state_id(key)).unwrap_or(true)
+                        && (!respect_unsupported
+                            || !self.key_model_blocked(&key.provider, &key.name, &upstream_model))
+                })
+                .cloned()
+                .collect()
+        };
+        // 优先跳过“不支持”记录；若全部都在退避窗口（该模型对所有 key 都疑似不支持），
+        // 放开过滤继续 probe —— 由失败路径推进阶梯，避免模型永远无 key 可用。
+        let mut candidates = collect(true);
+        if candidates.is_empty() {
+            candidates = collect(false);
         }
         if candidates.is_empty() {
             let retry_after = self

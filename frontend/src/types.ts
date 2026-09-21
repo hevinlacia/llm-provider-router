@@ -230,6 +230,18 @@ export type ProviderModelsResponse = {
   error?: string;
 };
 
+/** key × 模型“不支持”学习记录（阶梯退避，达到 1d 即永久失效，可手动刷新重置） */
+export type V2UnsupportedEntry = {
+  provider: string;
+  key: string;
+  model: string;
+  attempt: number;
+  permanent: boolean;
+  retry_in_seconds?: number | null;
+  last_error_at: number;
+  last_error: string;
+};
+
 /** Model Pool target 候选分组：物理模型 / 模型池 / 虚拟模型 */
 export type TargetCandidateGroup = {
   group: string;

@@ -15,7 +15,8 @@ use crate::config::ModelAlias;
 use crate::features::anthropic::stream::SseTranslator;
 use crate::features::anthropic::translate;
 use crate::features::chat::select::{
-    freeze_maybe, record_usage, select_key_locked, upstream_key_value_locked, usage_key_name,
+    clear_unsupported_if_ok, freeze_maybe, maybe_mark_unsupported, record_usage, select_key_locked,
+    upstream_key_value_locked, usage_key_name,
 };
 use crate::features::chat::upstream::CallError;
 use crate::features::router::NoAvailableKeyError;
@@ -391,6 +392,7 @@ async fn stream_anthropic_passthrough(
                 if retry_policy.as_ref().is_some_and(|p| p.retry_on_status.contains(&status)) {
                     let body_text = response.text().await.unwrap_or_default();
                     freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
+                    maybe_mark_unsupported(&app, &key, &alias, status, &body_text);
                     record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, None, session_id.as_deref());
                     crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
                     last_error = Some(format!("upstream {status}"));
@@ -399,6 +401,7 @@ async fn stream_anthropic_passthrough(
                 if status >= 400 {
                     let body_text = response.text().await.unwrap_or_default();
                     freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
+                    maybe_mark_unsupported(&app, &key, &alias, status, &body_text);
                     record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, None, session_id.as_deref());
                     crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
                     // 200 SSE 流已提交，上游错误转成 Anthropic SSE error 事件下发
@@ -431,6 +434,7 @@ async fn stream_anthropic_passthrough(
                 freeze_maybe(&app.state, &key, status, &headers, &body_str, &app.settings);
                 let usage = translate::extract_anthropic_stream_usage(&body_str);
                 record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref(), session_id.as_deref());
+                clear_unsupported_if_ok(&app, &key, &alias, status);
                 return;
             }
         }

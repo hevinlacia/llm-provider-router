@@ -1,4 +1,4 @@
-import type { ActiveSessionsResponse, FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderModelsResponse, RouterCapabilities, SearchProvidersConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status } from './types';
+import type { ActiveSessionsResponse, FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderModelsResponse, RouterCapabilities, SearchProvidersConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, V2UnsupportedEntry } from './types';
 
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
@@ -64,6 +64,15 @@ export const api = {
   },
   clearFrozen() {
     return request<StateResponse>('/api/frozen/clear', { method: 'POST' });
+  },
+  async unsupportedKeys() {
+    return request<{ unsupported: V2UnsupportedEntry[] }>('/api/config/v2/unsupported-keys');
+  },
+  refreshUnsupportedKeys(filter: { provider?: string; key?: string; model?: string } = {}) {
+    return request<{ ok: boolean; removed: number }>('/api/config/v2/unsupported-keys/refresh', {
+      method: 'POST',
+      body: JSON.stringify(filter),
+    });
   },
   async tokenPrices() {
     try {
