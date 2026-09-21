@@ -90,11 +90,9 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
   return <div className="modal-overlay" onClick={onCancel}><div className="modal" onClick={(event) => event.stopPropagation()}>
     <h3>{isNew ? 'Add Provider' : `Edit Provider: ${providerName}`}</h3>
     <div className="field"><label>Name</label><input value={name} onChange={(event) => setName(event.target.value)} /></div>
-    {isNew && <>
-      <div className="field"><label>Chat Completions API</label><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" /></div>
-      <div className="field"><label>Responses API</label><input value={responsesBaseUrl} onChange={(event) => setResponsesBaseUrl(event.target.value)} placeholder="https://api.example.com/v1（留空则翻译）" /></div>
-      <div className="field"><label>Anthropic API</label><input value={anthropicBaseUrl} onChange={(event) => setAnthropicBaseUrl(event.target.value)} placeholder="https://api.anthropic.com" /></div>
-    </>}
+    <div className="field"><label>Chat Completions API</label><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" /></div>
+    <div className="field"><label>Responses API</label><input value={responsesBaseUrl} onChange={(event) => setResponsesBaseUrl(event.target.value)} placeholder="https://api.example.com/v1（留空则翻译）" /></div>
+    <div className="field"><label>Anthropic API</label><input value={anthropicBaseUrl} onChange={(event) => setAnthropicBaseUrl(event.target.value)} placeholder="https://api.anthropic.com" /></div>
     <h4>Keys — 通过「密钥配置」列选择环境变量或明文密钥（明文保存后立即生效；git 副本经 bin/vault.sh 加密）</h4>
     <div className="table-wrap"><table><colgroup><col style={{ width: '16%' }} /><col style={{ width: '34%' }} /><col style={{ width: '10%' }} /><col style={{ width: '14%' }} /><col style={{ width: '11%' }} /><col style={{ width: '15%' }} /></colgroup><thead><tr><th>Key</th><th>密钥配置</th><th>Weight</th><th>Billing</th><th>Enabled</th><th></th></tr></thead><tbody>
       {keys.map((k, i) => {
