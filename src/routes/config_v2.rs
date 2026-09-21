@@ -192,9 +192,16 @@ fn parse_logical_model_body(
         let Some(model) = item.get("model").and_then(Value::as_str) else {
             return Err("each target needs a model (string)".to_string());
         };
+        let keys = item.get("keys").and_then(Value::as_array).map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<String>>()
+        });
         targets.push(crate::config_v2::V2Target {
             model: model.trim().to_string(),
             weight: item.get("weight").and_then(Value::as_i64),
+            keys,
         });
     }
     let params = payload

@@ -282,6 +282,30 @@ impl RouterState {
             .upsert_binding(alias, session_id, key_name, expires_at)
     }
 
+    /// 解除会话粘性绑定（内存 + 持久化）。用于绑定 key 被上游明确拒绝
+    /// （非重试错误/断流）时避免会话被钉死在坏 key 上；下次请求重新随机，
+    /// 选中后重新 bind。
+    pub fn unbind(&mut self, alias: &str, session_id: &str) {
+        self.bindings
+            .remove(&(alias.to_string(), session_id.to_string()));
+        if let Err(err) = self
+            .state_store
+            .delete_bindings(&[(alias.to_string(), session_id.to_string())])
+        {
+            eprintln!(
+                "llm-provider-router unbind failed alias={alias} session={session_id}: {err}"
+            );
+        }
+    }
+
+    /// 只读查询会话绑定（测试用；诊断可在 dashboard 的 state 视图观察）。
+    #[cfg(test)]
+    pub fn binding_for(&self, alias: &str, session_id: &str) -> Option<&str> {
+        self.bindings
+            .get(&(alias.to_string(), session_id.to_string()))
+            .map(|b| b.key_name.as_str())
+    }
+
     pub fn select_key_excluding(
         &mut self,
         alias: &ModelAlias,

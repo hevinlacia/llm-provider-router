@@ -15,6 +15,7 @@ pub(crate) mod messages;
 pub(crate) mod models;
 pub(crate) mod resp;
 pub(crate) mod responses;
+pub(crate) mod session_fingerprint;
 pub(crate) mod usage;
 
 use crate::app::AppState;

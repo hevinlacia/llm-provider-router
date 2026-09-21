@@ -166,6 +166,18 @@ pub(crate) fn extract_session_id(payload: &Value, headers: &HeaderMap) -> Option
                 .and_then(Value::as_str)
                 .and_then(parse_session_from_user_id)
         })
+        // OpenAI Responses API 官方会话亲和字段：pi 等客户端每请求携带
+        // prompt_cache_key=<session id>（store:false 无状态模式），无需额外配置即可粘性。
+        .or_else(|| {
+            payload
+                .get("prompt_cache_key")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        })
+        // 兜底：客户端完全无标识时，用请求体稳定前缀（system + 首条 user）派生会话指纹。
+        // 与客户端无关的粘性：无状态客户端每轮全量重发历史，该前缀会话内不变。
+        .or_else(|| super::session_fingerprint::derive_session_fingerprint(payload))
 }
 
 /// Claude Code 把会话 UUID 拼在 `metadata.user_id` 尾部：取最后一个 `_session_` 之后的段。
@@ -228,5 +240,60 @@ mod tests {
     #[test]
     fn extract_returns_none_without_signals() {
         assert_eq!(extract_session_id(&json!({}), &HeaderMap::new()), None);
+    }
+
+    /// pi 的 responses 请求每轮携带 prompt_cache_key=<sessionId>，
+    /// router 应直接识别为会话标识（responses 协议自动粘性的关键）。
+    #[test]
+    fn extract_reads_prompt_cache_key() {
+        let payload = json!({
+            "model": "deepseek-v4-flash-auto",
+            "input": [{ "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }],
+            "prompt_cache_key": "pi-session-abc123",
+            "store": false
+        });
+        assert_eq!(
+            extract_session_id(&payload, &HeaderMap::new()).as_deref(),
+            Some("pi-session-abc123")
+        );
+    }
+
+    /// 客户端完全无标识时，回退到请求体稳定前缀派生的会话指纹。
+    #[test]
+    fn extract_falls_back_to_session_fingerprint() {
+        let payload = json!({
+            "messages": [
+                { "role": "system", "content": "You are a coding agent." },
+                { "role": "user", "content": "fix the login bug" }
+            ]
+        });
+        let sid = extract_session_id(&payload, &HeaderMap::new()).unwrap();
+        assert!(sid.starts_with("auto-"), "指纹应带 auto- 前缀，got {sid}");
+        // 同一会话历史追加 → 指纹不变（粘性稳定）
+        let mut grown = payload.clone();
+        grown["messages"].as_array_mut().unwrap().push(json!({
+            "role": "assistant", "content": "ok"
+        }));
+        grown["messages"].as_array_mut().unwrap().push(json!({
+            "role": "user", "content": "thanks, next step"
+        }));
+        assert_eq!(extract_session_id(&grown, &HeaderMap::new()), Some(sid));
+    }
+
+    /// 显式标识永远优先于指纹兜底（对已发标识的客户端零行为变化）。
+    #[test]
+    fn explicit_session_beats_fingerprint() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-session-id", "explicit-sess".parse().unwrap());
+        let payload = json!({
+            "messages": [
+                { "role": "system", "content": "sys" },
+                { "role": "user", "content": "hello" }
+            ]
+        });
+        assert_eq!(
+            extract_session_id(&payload, &headers).as_deref(),
+            Some("explicit-sess")
+        );
     }
 }
