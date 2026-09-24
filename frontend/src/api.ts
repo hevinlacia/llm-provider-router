@@ -142,7 +142,7 @@ export const api = {
       body: JSON.stringify({ provider }),
     });
   },
-  updateV2LogicalModel(name: string, body: { strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null }> }) {
+  updateV2LogicalModel(name: string, body: { strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null }>; newName?: string }) {
     return request<V2Status>('/api/config/v2/logical-models', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

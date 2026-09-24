@@ -488,16 +488,20 @@ impl RouterState {
     }
 
     /// 编辑 v2 逻辑模型：路由策略 + 目标（物理模型或嵌套逻辑模型）。
+    /// `new_name` 提供且与现名不同时执行改名：更新 map key，并级联更新其他池 targets 中
+    /// 对旧池名的引用，避免悬空引用（语义同 provider 改名的引用重写）。
     /// 能力参数（上下文/输出/图片/思考映射）只属于物理模型，逻辑模型聚合见 router_capabilities。
     /// 写回 `logical-models.json` 后热加载并返回最新视图。
     pub fn update_v2_logical_model(
         &mut self,
         name: &str,
+        new_name: Option<&str>,
         strategy: config_v2::V2Strategy,
         params: HashMap<String, serde_json::Value>,
         targets: Vec<config_v2::V2Target>,
     ) -> anyhow::Result<Value> {
-        if name.trim().is_empty() {
+        let name = name.trim();
+        if name.is_empty() {
             anyhow::bail!("logical model name must not be empty");
         }
         if targets.is_empty() {
@@ -508,17 +512,50 @@ impl RouterState {
         if !cfg.logical_models.contains_key(name) {
             anyhow::bail!("logical model {name} not found");
         }
+        // 改名解析：newName 提供且去空格后与现名不同才视为改名
+        let new_name = new_name.map(str::trim).filter(|s| !s.is_empty());
+        let renamed = new_name.is_some_and(|n| n != name);
+        if renamed {
+            let new_name = new_name.unwrap();
+            // 新名冲突校验同 create：不与逻辑模型 / 物理模型 / 虚拟模型重名
+            if cfg.logical_models.contains_key(new_name) {
+                anyhow::bail!("logical model {new_name} already exists");
+            }
+            if cfg.models.contains_key(new_name) {
+                anyhow::bail!("logical model name conflicts with physical model id: {new_name}");
+            }
+            if cfg.virtual_models.contains_key(new_name) {
+                anyhow::bail!("logical model name conflicts with virtual model name: {new_name}");
+            }
+            // targets 引用旧名或新名都属于自引用：旧名引用在改名后变自引用，一并拦截
+            if targets
+                .iter()
+                .any(|t| t.model == name || t.model == new_name)
+            {
+                anyhow::bail!("model pool cannot reference itself (old or new name)");
+            }
+        }
         Self::auto_register_target_models(self, &cfg, &targets)?;
         let cfg = Self::load_cfg_for_edit()?;
-        Self::validate_targets(&cfg, name, &targets)?;
+        // 自引用校验视角：改名后用新名判断（旧名此时已不属于自身）
+        let self_name = if renamed { new_name.unwrap() } else { name };
+        Self::validate_targets(&cfg, self_name, &targets)?;
         let mut logical = config_v2::load_logical_models_file(config_v2::V2_LOGICAL_MODELS_PATH)?;
-        let lm = logical
+        // remove + insert 而非 get_mut：改名需要换 key，display_name 等其余字段随值保留
+        let mut lm = logical
             .logical_models
-            .get_mut(name)
+            .remove(name)
             .ok_or_else(|| anyhow::anyhow!("logical model {name} not found"))?;
         lm.route.strategy = strategy;
         lm.route.targets = targets;
         lm.params = params;
+        if renamed {
+            let new_name = new_name.unwrap();
+            // 搬 key 并级联更新其他池对该池的引用（旧池已 remove，不会改到自身）
+            config_v2::rename_logical_model_in_map(&mut logical, name, new_name);
+        } else {
+            logical.logical_models.insert(name.to_string(), lm);
+        }
         config_v2::write_logical_models_file(config_v2::V2_LOGICAL_MODELS_PATH, &logical)?;
         self.reload_v2();
         Ok(self.v2_status())

@@ -185,7 +185,13 @@ export function LogicalModelEditor({ name, logical, candidates, isNew = false, o
       if (isNew) {
         onSaved(await api.createV2LogicalModel({ name: poolName.trim(), strategy, targets: parsed }));
       } else {
-        onSaved(await api.updateV2LogicalModel(poolName.trim(), { strategy, targets: parsed }));
+        // 池名可编辑：改动时通过 newName 触发后端改名（级联更新其他池引用）
+        const trimmedName = poolName.trim();
+        onSaved(await api.updateV2LogicalModel(name, {
+          strategy,
+          targets: parsed,
+          newName: trimmedName !== name ? trimmedName : undefined,
+        }));
       }
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
@@ -194,7 +200,7 @@ export function LogicalModelEditor({ name, logical, candidates, isNew = false, o
   const datalistId = `lm-targets-${poolName || 'new'}`;
   return <div className="modal-overlay" onClick={onCancel}><div className="modal" onClick={(event) => event.stopPropagation()}>
     <h3>{isNew ? 'Add Model Pool' : `Edit Model Pool: ${name}`}</h3>
-    <div className="field"><label>Pool Name</label><input value={poolName} onChange={(event) => setPoolName(event.target.value)} disabled={!isNew} placeholder="e.g. low-model-auto" /></div>
+    <div className="field"><label>Pool Name</label><input value={poolName} onChange={(event) => setPoolName(event.target.value)} placeholder="e.g. low-model-auto" /></div>
     <div className="field"><label>Strategy</label>
       <select value={strategy} onChange={(event) => setStrategy(event.target.value)}>
         <option value="priority">priority</option>

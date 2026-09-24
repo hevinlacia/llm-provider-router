@@ -81,3 +81,24 @@ pub fn rename_provider_in_logical(
     fs::write(Path::new(path), format!("{raw}\n"))?;
     Ok(())
 }
+
+/// 模型池（逻辑模型）改名：把 map key 从 `old_name` 搬到 `new_name`（值原样保留，
+/// 含 display_name / params / route），并级联更新其他池 targets 中对旧池名的引用，
+/// 避免悬空引用。调用方负责先完成重名 / 自引用校验。
+pub fn rename_logical_model_in_map(
+    logical: &mut V2LogicalModelsFile,
+    old_name: &str,
+    new_name: &str,
+) {
+    let Some(lm) = logical.logical_models.remove(old_name) else {
+        return;
+    };
+    for other in logical.logical_models.values_mut() {
+        for target in &mut other.route.targets {
+            if target.model == old_name {
+                target.model = new_name.to_string();
+            }
+        }
+    }
+    logical.logical_models.insert(new_name.to_string(), lm);
+}
