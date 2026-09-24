@@ -551,8 +551,8 @@ impl RouterState {
         lm.params = params;
         if renamed {
             let new_name = new_name.unwrap();
-            // 搬 key 并级联更新其他池对该池的引用（旧池已 remove，不会改到自身）
-            config_v2::rename_logical_model_in_map(&mut logical, name, new_name);
+            // 旧池已 remove，以新 key 放回并级联更新其他池对该池的引用
+            config_v2::insert_renamed_logical_model(&mut logical, lm, name, new_name);
         } else {
             logical.logical_models.insert(name.to_string(), lm);
         }

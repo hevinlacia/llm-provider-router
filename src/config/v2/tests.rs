@@ -549,13 +549,20 @@ fn rename_logical_model_updates_key_and_references() {
               }
             }"#,
     );
-    rename_logical_model_in_map(&mut logical, "low-model-auto", "low-auto-renamed");
+    // 模拟 state 层真实组合顺序：先 remove 旧池（取得值），再以新 key 放回 + 级联更新引用
+    let mut lm = logical.logical_models.remove("low-model-auto").unwrap();
+    lm.route.targets[0].model = "ark/other-model".to_string();
+    insert_renamed_logical_model(&mut logical, lm, "low-model-auto", "low-auto-renamed");
 
-    // 旧 key 消失，新 key 存在且值完整保留（params / route / display_name）
+    // 旧 key 消失，新 key 存在且值完整保留（更新后的 route / params / display_name）
     assert!(!logical.logical_models.contains_key("low-model-auto"));
+    assert!(
+        logical.logical_models.contains_key("low-auto-renamed"),
+        "已 remove 的池必须被放回新 key，不能静默丢失"
+    );
     let renamed = &logical.logical_models["low-auto-renamed"];
     assert_eq!(renamed.route.strategy, super::types::V2Strategy::Priority);
-    assert_eq!(renamed.route.targets[0].model, "ark/glm-5.3-flash");
+    assert_eq!(renamed.route.targets[0].model, "ark/other-model");
     assert_eq!(renamed.params["temperature"], serde_json::json!(0.2));
     assert_eq!(renamed.display_name.as_deref(), Some("Low Model Auto"));
 
@@ -568,14 +575,6 @@ fn rename_logical_model_updates_key_and_references() {
         .values()
         .any(|lm| lm.route.targets.iter().any(|t| t.model == "low-model-auto"));
     assert!(!has_old_ref, "rename 后不应残留旧池名引用");
-
-    // 不存在的旧名：保守无操作，不影响现有池
-    let mut unchanged = logical_from_json(
-        r#"{ "logical_models": { "a": { "route": { "targets": [{ "model": "a/x" }] } } } }"#,
-    );
-    rename_logical_model_in_map(&mut unchanged, "missing", "whatever");
-    assert!(unchanged.logical_models.contains_key("a"));
-    assert!(!unchanged.logical_models.contains_key("whatever"));
 }
 
 #[test]

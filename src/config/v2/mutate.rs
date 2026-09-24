@@ -1,5 +1,5 @@
 use super::io::{read_json, write_models_file};
-use super::types::{V2LogicalModelsFile, V2ModelsFile, V2PhysicalModel};
+use super::types::{V2LogicalModel, V2LogicalModelsFile, V2ModelsFile, V2PhysicalModel};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
@@ -82,17 +82,15 @@ pub fn rename_provider_in_logical(
     Ok(())
 }
 
-/// 模型池（逻辑模型）改名：把 map key 从 `old_name` 搬到 `new_name`（值原样保留，
-/// 含 display_name / params / route），并级联更新其他池 targets 中对旧池名的引用，
-/// 避免悬空引用。调用方负责先完成重名 / 自引用校验。
-pub fn rename_logical_model_in_map(
+/// 将已从 map 中取出的模型池以新 key 放回，并级联更新其他池 targets 中对旧池名的引用，
+/// 避免悬空引用。调用方负责先完成重名 / 自引用校验，并自行从 map 中 remove 旧池后
+/// 把值传入（本函数不再查旧 key，避免“已 remove 后查不到而静默丢失”的时序陷阱）。
+pub fn insert_renamed_logical_model(
     logical: &mut V2LogicalModelsFile,
+    lm: V2LogicalModel,
     old_name: &str,
     new_name: &str,
 ) {
-    let Some(lm) = logical.logical_models.remove(old_name) else {
-        return;
-    };
     for other in logical.logical_models.values_mut() {
         for target in &mut other.route.targets {
             if target.model == old_name {
