@@ -19,12 +19,12 @@
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "ark/deepseek-v4-flash-260801": {
+  "ark/deepseek-v4-pro": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "ark/deepseek-v4-pro": {
+  "ark/deepseek-v4.1-flash": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
