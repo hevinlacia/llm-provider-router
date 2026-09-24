@@ -29,7 +29,10 @@ pub use io::{
     migrate_legacy_logical_caps, write_logical_models_file, write_models_file,
     write_provider_models_file, write_providers_file, write_virtual_models_file,
 };
-pub use mutate::{register_physical_models, rename_provider_in_logical, rename_provider_in_models};
+pub use mutate::{
+    register_physical_models, rename_logical_model_in_map, rename_provider_in_logical,
+    rename_provider_in_models,
+};
 pub use resolve::{resolve_targets, TargetCandidate};
 pub use types::{
     ProviderModelsEntry, V2Config, V2Key, V2LogicalModel, V2PhysicalModel, V2Provider, V2Route,

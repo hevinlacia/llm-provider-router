@@ -267,11 +267,15 @@ pub(crate) async fn api_config_v2_logical_models_update(
         Ok(parsed) => parsed,
         Err(message) => return bad_request(&message),
     };
+    // 可选 newName：提供且与 name 不同时执行改名（级联更新其他池引用）
+    let new_name = payload.get("newName").and_then(Value::as_str);
     match app.state.lock() {
-        Ok(mut state) => match state.update_v2_logical_model(&name, strategy, params, targets) {
-            Ok(value) => json_status(StatusCode::OK, value),
-            Err(err) => bad_request(&err.to_string()),
-        },
+        Ok(mut state) => {
+            match state.update_v2_logical_model(&name, new_name, strategy, params, targets) {
+                Ok(value) => json_status(StatusCode::OK, value),
+                Err(err) => bad_request(&err.to_string()),
+            }
+        }
         Err(_) => internal_error("router state lock poisoned"),
     }
 }

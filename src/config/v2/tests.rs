@@ -529,6 +529,56 @@ fn rename_provider_updates_models_and_logical_references() {
 }
 
 #[test]
+fn rename_logical_model_updates_key_and_references() {
+    let logical_from_json =
+        |json: &str| -> V2LogicalModelsFile { serde_json::from_str(json).unwrap() };
+    let mut logical = logical_from_json(
+        r#"{
+              "logical_models": {
+                "low-model-auto": {
+                  "params": { "temperature": 0.2 },
+                  "route": { "strategy": "priority", "targets": [{ "model": "ark/glm-5.3-flash" }] },
+                  "display_name": "Low Model Auto"
+                },
+                "nested-pool": {
+                  "route": { "strategy": "priority", "targets": [
+                    { "model": "low-model-auto" },
+                    { "model": "ark/deepseek-v4-pro" }
+                  ] }
+                }
+              }
+            }"#,
+    );
+    rename_logical_model_in_map(&mut logical, "low-model-auto", "low-auto-renamed");
+
+    // 旧 key 消失，新 key 存在且值完整保留（params / route / display_name）
+    assert!(!logical.logical_models.contains_key("low-model-auto"));
+    let renamed = &logical.logical_models["low-auto-renamed"];
+    assert_eq!(renamed.route.strategy, super::types::V2Strategy::Priority);
+    assert_eq!(renamed.route.targets[0].model, "ark/glm-5.3-flash");
+    assert_eq!(renamed.params["temperature"], serde_json::json!(0.2));
+    assert_eq!(renamed.display_name.as_deref(), Some("Low Model Auto"));
+
+    // 其他池对该池的引用同步重写，无旧名残留
+    let nested = &logical.logical_models["nested-pool"];
+    assert_eq!(nested.route.targets[0].model, "low-auto-renamed");
+    assert_eq!(nested.route.targets[1].model, "ark/deepseek-v4-pro");
+    let has_old_ref = logical
+        .logical_models
+        .values()
+        .any(|lm| lm.route.targets.iter().any(|t| t.model == "low-model-auto"));
+    assert!(!has_old_ref, "rename 后不应残留旧池名引用");
+
+    // 不存在的旧名：保守无操作，不影响现有池
+    let mut unchanged = logical_from_json(
+        r#"{ "logical_models": { "a": { "route": { "targets": [{ "model": "a/x" }] } } } }"#,
+    );
+    rename_logical_model_in_map(&mut unchanged, "missing", "whatever");
+    assert!(unchanged.logical_models.contains_key("a"));
+    assert!(!unchanged.logical_models.contains_key("whatever"));
+}
+
+#[test]
 fn migrate_legacy_logical_caps_sinks_to_physical_and_cleans_logical() {
     let dir = std::env::temp_dir().join(format!("lpr-v2-test-{}-migrate", std::process::id()));
     let _ = fs::create_dir_all(&dir);
