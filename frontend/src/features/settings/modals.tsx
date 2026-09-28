@@ -1,7 +1,80 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../api';
 import { formatFetchedAt } from '../../lib/format';
-import type { ProviderModelsResponse, V2Status, V2UnsupportedEntry } from '../../types';
+import type { ProviderModelsResponse, StateResponse, V2ProviderStatus, V2Status, V2UnsupportedEntry } from '../../types';
+
+function formatRemaining(seconds: number): string {
+  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h${Math.round((seconds % 3600) / 60)}m`;
+  if (seconds >= 60) return `${Math.floor(seconds / 60)}m${seconds % 60}s`;
+  return `${seconds}s`;
+}
+
+/** Provider key 池状态：点击「可用 Keys」列查看哪些 key 被冻结、哪些可用（含冻结剩余时间） */
+export function ProviderKeysModal({ providerName, provider, onCancel, onError }: {
+  providerName: string;
+  provider: V2ProviderStatus;
+  onCancel: () => void;
+  onError: (value: string) => void;
+}) {
+  const [frozenState, setFrozenState] = useState<StateResponse['frozen'] | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const data = await api.state({ period: 'all', start: '', end: '' });
+      setFrozenState(data.frozen ?? {});
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [onError]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  type KeyStatus = 'frozen' | 'available' | 'disabled';
+  type KeyRow = { name: string; status: KeyStatus; remaining: number | null; reason: string };
+  const rows = useMemo<KeyRow[]>(() => {
+    const list: KeyRow[] = Object.entries(provider.keys ?? {})
+    .map(([name, k]) => {
+      const live = frozenState?.[`${providerName}/${name}`] ?? frozenState?.[name] ?? null;
+      if (k.frozen || live) {
+        return { name, status: 'frozen' as const, remaining: live ? live.seconds_remaining : null, reason: live?.reason || k.frozen_reason || '—' };
+      }
+      if (!k.enabled) return { name, status: 'disabled' as const, remaining: null, reason: '—' };
+      return { name, status: 'available' as const, remaining: null, reason: '—' };
+    });
+    const order: Record<KeyStatus, number> = { frozen: 0, disabled: 1, available: 2 };
+    return list.sort((a, b) => order[a.status] - order[b.status] || a.name.localeCompare(b.name));
+  }, [provider, providerName, frozenState]);
+
+  const frozenCount = rows.filter((r) => r.status === 'frozen').length;
+  const availableCount = rows.filter((r) => r.status === 'available').length;
+  const disabledCount = rows.filter((r) => r.status === 'disabled').length;
+  const statusMeta = {
+    frozen: { label: 'frozen', cls: 'warn' },
+    available: { label: 'available', cls: 'ok' },
+    disabled: { label: 'disabled', cls: '' },
+  } as const;
+
+  return <div className="modal-overlay" onClick={onCancel}><div className="modal" onClick={(event) => event.stopPropagation()}>
+    <div className="section-title"><h3>Key Pool: {providerName}</h3><div className="title-actions"><span className="muted small-text">{rows.length} keys · {frozenCount} frozen · {availableCount} available{disabledCount ? ` · ${disabledCount} disabled` : ''}</span><button className="secondary compact-button" disabled={refreshing} onClick={() => void load()}>{refreshing ? 'Refreshing...' : 'Refresh'}</button></div></div>
+    <p className="muted small-text">冻结 key 因限流/配额暂时不参与路由，剩余时间过后自动恢复；可用 key 为 enabled 且未冻结、正常参与加权路由的 key。</p>
+    <div className="table-wrap"><table className="settings-table key-pool-table"><thead><tr><th>Key</th><th>Status</th><th>冻结剩余</th><th>Reason</th><th>Weight</th><th>Billing</th></tr></thead><tbody>
+      {rows.map((r) => <tr key={r.name} className={r.status === 'frozen' ? 'frozen-row' : ''}>
+        <td className="strong-cell">{r.name}</td>
+        <td><span className={`status ${statusMeta[r.status].cls}`}>{statusMeta[r.status].label}</span></td>
+        <td>{r.remaining != null ? formatRemaining(r.remaining) : '—'}</td>
+        <td className="muted small-text reason-cell" title={r.reason}>{r.reason.length > 60 ? `${r.reason.slice(0, 60)}…` : r.reason}</td>
+        <td>{provider.keys?.[r.name]?.weight ?? '—'}</td>
+        <td className="muted small-text">{provider.keys?.[r.name]?.billing_type ?? '—'}</td>
+      </tr>)}
+      {rows.length === 0 && <tr><td colSpan={6} className="muted">No keys configured for this provider.</td></tr>}
+    </tbody></table></div>
+    <div className="toolbar"><button className="secondary" onClick={onCancel}>Close</button></div>
+  </div></div>;
+}
 
 export function ProviderModelsModal({ providerName, onCancel, onError }: {
   providerName: string;
