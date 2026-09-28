@@ -1,5 +1,30 @@
 {
   "providers": {
+    "aixhan": {
+      "base_url": "https://api.aixhan.com/v1",
+      "responses_base_url": "https://api.aixhan.com/v1",
+      "anthropic_base_url": null,
+      "retry": {
+        "max_retry_seconds": 1800,
+        "retry_delay_seconds": 15.0,
+        "retry_on_status": [
+          429,
+          500,
+          502,
+          503,
+          504
+        ]
+      },
+      "keys": {
+        "oai-hevin": {
+          "env_var": "AGENT_AI_OPENAI_HEVIN_API_KEY",
+          "weight": 1,
+          "billing_type": "subscription",
+          "enabled": true,
+          "persist": true
+        }
+      }
+    },
     "deepseek-official": {
       "base_url": "",
       "responses_base_url": "https://api.deepseek.com",
@@ -33,9 +58,9 @@
         ]
       },
       "keys": {
-        "cyw": {
-          "env_var": "",
-          "weight": 1,
+        "hevin-private": {
+          "env_var": "AGENT_AI_ARK_HEVIN_PRIVATE_API_KEY",
+          "weight": 2,
           "billing_type": "subscription",
           "enabled": true,
           "persist": true
@@ -44,19 +69,19 @@
           "env_var": "AGENT_AI_ARK_HEVIN_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
-          "enabled": false,
+          "enabled": true,
           "persist": true
         },
-        "hevin-private": {
-          "env_var": "AGENT_AI_ARK_HEVIN_PRIVATE_API_KEY",
-          "weight": 3,
+        "cyw": {
+          "env_var": "",
+          "weight": 1,
           "billing_type": "subscription",
           "enabled": true,
           "persist": true
         },
         "hevin2": {
           "env_var": "AGENT_AI_ARK_HEVIN2_API_KEY",
-          "weight": 2,
+          "weight": 15,
           "billing_type": "subscription",
           "enabled": true,
           "persist": true
@@ -71,31 +96,6 @@
       "keys": {
         "hevin": {
           "env_var": "AGENT_AI_OPENCODEGO_HEVIN_API_KEY",
-          "weight": 1,
-          "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
-        }
-      }
-    },
-    "aixhan": {
-      "base_url": "https://api.aixhan.com/v1",
-      "responses_base_url": "https://api.aixhan.com/v1",
-      "anthropic_base_url": null,
-      "retry": {
-        "max_retry_seconds": 1800,
-        "retry_delay_seconds": 15.0,
-        "retry_on_status": [
-          429,
-          500,
-          502,
-          503,
-          504
-        ]
-      },
-      "keys": {
-        "oai-hevin": {
-          "env_var": "AGENT_AI_OPENAI_HEVIN_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
           "enabled": true,
