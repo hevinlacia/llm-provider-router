@@ -130,11 +130,15 @@ async function fetchCaps(): Promise<CapModel[] | null> {
 async function sync(pi: ExtensionAPI, force = false) {
   const caps = await fetchCaps();
   if (!caps?.length) return;
+  // 只同步 auto 系列模型（名字中带 auto 关键字）：非 auto 模型（如直连专用别名）不注册进 Pi；
+  // 过滤后为空时保留 Pi models.json 的静态兑底列表，不清空 provider。
+  const autoCaps = caps.filter((m) => m.id.includes("auto"));
+  if (!autoCaps.length) return;
   if (!force) {
     // 仅当 effective 窗口 / 推理 / 图片能力变化或有新模型时才重注册，避免无谓抖动
-    let changed = Object.keys(currentModels).length !== caps.length;
+    let changed = Object.keys(currentModels).length !== autoCaps.length;
     if (!changed) {
-      for (const m of caps) {
+      for (const m of autoCaps) {
         const prev = currentModels[m.id];
         const cw = m.effective?.contextWindow ?? m.context_window ?? m.contextWindow;
         const mt = m.effective?.maxTokens ?? m.max_output_tokens ?? m.maxTokens;
@@ -151,7 +155,7 @@ async function sync(pi: ExtensionAPI, force = false) {
     }
     if (!changed) return;
   }
-  registerFromCaps(pi, caps);
+  registerFromCaps(pi, autoCaps);
 }
 
 export default async function (pi: ExtensionAPI) {
