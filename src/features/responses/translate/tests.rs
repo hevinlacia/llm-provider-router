@@ -189,7 +189,7 @@ fn passthrough_payload_rewrites_model_only() {
         "max_output_tokens": 64,
         "stream": true
     });
-    let passthrough = prepare_passthrough_payload(&original, &alias);
+    let passthrough = prepare_passthrough_payload(&original, &alias, None, false);
     assert_eq!(passthrough["model"], "real-upstream");
     assert_eq!(passthrough["input"], original["input"]);
     assert_eq!(passthrough["reasoning"], original["reasoning"]);
@@ -198,6 +198,59 @@ fn passthrough_payload_rewrites_model_only() {
     // 不注入 chat 专用字段
     assert!(passthrough.get("messages").is_none());
     assert!(passthrough.get("reasoning_effort").is_none());
+}
+
+#[test]
+fn passthrough_injects_prompt_cache_key_when_missing() {
+    let alias = ModelAlias::new(
+        "logical",
+        "openai/real-upstream",
+        "http://x/v1",
+        Vec::new(),
+        None,
+    )
+    .with_responses_base_url(Some("http://x/v1".to_string()));
+    let payload = json!({ "model": "logical", "input": "hi", "stream": false });
+    let out = prepare_passthrough_payload(&payload, &alias, Some("auto-abc123"), true);
+    assert_eq!(out["prompt_cache_key"], "auto-abc123");
+}
+
+#[test]
+fn passthrough_never_overwrites_client_cache_key() {
+    let alias = ModelAlias::new(
+        "logical",
+        "openai/real-upstream",
+        "http://x/v1",
+        Vec::new(),
+        None,
+    )
+    .with_responses_base_url(Some("http://x/v1".to_string()));
+    let payload = json!({ "model": "logical", "input": "hi", "prompt_cache_key": "client-sid" });
+    let out = prepare_passthrough_payload(&payload, &alias, Some("auto-abc123"), true);
+    assert_eq!(out["prompt_cache_key"], "client-sid");
+}
+
+#[test]
+fn passthrough_cache_key_injection_gates() {
+    let alias = ModelAlias::new(
+        "logical",
+        "openai/real-upstream",
+        "http://x/v1",
+        Vec::new(),
+        None,
+    )
+    .with_responses_base_url(Some("http://x/v1".to_string()));
+    let payload = json!({ "model": "logical", "input": "hi" });
+    // 开关关闭：不注入
+    let out = prepare_passthrough_payload(&payload, &alias, Some("auto-abc123"), false);
+    assert!(out.get("prompt_cache_key").is_none());
+    // session 缺失：不注入
+    let out = prepare_passthrough_payload(&payload, &alias, None, true);
+    assert!(out.get("prompt_cache_key").is_none());
+    // 超长 session 截断到 64 字符
+    let long_sid = "s".repeat(100);
+    let out = prepare_passthrough_payload(&payload, &alias, Some(&long_sid), true);
+    assert_eq!(out["prompt_cache_key"].as_str().unwrap().len(), 64);
 }
 
 #[test]

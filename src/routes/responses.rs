@@ -149,7 +149,12 @@ pub(crate) async fn responses_alias_dispatch(
 ) -> Result<Response, CallError> {
     if alias.supports_responses() {
         // 透传：只改写 model 名，发到供应商 Responses 端点
-        let upstream_payload = translate::prepare_passthrough_payload(payload, &alias);
+        let upstream_payload = translate::prepare_passthrough_payload(
+            payload,
+            &alias,
+            session_id.as_deref(),
+            app.settings.inject_prompt_cache_key,
+        );
         call_responses_passthrough(app, alias, session_id, upstream_payload, "/responses").await
     } else {
         // 翻译：请求转 chat，响应再翻译回 Responses
@@ -625,7 +630,12 @@ pub(crate) async fn compact_response(
             continue;
         }
         let alias = base_alias.clone();
-        let upstream_payload = translate::prepare_passthrough_payload(&payload, &alias);
+        let upstream_payload = translate::prepare_passthrough_payload(
+            &payload,
+            &alias,
+            session_id.as_deref(),
+            app.settings.inject_prompt_cache_key,
+        );
         match call_responses_passthrough(
             &app,
             alias,

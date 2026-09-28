@@ -37,9 +37,30 @@ pub(crate) fn now_ts() -> i64 {
 
 /// 透传载荷：只改写 model 名为上游物理模型，其余字段原样保留（供应商原生 Responses）。
 /// 不应用 chat 专用的 params 默认值/思考翻译，避免把 chat 字段泄漏给 Responses 上游。
-pub(crate) fn prepare_passthrough_payload(payload: &Value, alias: &ModelAlias) -> Value {
+/// 供应商侧会话粘性：客户端未携带 `prompt_cache_key` 时，把 router 解析出的 session id
+/// （请求头 / metadata / 指纹兜底）补写进请求，让上游把同一会话路由到同一缓存节点，
+/// 提升 prompt cache 命中率。客户端已带时不覆盖；session 缺失或开关关闭时不注入。
+pub(crate) fn prepare_passthrough_payload(
+    payload: &Value,
+    alias: &ModelAlias,
+    session_id: Option<&str>,
+    inject_cache_key: bool,
+) -> Value {
     let mut next = payload.clone();
     next["model"] = Value::String(alias.upstream_model().to_string());
+    if inject_cache_key {
+        let session_id = session_id.filter(|s| !s.is_empty());
+        let client_provided = next
+            .get("prompt_cache_key")
+            .and_then(Value::as_str)
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        if let Some(session_id) = session_id.filter(|_| !client_provided) {
+            // OpenAI 对 prompt_cache_key 有 64 字符上限，超长截断防上游 400
+            let value: String = session_id.chars().take(64).collect();
+            next["prompt_cache_key"] = Value::String(value);
+        }
+    }
     next
 }
 

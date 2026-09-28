@@ -87,7 +87,12 @@ pub(crate) async fn stream_responses_route(
                     .unwrap_or_default();
                 (
                     format!("{}/responses", responses_base.trim_end_matches('/')),
-                    translate::prepare_passthrough_payload(&original_payload, &alias),
+                    translate::prepare_passthrough_payload(
+                        &original_payload,
+                        &alias,
+                        session_id.as_deref(),
+                        app.settings.inject_prompt_cache_key,
+                    ),
                 )
             } else {
                 // 翻译：Responses 请求已转成 chat 载荷，发到 chat 端点
