@@ -12,6 +12,7 @@ It preserves the old API/config contracts so existing OpenCode/headroom-proxy cl
 ## What It Does
 
 - Session affinity: binds `x-litellm-session-id`, `x-opencode-session-id`, `x-session-id`/`x-session-affinity`, request metadata (`metadata.session_id`, `prompt_cache_key`), or — when the client sends none of those — a derived fingerprint of the stable request prefix (system + first user message) to one upstream key. Client-agnostic: Responses-API clients like pi get sticky routing automatically via `prompt_cache_key`; any stateless client gets it via the fingerprint fallback.
+- Provider-side affinity: when forwarding to a native Responses upstream, the router injects `prompt_cache_key=<resolved session id>` if the client didn't send one (headers / metadata / fingerprint fallback all qualify), so the provider also routes the same conversation to the same cache node. Client-provided values are never overwritten; disable with `LLM_PROVIDER_ROUTER_INJECT_PROMPT_CACHE_KEY=0`.
 - Sliding TTL: active session bindings refresh for 1 hour by default; a non-retryable upstream rejection or mid-stream disconnect unbinds the session so it re-rolls instead of staying pinned to a bad key.
 - Quota freeze: provider quota/auth errors freeze the selected key until reset/fallback time.
 - Failover: `*-auto` aliases retry across healthy keys and configured model-route fallbacks.
