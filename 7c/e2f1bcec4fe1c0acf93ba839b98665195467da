@@ -1,0 +1,23 @@
+pi-extensions/router-context-sync.ts
+  c834db9974e9cf99 133-136,139,141,158
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7ce2f1bcec4fe1c0acf93ba839b98665195467da",
+  "prompts": {
+    "c834db9974e9cf99": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0e590-ab39-713f-8dea-a2e7387fcd69",
+        "model": "medium-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 3,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}
