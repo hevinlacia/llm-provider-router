@@ -1,0 +1,23 @@
+README.md
+  ca743cfb052e9425 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "ebce79260790085afaddf5d42b67821fc303fa22",
+  "prompts": {
+    "ca743cfb052e9425": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0e648-1007-746c-8f9d-b639c323de6d",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
