@@ -1,0 +1,23 @@
+frontend/src/styles.css
+  ca743cfb052e9425 449-454
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "0c8e1210c1b6355f4ffc67218c30d8d89f50d3cc",
+  "prompts": {
+    "ca743cfb052e9425": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0e648-1007-746c-8f9d-b639c323de6d",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 0,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    }
+  }
+}
