@@ -38,6 +38,7 @@ pub(crate) fn prepare_upstream_payload(payload: &Value, alias: &ModelAlias) -> V
             host: "".into(),
             port: 0,
             session_ttl_seconds: 0.0,
+            inject_prompt_cache_key: true,
             monthly_quota_fallback_seconds: 0.0,
             five_hour_quota_fallback_seconds: 0.0,
             request_timeout_seconds: 0.0,

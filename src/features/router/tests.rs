@@ -16,6 +16,7 @@ fn test_settings() -> Settings {
         host: "127.0.0.1".to_string(),
         port: 8789,
         session_ttl_seconds: 3600.0,
+        inject_prompt_cache_key: true,
         monthly_quota_fallback_seconds: 86400.0,
         five_hour_quota_fallback_seconds: 5400.0,
         request_timeout_seconds: 30.0,

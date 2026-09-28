@@ -177,6 +177,8 @@ pub struct Settings {
     pub host: String,
     pub port: u16,
     pub session_ttl_seconds: f64,
+    /// 透传调上游时自动补写 prompt_cache_key=<session id>（供应商侧会话粘性/缓存路由）
+    pub inject_prompt_cache_key: bool,
     pub monthly_quota_fallback_seconds: f64,
     pub five_hour_quota_fallback_seconds: f64,
     pub request_timeout_seconds: f64,
@@ -210,6 +212,9 @@ pub fn load_settings() -> anyhow::Result<Settings> {
             .parse()
             .context("LLM_PROVIDER_ROUTER_PORT must be a valid port")?,
         session_ttl_seconds: env_or("LLM_PROVIDER_ROUTER_SESSION_TTL_SECONDS", "3600").parse()?,
+        inject_prompt_cache_key: env_or("LLM_PROVIDER_ROUTER_INJECT_PROMPT_CACHE_KEY", "true")
+            .parse::<bool>()
+            .unwrap_or(true),
         monthly_quota_fallback_seconds: env_or(
             "LLM_PROVIDER_ROUTER_MONTHLY_QUOTA_FALLBACK_SECONDS",
             "86400",
