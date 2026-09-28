@@ -3,13 +3,14 @@ import { api } from '../../api';
 import { buildTargetCandidates } from '../../lib/format';
 import type { V2Status } from '../../types';
 import { LogicalModelEditor, ProviderEditor } from './editors';
-import { ProviderModelsModal, ProviderVirtualModelsModal, UnsupportedKeysModal } from './modals';
+import { ProviderKeysModal, ProviderModelsModal, ProviderVirtualModelsModal, UnsupportedKeysModal } from './modals';
 
 export function V2Panel({ config, onSaved, onError }: { config: V2Status | null; onSaved: (value: V2Status) => void; onError: (value: string) => void }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [editingLogical, setEditingLogical] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [addingPool, setAddingPool] = useState(false);
+  const [viewingKeys, setViewingKeys] = useState<string | null>(null);
   const [viewingModels, setViewingModels] = useState<string | null>(null);
   const [viewingVirtual, setViewingVirtual] = useState<string | null>(null);
   const [viewingUnsupported, setViewingUnsupported] = useState<string | null | undefined>(undefined);
@@ -28,7 +29,7 @@ export function V2Panel({ config, onSaved, onError }: { config: V2Status | null;
   return <>
     <section className="card settings-section providers-section">
       <div className="section-title settings-title"><div><h2>Providers</h2><p className="muted">Upstream provider endpoints, key availability, and provider health.</p></div><div className="title-actions"><span className="muted">{providers.length} providers · {config.models?.length ?? 0} physical models</span><button className="secondary compact-button" onClick={() => setAdding(true)}>Add Provider</button></div></div>
-      <div className="table-wrap"><table className="settings-table providers-table"><thead><tr><th>Provider</th><th>可用 Keys</th><th>启用 Keys</th><th>Status</th><th></th></tr></thead><tbody>{providers.map(([name, p]) => { const availableKeys = Object.values(p.keys ?? {}).filter((k) => k.enabled && !k.frozen).length; return <tr key={name}><td className="strong-cell">{name}</td><td><span className={`status ${availableKeys > 0 ? 'ok' : 'warn'}`}>{availableKeys}</span></td><td>{p.key_enabled}/{p.key_total}{p.key_frozen > 0 ? ` (${p.key_frozen} frozen)` : ''}</td><td><span className={`status ${p.available ? 'ok' : 'warn'}`}>{p.available ? 'available' : 'unavailable'}</span></td><td><div className="row-actions"><button className="secondary compact-button" onClick={() => setViewingModels(name)}>Details</button><button className="secondary compact-button" onClick={() => setViewingVirtual(name)}>Virtual</button><button className="secondary compact-button" onClick={() => setViewingUnsupported(name)}>Unsupported</button><button className="secondary compact-button" onClick={() => setEditing(name)}>Edit</button></div></td></tr>; })}</tbody></table></div>
+      <div className="table-wrap"><table className="settings-table providers-table"><thead><tr><th>Provider</th><th>可用 Keys</th><th>启用 Keys</th><th>Status</th><th></th></tr></thead><tbody>{providers.map(([name, p]) => { const availableKeys = Object.values(p.keys ?? {}).filter((k) => k.enabled && !k.frozen).length; return <tr key={name}><td className="strong-cell">{name}</td><td><button type="button" className={`status clickable ${availableKeys > 0 ? 'ok' : 'warn'}`} title="点击查看 key 冻结/可用明细" onClick={() => setViewingKeys(name)}>{availableKeys}</button></td><td>{p.key_enabled}/{p.key_total}{p.key_frozen > 0 ? ` (${p.key_frozen} frozen)` : ''}</td><td><span className={`status ${p.available ? 'ok' : 'warn'}`}>{p.available ? 'available' : 'unavailable'}</span></td><td><div className="row-actions"><button className="secondary compact-button" onClick={() => setViewingModels(name)}>Details</button><button className="secondary compact-button" onClick={() => setViewingVirtual(name)}>Virtual</button><button className="secondary compact-button" onClick={() => setViewingUnsupported(name)}>Unsupported</button><button className="secondary compact-button" onClick={() => setEditing(name)}>Edit</button></div></td></tr>; })}</tbody></table></div>
     </section>
     <section className="card settings-section logical-models-section">
       <div className="section-title settings-title"><div><h2>Model Pools</h2><p className="muted">逻辑模型池：虚拟模型名与有序/加权路由目标。target 可填虚拟模型名、物理模型 id（provider/upstream）或另一个模型池。</p></div><div className="title-actions"><span className="muted">{logical.length} model pools</span><button className="secondary compact-button" onClick={() => setAddingPool(true)}>Add Pool</button></div></div>
@@ -38,6 +39,7 @@ export function V2Panel({ config, onSaved, onError }: { config: V2Status | null;
     {editingProvider && <ProviderEditor providerName={editing!} provider={editingProvider} onCancel={() => setEditing(null)} onSaved={(next) => { setEditing(null); onSaved(next); }} onError={onError} />}
     {editingLogical && config.logical_models?.[editingLogical] && <LogicalModelEditor name={editingLogical} logical={config.logical_models[editingLogical]} candidates={buildTargetCandidates(config, editingLogical)} onCancel={() => setEditingLogical(null)} onSaved={(next) => { setEditingLogical(null); onSaved(next); }} onError={onError} />}
     {addingPool && <LogicalModelEditor isNew name="" logical={{ strategy: 'priority', targets: [], params: {} }} candidates={buildTargetCandidates(config, null)} onCancel={() => setAddingPool(false)} onSaved={(next) => { setAddingPool(false); onSaved(next); }} onError={onError} />}
+    {viewingKeys && config.providers?.[viewingKeys] && <ProviderKeysModal providerName={viewingKeys} provider={config.providers[viewingKeys]} onCancel={() => setViewingKeys(null)} onError={onError} />}
     {viewingModels && <ProviderModelsModal providerName={viewingModels} onCancel={() => setViewingModels(null)} onError={onError} />}
     {viewingVirtual && <ProviderVirtualModelsModal providerName={viewingVirtual} virtualModels={config.virtual_models ?? {}} onCancel={() => setViewingVirtual(null)} onSaved={onSaved} onError={onError} />}
     {viewingUnsupported !== undefined && <UnsupportedKeysModal providerName={viewingUnsupported ?? undefined} onCancel={() => setViewingUnsupported(undefined)} onError={onError} />}
