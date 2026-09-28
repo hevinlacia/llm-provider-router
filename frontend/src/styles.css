@@ -446,6 +446,12 @@ td input[type="checkbox"] { width: auto; accent-color: var(--cyan); }
 .target-cell { display: flex; flex-wrap: wrap; gap: 7px; justify-content: flex-end; line-height: 1.35; }
 .target-pill { background: rgba(0,0,0,.18); border: 1px solid rgba(148,163,184,.16); border-radius: 999px; color: #cbd5e1; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 5px 8px; white-space: normal; word-break: break-word; font: 700 .7rem var(--mono); }
 .row-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+/* providers 表：固定布局下显式分列宽，操作列给足一行放下 4 个按钮，窄屏靠 table-wrap 横向滚动 */
+.providers-table { min-width: 860px; }
+.providers-table th:nth-child(2), .providers-table td:nth-child(2) { width: 92px; }
+.providers-table th:nth-child(3), .providers-table td:nth-child(3) { width: 150px; }
+.providers-table th:nth-child(4), .providers-table td:nth-child(4) { width: 118px; }
+.providers-table th:last-child, .providers-table td:last-child { width: 320px; }
 .model-chip-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 52vh; overflow: auto; padding: 4px 2px; }
 .model-chip { background: rgba(0,0,0,.18); border: 1px solid rgba(148,163,184,.16); border-radius: 999px; color: #cbd5e1; font-size: 12px; padding: 4px 9px; white-space: nowrap; font-family: var(--mono); }
 .model-chip:hover { border-color: rgba(34,211,238,.4); color: #e0f2fe; }
