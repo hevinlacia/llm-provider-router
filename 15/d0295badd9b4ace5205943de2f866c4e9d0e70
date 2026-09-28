@@ -1,0 +1,25 @@
+.agents/knowledge/pitfall-logical-model-keys-empty-whitelist.md
+  c834db9974e9cf99 1-56
+.agents/knowledge/profile-pi-model-sync.md
+  c834db9974e9cf99 1-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "15d0295badd9b4ace5205943de2f866c4e9d0e70",
+  "prompts": {
+    "c834db9974e9cf99": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0e590-ab39-713f-8dea-a2e7387fcd69",
+        "model": "medium-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 105,
+      "total_deletions": 0,
+      "accepted_lines": 105,
+      "overriden_lines": 0
+    }
+  }
+}
