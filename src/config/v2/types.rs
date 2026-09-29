@@ -160,8 +160,31 @@ pub struct V2Target {
     /// keys 配置。None / 缺省 = 使用该 provider 全部 enabled key。
     /// 用途：同一 provider 多账号 key 的 coding plan 支持的模型不同时，
     /// 把不支持某模型的目标限定到支持的 key，避免每次请求先撞一批 404。
-    #[serde(default)]
+    /// 反序列化时空数组归一为 None：空数组语义上等于“白名单匹配 0 个 key”，
+    /// 会让 target 在 resolve 时被整跳过（物理候选 keys 为空直接返回 None），
+    /// 历史上由 dashboard 前端空输入误存 [] 引发整池 404。
+    #[serde(default, deserialize_with = "deserialize_keys_allowlist")]
     pub keys: Option<Vec<String>>,
+}
+
+/// keys 白名单归一：`Some([])` / 全空串列表视为 `None`（不限制，用全部 enabled key）。
+/// serde 反序列化与 API 手工解析（routes/config_v2.rs）共用本入口，保证两条写入路径语义一致。
+pub fn normalize_keys_allowlist(keys: Option<Vec<String>>) -> Option<Vec<String>> {
+    let names: Vec<String> = keys
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|n| !n.is_empty())
+        .collect();
+    (!names.is_empty()).then_some(names)
+}
+
+fn deserialize_keys_allowlist<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(normalize_keys_allowlist(
+        Option::<Vec<String>>::deserialize(deserializer)?,
+    ))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

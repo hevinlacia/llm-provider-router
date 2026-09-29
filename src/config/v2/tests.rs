@@ -797,3 +797,26 @@ fn validate_accepts_empty_env_var() {
     let cfg = load_v2_config_from(&p, &m, &l, "/nonexistent/virtual-models.json");
     assert!(cfg.is_ok(), "空 env_var 不应再被拒绝: {:?}", cfg.err());
 }
+
+/// keys 白名单反序列化归一回归（serde 文件加载路径，热重载走此处）：
+/// 空数组 / 全空串 → None；非空白名单保留；缺省 → None。
+/// 空数组若原样保留会被 resolve 视为“白名单匹配 0 个 key”，target 被整跳过导致整池 404。
+#[test]
+fn target_keys_allowlist_empty_normalizes_to_none() {
+    let t: V2Target = serde_json::from_str(r#"{ "model": "ark/test", "keys": [] }"#).unwrap();
+    assert_eq!(t.keys, None);
+
+    let t: V2Target =
+        serde_json::from_str(r#"{ "model": "ark/test", "keys": ["", "hevin"] }"#).unwrap();
+    assert_eq!(t.keys, Some(vec!["hevin".to_string()]));
+
+    let t: V2Target = serde_json::from_str(r#"{ "model": "ark/test" }"#).unwrap();
+    assert_eq!(t.keys, None);
+
+    // 归一入口本身（API 手工解析路径复用）
+    assert_eq!(normalize_keys_allowlist(Some(vec![])), None);
+    assert_eq!(
+        normalize_keys_allowlist(Some(vec!["a".to_string()])),
+        Some(vec!["a".to_string()])
+    );
+}

@@ -176,11 +176,15 @@ export function LogicalModelEditor({ name, logical, candidates, isNew = false, o
     const cleaned = targets.filter((t) => t.model.trim());
     if (!cleaned.length) { onError('At least one target is required'); return; }
     if (!poolName.trim()) { onError('Model pool name must not be empty'); return; }
-    const parsed = cleaned.map((t) => ({
-      model: t.model.trim(),
-      weight: t.weight.trim() === '' ? null : Math.max(0, Number(t.weight) || 0),
-      keys: t.keys.split(',').map((s) => s.trim()).filter(Boolean),
-    }));
+    const parsed = cleaned.map((t) => {
+      const keys = t.keys.split(',').map((s) => s.trim()).filter(Boolean);
+      return {
+        model: t.model.trim(),
+        weight: t.weight.trim() === '' ? null : Math.max(0, Number(t.weight) || 0),
+        // 留空 = 不限制（null）；发空数组会被后端当成“白名单匹配 0 个 key”，整池 404
+        keys: keys.length ? keys : null,
+      };
+    });
     try {
       if (isNew) {
         onSaved(await api.createV2LogicalModel({ name: poolName.trim(), strategy, targets: parsed }));

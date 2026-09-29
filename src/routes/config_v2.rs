@@ -218,12 +218,15 @@ fn parse_logical_model_body(
         let Some(model) = item.get("model").and_then(Value::as_str) else {
             return Err("each target needs a model (string)".to_string());
         };
-        let keys = item.get("keys").and_then(Value::as_array).map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<String>>()
-        });
+        // 空数组/全空串白名单归一为 None：等价“不限制”，避免被当成“匹配 0 个 key”整跳过 target
+        let keys = crate::config_v2::normalize_keys_allowlist(
+            item.get("keys").and_then(Value::as_array).map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<String>>()
+            }),
+        );
         targets.push(crate::config_v2::V2Target {
             model: model.trim().to_string(),
             weight: item.get("weight").and_then(Value::as_i64),
@@ -571,4 +574,28 @@ pub(crate) async fn api_config_physical_models_update(
         });
     }
     with_state_json(&app, |state| Ok(state.set_physical_models(parsed)?))
+}
+
+/// keys 白名单空数组归一回归测试：dashboard 前端曾把留空的 Keys allowlist 存成 `[]`，
+/// 后端按“白名单匹配 0 个 key”处理导致 target 全部被跳过、池 404（2026-09-29 事故）。
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_target_keys_empty_array_normalizes_to_none() {
+        let payload = json!({
+            "name": "test-pool",
+            "strategy": "weighted",
+            "targets": [
+                { "model": "ark/test", "weight": 0, "keys": [] },
+                { "model": "ark/test2", "keys": ["", "hevin"] },
+                { "model": "ark/test3" }
+            ]
+        });
+        let (_, _, _, targets) = parse_logical_model_body(&payload).unwrap();
+        assert_eq!(targets[0].keys, None, "空数组应归一为 None（不限制）");
+        assert_eq!(targets[1].keys, Some(vec!["hevin".to_string()]));
+        assert_eq!(targets[2].keys, None);
+    }
 }
