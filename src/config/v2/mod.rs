@@ -35,8 +35,8 @@ pub use mutate::{
 };
 pub use resolve::{resolve_targets, TargetCandidate};
 pub use types::{
-    ProviderModelsEntry, V2Config, V2Key, V2LogicalModel, V2PhysicalModel, V2Provider, V2Route,
-    V2Strategy, V2Target, V2_LOGICAL_MODELS_PATH, V2_MODELS_PATH, V2_PROVIDERS_PATH,
-    V2_VIRTUAL_MODELS_PATH,
+    normalize_keys_allowlist, ProviderModelsEntry, V2Config, V2Key, V2LogicalModel,
+    V2PhysicalModel, V2Provider, V2Route, V2Strategy, V2Target, V2_LOGICAL_MODELS_PATH,
+    V2_MODELS_PATH, V2_PROVIDERS_PATH, V2_VIRTUAL_MODELS_PATH,
 };
 pub use validate::is_provider_scoped_virtual;
