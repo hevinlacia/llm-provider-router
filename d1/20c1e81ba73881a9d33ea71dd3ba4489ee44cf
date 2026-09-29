@@ -1,0 +1,31 @@
+src/config/v2/types.rs
+  a4368e860a738e3d 163-166,170-185,187
+frontend/src/features/settings/editors.tsx
+  a4368e860a738e3d 179-187
+frontend/src/api.ts
+  a4368e860a738e3d 145,152
+src/routes/config_v2.rs
+  a4368e860a738e3d 221-229
+src/config/v2/mod.rs
+  a4368e860a738e3d 38-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "d120c1e81ba73881a9d33ea71dd3ba4489ee44cf",
+  "prompts": {
+    "a4368e860a738e3d": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0eac2-66de-741d-aac7-453f918e035f",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 51,
+      "total_deletions": 19,
+      "accepted_lines": 46,
+      "overriden_lines": 1
+    }
+  }
+}
