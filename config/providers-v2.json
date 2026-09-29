@@ -40,6 +40,21 @@
         }
       }
     },
+    "opencode-go": {
+      "base_url": "https://opencode.ai/zen/go/v1",
+      "responses_base_url": "https://opencode.ai/zen/go/v1",
+      "anthropic_base_url": null,
+      "retry": null,
+      "keys": {
+        "hevin": {
+          "env_var": "AGENT_AI_OPENCODEGO_HEVIN_API_KEY",
+          "weight": 1,
+          "billing_type": "subscription",
+          "enabled": true,
+          "persist": true
+        }
+      }
+    },
     "ark": {
       "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
       "responses_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
@@ -58,15 +73,8 @@
         ]
       },
       "keys": {
-        "hevin-private": {
-          "env_var": "AGENT_AI_ARK_HEVIN_PRIVATE_API_KEY",
-          "weight": 2,
-          "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
-        },
-        "hevin": {
-          "env_var": "AGENT_AI_ARK_HEVIN_API_KEY",
+        "hevin2": {
+          "env_var": "AGENT_AI_ARK_HEVIN2_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
           "enabled": true,
@@ -79,24 +87,16 @@
           "enabled": true,
           "persist": true
         },
-        "hevin2": {
-          "env_var": "AGENT_AI_ARK_HEVIN2_API_KEY",
-          "weight": 15,
+        "hevin": {
+          "env_var": "AGENT_AI_ARK_HEVIN_API_KEY",
+          "weight": 1,
           "billing_type": "subscription",
           "enabled": true,
           "persist": true
-        }
-      }
-    },
-    "opencode-go": {
-      "base_url": "https://opencode.ai/zen/go/v1",
-      "responses_base_url": "https://opencode.ai/zen/go/v1",
-      "anthropic_base_url": null,
-      "retry": null,
-      "keys": {
-        "hevin": {
-          "env_var": "AGENT_AI_OPENCODEGO_HEVIN_API_KEY",
-          "weight": 1,
+        },
+        "hevin-private": {
+          "env_var": "AGENT_AI_ARK_HEVIN_PRIVATE_API_KEY",
+          "weight": 30,
           "billing_type": "subscription",
           "enabled": true,
           "persist": true
