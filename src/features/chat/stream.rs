@@ -14,7 +14,7 @@ use super::payload::log_upstream_failure;
 use super::payload::prepare_upstream_payload;
 use super::select::{
     clear_unsupported_if_ok, extract_usage, extract_usage_from_stream, freeze_maybe,
-    maybe_mark_unsupported, record_usage, select_key_locked, stream_error_event,
+    key_frozen_now, maybe_mark_unsupported, record_usage, select_key_locked, stream_error_event,
     upstream_key_value_locked, usage_key_name,
 };
 use crate::routes::resp::internal_error;
@@ -183,6 +183,12 @@ pub(crate) async fn stream_upstream_route(
                         .ok()
                         .and_then(|v| v.get("error").and_then(|e| e.get("message")).and_then(Value::as_str).map(str::to_string))
                         .unwrap_or_else(|| "upstream error".to_string());
+                    // key 级失败（freeze_maybe 触发了冻结，如订阅失效 400）：问题在这把
+                    // key 而非本次请求，换下一把 key 继续尝试，而不是把请求判死。
+                    if key_frozen_now(&app, &key) {
+                        last_error = Some(format!("upstream {status}: {message}"));
+                        continue;
+                    }
                     yield Ok(Bytes::from(stream_error_event(
                         &alias.alias,
                         tried.len(),
@@ -311,6 +317,7 @@ mod tests {
 
     use super::*;
     use crate::config::{KeyRef, ModelAlias, RetryPolicy, Settings};
+    use axum::response::IntoResponse;
     use axum::routing::post;
     use axum::{Json, Router};
     use serde_json::json;
@@ -354,7 +361,7 @@ mod tests {
             host: "127.0.0.1".to_string(),
             port: 0,
             session_ttl_seconds: 3600.0,
-        inject_prompt_cache_key: true,
+            inject_prompt_cache_key: true,
             monthly_quota_fallback_seconds: 86400.0,
             five_hour_quota_fallback_seconds: 5400.0,
             request_timeout_seconds: 30.0,
@@ -367,6 +374,7 @@ mod tests {
             search_providers_path: ":memory:".to_string(),
             provider_models_path: ":memory:".to_string(),
             auth_invalid_freeze_seconds: 86400.0,
+            subscription_invalid_freeze_seconds: 86400.0,
             diag_dir: ":memory:".to_string(),
             diag_max_bytes: 10 * 1024 * 1024,
             diag_max_files: 0,
@@ -457,5 +465,146 @@ mod tests {
             .expect("404 not-support must be recorded into unsupported ladder");
         assert_eq!(hit["attempt"].as_u64().unwrap(), 1);
         assert!(!hit["permanent"].as_bool().unwrap());
+    }
+
+    /// 订阅失效（ark coding plan 400 + "does not have a valid CodingPlan
+    /// subscription"）是 key 级永久故障：第一把 key 收到该错误后应被冻结，
+    /// 并自动换下一把 key 重试成功，而不是以 "all 1 upstream keys failed"
+    /// 终态失败（修复前行为）。
+    #[tokio::test]
+    async fn subscription_invalid_400_falls_back_to_next_key() {
+        // mock 上游：第一次请求（无论哪把 key）回 400 订阅失效，之后回 200 SSE。
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_server = hits.clone();
+        let app = Router::new().route(
+            "/chat/completions",
+            post(move || {
+                let hits = hits_for_server.clone();
+                async move {
+                    if hits.fetch_add(1, Ordering::SeqCst) == 0 {
+                        return (
+                            axum::http::StatusCode::BAD_REQUEST,
+                            Json(json!({
+                                "error": {
+                                    "code": "SubscriptionNotValid",
+                                    "message": "Your account (2102661813) does not have a valid CodingPlan subscription, or your subscription has expired. Please visit https://console.volcengine.com/ark/ to review your subscription status.",
+                                }
+                            })),
+                        )
+                            .into_response();
+                    }
+                    (
+                        axum::http::StatusCode::OK,
+                        [("content-type", "text/event-stream")],
+                        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n",
+                    )
+                        .into_response()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        std::env::set_var("CHAT_TEST_SUB_BAD_KEY", "bad-key-value");
+        std::env::set_var("CHAT_TEST_SUB_GOOD_KEY", "good-key-value");
+
+        let settings = Settings {
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            session_ttl_seconds: 3600.0,
+            inject_prompt_cache_key: true,
+            monthly_quota_fallback_seconds: 86400.0,
+            five_hour_quota_fallback_seconds: 5400.0,
+            request_timeout_seconds: 30.0,
+            local_bearer_token: None,
+            usage_db_path: ":memory:".to_string(),
+            state_db_path: ":memory:".to_string(),
+            api_keys_path: ":memory:".to_string(),
+            token_price_config_path: ":memory:".to_string(),
+            model_alias_config_path: ":memory:".to_string(),
+            search_providers_path: ":memory:".to_string(),
+            provider_models_path: ":memory:".to_string(),
+            auth_invalid_freeze_seconds: 86400.0,
+            subscription_invalid_freeze_seconds: 86400.0,
+            diag_dir: ":memory:".to_string(),
+            diag_max_bytes: 10 * 1024 * 1024,
+            diag_max_files: 0,
+            diag_sample_every: 1,
+            env_file_path: None,
+        };
+        let app_state = AppState::new(settings).unwrap();
+
+        // 两把 key、retry 策略不含 400（模拟 ark coding 端点现状）。
+        let alias = ModelAlias::new(
+            "mock/test-model",
+            "openai/mock-test-model",
+            &format!("http://{addr}"),
+            vec![
+                KeyRef {
+                    name: "bad".into(),
+                    env_var: "CHAT_TEST_SUB_BAD_KEY".into(),
+                    weight: 1,
+                    provider: "mock-provider".into(),
+                    billing_type: "subscription".into(),
+                    persist: true,
+                },
+                KeyRef {
+                    name: "good".into(),
+                    env_var: "CHAT_TEST_SUB_GOOD_KEY".into(),
+                    weight: 1,
+                    provider: "mock-provider".into(),
+                    billing_type: "subscription".into(),
+                    persist: true,
+                },
+            ],
+            Some(RetryPolicy::new(
+                300,
+                5.0,
+                &[401, 402, 429, 500, 502, 503, 504],
+            )),
+        );
+
+        let response = stream_upstream_route(
+            app_state.clone(),
+            vec![alias],
+            Some("sess-sub-fallback".to_string()),
+            json!({
+                "model": "mock/test-model",
+                "messages": [{ "role": "user", "content": "hi" }],
+                "stream": true,
+            }),
+        )
+        .await;
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&body);
+        server.abort();
+
+        // 核心断言：第一把 key 失败后换了下一把，最终流是正常完成而非错误事件。
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            2,
+            "必须自动换下一把 key 重试（共命中上游 2 次）"
+        );
+        assert!(
+            !text.contains("upstream 400") && !text.contains("upstream_connect_error"),
+            "订阅失效 fallback 后不应以错误事件收尾，got: {text}"
+        );
+        assert!(
+            text.contains("data: [DONE]"),
+            "正常流应以 [DONE] 收尾，got: {text}"
+        );
+
+        // 坏 key 被整把冻结（reason=subscription_invalid），排除出可用池。
+        let snapshot = app_state.state.lock().unwrap().snapshot().unwrap();
+        let frozen = snapshot["frozen"].as_object().expect("frozen map in state");
+        assert_eq!(frozen.len(), 1, "只应冻结触发订阅失效的那把 key");
+        let entry = frozen.values().next().unwrap();
+        assert_eq!(entry["reason"], "subscription_invalid");
     }
 }

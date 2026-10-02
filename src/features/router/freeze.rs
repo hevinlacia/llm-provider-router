@@ -63,6 +63,16 @@ pub fn parse_auth_invalid(text: &str, settings: &Settings) -> Option<(f64, &'sta
     }
 }
 
+/// 账号订阅失效/过期识别（key 级永久性故障）：覆盖 ark coding plan 的
+/// "Your account (...) does not have a valid CodingPlan subscription, or your
+/// subscription has expired"。这类错误通常以 HTTP 400 到达（不在 retry_on_status），
+/// 但本质与 401/402 同级——是账号/密钥问题而非请求问题，该 key 上所有模型
+/// 都会失败，应整把冻结排除出可用池，而不是原地报错。
+pub fn is_subscription_invalid(text: &str) -> bool {
+    let lowered = text.to_lowercase();
+    lowered.contains("codingplan subscription") || lowered.contains("subscription has expired")
+}
+
 fn parse_reset_timestamp(text: &str) -> Option<f64> {
     let regex =
         Regex::new(r"(?i)reset at (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) ([+-]\d{4})").ok()?;
@@ -96,6 +106,14 @@ pub fn maybe_freeze_key(
     }
     if let Some((until, reason)) = parse_quota_reset(body_text, settings) {
         state.freeze(&key_state_id(key), until, reason)?;
+        return Ok(());
+    }
+    if is_subscription_invalid(body_text) {
+        state.freeze(
+            &key_state_id(key),
+            now_seconds() + settings.subscription_invalid_freeze_seconds,
+            "subscription_invalid",
+        )?;
         return Ok(());
     }
     if matches!(status_code, 401 | 403) {

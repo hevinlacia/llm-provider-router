@@ -1,7 +1,9 @@
 use crate::config::Settings;
 use crate::config::{KeyRef, ModelAlias};
 use crate::config_v2::{TargetCandidate, V2Strategy};
-use crate::features::router::freeze::{parse_auth_invalid, parse_quota_reset};
+use crate::features::router::freeze::{
+    is_subscription_invalid, key_state_id, maybe_freeze_key, parse_auth_invalid, parse_quota_reset,
+};
 use crate::features::router::selection::{order_targets, weighted_pick};
 use crate::features::router::state::RouterState;
 use crate::json_config::TokenPrice;
@@ -29,6 +31,7 @@ fn test_settings() -> Settings {
         search_providers_path: ":memory:".to_string(),
         provider_models_path: ":memory:".to_string(),
         auth_invalid_freeze_seconds: 86400.0,
+        subscription_invalid_freeze_seconds: 86400.0,
         // router_state 测试覆盖旧逻辑；v2 行为由 config_v2 模块测试覆盖。
         diag_dir: ":memory:".to_string(),
         diag_max_bytes: 10 * 1024 * 1024,
@@ -87,6 +90,111 @@ fn parses_auth_invalid_error() {
         parse_auth_invalid("authentication_error: api key invalid", &settings).unwrap();
     assert_eq!(reason, "auth_invalid");
     assert!(until > now_seconds() + 86000.0);
+}
+
+// ---------------------------------------------------------------------------
+// 订阅失效（key 级永久故障）识别与整把冻结
+//
+// ark coding plan 账号订阅过期时以 HTTP 400 返回
+// "does not have a valid CodingPlan subscription"，400 不在 retry_on_status，
+// 修复前既不冻结 key 也不换下一把，直接以 "all 1 upstream keys failed" 终态失败。
+// 修复后：maybe_freeze_key 识别该文案即整把冻结（排除出可用池），
+// 调用方检测到冻结后换下一把 key 继续。
+// ---------------------------------------------------------------------------
+
+const ARK_SUBSCRIPTION_EXPIRED_BODY: &str = r#"{"error":{"code":"SubscriptionNotValid","message":"Your account (2102661813) does not have a valid CodingPlan subscription, or your subscription has expired. Please visit https://console.volcengine.com/ark/ to review your subscription status."}}"#;
+
+#[test]
+fn subscription_invalid_signal_matches_ark_body_only() {
+    assert!(is_subscription_invalid(ARK_SUBSCRIPTION_EXPIRED_BODY));
+    // 文案变体：小写/换个说法也命中
+    assert!(is_subscription_invalid(
+        "your subscription has expired, please renew"
+    ));
+    // 普通请求级 400 不命中
+    assert!(!is_subscription_invalid(
+        &json!({"error": {"message": "Invalid parameter: messages is empty"}}).to_string()
+    ));
+    assert!(!is_subscription_invalid("not json"));
+}
+
+#[test]
+fn subscription_invalid_400_freezes_key_and_select_skips_it() {
+    let settings = test_settings();
+    let mut state = RouterState::new(settings.clone()).unwrap();
+    let key = KeyRef {
+        name: "expired".into(),
+        env_var: "SUB_TEST_KEY".into(),
+        weight: 1,
+        provider: "ark".into(),
+        billing_type: "subscription".into(),
+        persist: true,
+    };
+    let headers = http::HeaderMap::new();
+
+    // 修复前：400 + 订阅失效文案不冻结。修复后：整把冻结。
+    maybe_freeze_key(
+        &mut state,
+        &key,
+        400,
+        &headers,
+        ARK_SUBSCRIPTION_EXPIRED_BODY,
+        &settings,
+    )
+    .unwrap();
+    let key_id = key_state_id(&key);
+    assert!(
+        state.is_frozen(&key_id).unwrap(),
+        "订阅失效 400 必须冻结整把 key"
+    );
+
+    // 冻结后的 key 不再被选中（排除出可用池）
+    let alias_with_expired = ModelAlias::new(
+        "ark/test-model",
+        "openai/test-model",
+        "https://ark.example.com/api/coding/v3",
+        vec![
+            key.clone(),
+            KeyRef {
+                name: "healthy".into(),
+                env_var: "SUB_TEST_HEALTHY".into(),
+                weight: 1,
+                provider: "ark".into(),
+                billing_type: "subscription".into(),
+                persist: true,
+            },
+        ],
+        None,
+    );
+    for _ in 0..5 {
+        let picked = state
+            .select_key_excluding(&alias_with_expired, None, &HashSet::new())
+            .unwrap();
+        assert_ne!(picked.name, "expired", "冻结的订阅失效 key 不应再被选中");
+    }
+
+    // 普通请求级 400（无订阅失效文案）不应冻结
+    let plain_key = KeyRef {
+        name: "plain".into(),
+        env_var: "SUB_TEST_PLAIN".into(),
+        weight: 1,
+        provider: "ark".into(),
+        billing_type: "subscription".into(),
+        persist: true,
+    };
+    maybe_freeze_key(
+        &mut state,
+        &plain_key,
+        400,
+        &headers,
+        &json!({"error": {"message": "Invalid parameter"}}).to_string(),
+        &settings,
+    )
+    .unwrap();
+    assert!(
+        !state.is_frozen(&key_state_id(&plain_key)).unwrap(),
+        "普通请求级 400 不应冻结 key"
+    );
 }
 
 #[test]

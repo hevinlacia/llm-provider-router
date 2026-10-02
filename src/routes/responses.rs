@@ -11,8 +11,8 @@ use crate::app::AppState;
 use crate::config::ModelAlias;
 use crate::features::chat::payload::prepare_upstream_payload;
 use crate::features::chat::select::{
-    clear_unsupported_if_ok, extract_usage, freeze_maybe, maybe_mark_unsupported, record_usage,
-    select_key_locked, upstream_key_value_locked, usage_key_name,
+    clear_unsupported_if_ok, extract_usage, freeze_maybe, key_frozen_now, maybe_mark_unsupported,
+    record_usage, select_key_locked, upstream_key_value_locked, usage_key_name,
 };
 use crate::features::chat::upstream::CallError;
 use crate::features::responses::{store, translate};
@@ -333,6 +333,12 @@ async fn call_responses_passthrough(
             session_id.as_deref(),
         );
         crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
+        // key 级失败（freeze_maybe 触发了冻结，如订阅失效 400）：问题在这把 key
+        // 而非本次请求，换下一把 key 继续尝试；全部耗尽后由 select_key 的
+        // NoAvailableKeyError 返回，上层 fallback 到下一个 target。
+        if key_frozen_now(app, &key) {
+            continue;
+        }
         clear_unsupported_if_ok(app, &key, &alias, status);
 
         // 响应原样透传（上游已是 Responses 格式；4xx/5xx 也是 OpenAI/Responses 错误体）
@@ -482,6 +488,11 @@ async fn call_upstream_responses(
             session_id.as_deref(),
         );
         crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
+        // key 级失败（freeze_maybe 触发了冻结，如订阅失效 400）：问题在这把 key
+        // 而非本次请求，换下一把 key 继续尝试。
+        if key_frozen_now(app, &key) {
+            continue;
+        }
         clear_unsupported_if_ok(app, &key, &alias, status);
 
         if status >= 400 {

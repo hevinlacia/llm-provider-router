@@ -46,6 +46,23 @@ pub(crate) fn freeze_maybe(
     }
 }
 
+/// 上游失败处理后，该 key 是否已被冻结（key 级失败信号）。
+///
+/// 非重试状态（如 ark 订阅失效的 400）若触发了 maybe_freeze_key 的 key 级冻结
+/// （配额/鉴权/订阅失效），说明问题出在这把 key 而不是本次请求本身：调用方应
+/// 换下一把 key 继续尝试，而不是把该失败当作终态直接返回。真正的请求级错误
+///（如参数非法的 400）不会触发冻结，仍按终态处理。
+pub(crate) fn key_frozen_now(app: &AppState, key: &crate::config::KeyRef) -> bool {
+    app.state
+        .lock()
+        .map(|mut state| {
+            state
+                .is_frozen(&crate::features::router::key_state_id(key))
+                .unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
 /// usage 记录的 key 名带 provider 前缀，避免不同供应商同名 key 合并统计。
 pub(crate) fn usage_key_name(_app: &AppState, key: &KeyRef) -> String {
     format!("{}/{}", key.provider, key.name)
