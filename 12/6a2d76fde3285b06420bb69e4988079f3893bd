@@ -1,0 +1,23 @@
+systemd/llm-provider-router-backend@.service
+  5ae6bbb75a77532a 9-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "126a2d76fde3285b06420bb69e4988079f3893bd",
+  "prompts": {
+    "5ae6bbb75a77532a": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0faa5-f276-769d-a880-5c98518a6b8c",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 4,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    }
+  }
+}
