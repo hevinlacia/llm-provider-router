@@ -1,0 +1,41 @@
+src/config.rs
+  5ae6bbb75a77532a 198-201,269-270
+src/features/router/freeze.rs
+  5ae6bbb75a77532a 66-75,111-116
+src/routes/messages.rs
+  5ae6bbb75a77532a 18-19,414-419,621-625
+src/features/chat/upstream.rs
+  5ae6bbb75a77532a 14-15,190-195
+src/routes/responses.rs
+  5ae6bbb75a77532a 14-15,336-341,491-495
+src/features/chat/stream.rs
+  5ae6bbb75a77532a 17,186-191,320,364,377,469-608
+src/features/router/mod.rs
+  5ae6bbb75a77532a 24
+src/features/chat/select.rs
+  5ae6bbb75a77532a 49-65
+src/features/router/tests.rs
+  5ae6bbb75a77532a 4-6,34,95-197
+src/features/responses/stream/mod.rs
+  5ae6bbb75a77532a 24-26,215-220
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "09d4ac2aed025b0cca59f284a1ea9cbd9b2ced26",
+  "prompts": {
+    "5ae6bbb75a77532a": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0faa5-f276-769d-a880-5c98518a6b8c",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 355,
+      "total_deletions": 15,
+      "accepted_lines": 346,
+      "overriden_lines": 0
+    }
+  }
+}
