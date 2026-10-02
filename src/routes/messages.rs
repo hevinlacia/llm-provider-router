@@ -15,8 +15,8 @@ use crate::config::ModelAlias;
 use crate::features::anthropic::stream::SseTranslator;
 use crate::features::anthropic::translate;
 use crate::features::chat::select::{
-    clear_unsupported_if_ok, freeze_maybe, maybe_mark_unsupported, record_usage, select_key_locked,
-    upstream_key_value_locked, usage_key_name,
+    clear_unsupported_if_ok, freeze_maybe, key_frozen_now, maybe_mark_unsupported, record_usage,
+    select_key_locked, upstream_key_value_locked, usage_key_name,
 };
 use crate::features::chat::upstream::CallError;
 use crate::features::router::NoAvailableKeyError;
@@ -411,6 +411,12 @@ async fn stream_anthropic_passthrough(
                             v.pointer("/error/message").and_then(Value::as_str).map(str::to_string)
                         })
                         .unwrap_or_else(|| body_text.chars().take(300).collect());
+                    // key 级失败（freeze_maybe 触发了冻结，如订阅失效 400）：问题在这把
+                    // key 而非本次请求，换下一把 key 继续尝试，而不是把请求判死。
+                    if key_frozen_now(&app, &key) {
+                        last_error = Some(format!("upstream {status}: {message}"));
+                        continue;
+                    }
                     yield Ok(Bytes::from(anthropic_sse_error(&message)));
                     return;
                 }
@@ -611,6 +617,12 @@ async fn call_anthropic_passthrough(
             session_id.as_deref(),
         );
         crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
+
+        // key 级失败（freeze_maybe 触发了冻结，如订阅失效 400）：换下一把 key 继续尝试；
+        // 全部耗尽后由 select_key 的 NoAvailableKeyError 返回，上层 fallback 到下一个 target。
+        if key_frozen_now(app, &key) {
+            continue;
+        }
 
         // 响应原样透传（上游已是 Anthropic 格式）
         let mut resp = json_status(status_code(status), content);

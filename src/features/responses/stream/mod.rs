@@ -21,8 +21,9 @@ use crate::app::AppState;
 use crate::config::ModelAlias;
 use crate::features::chat::payload::{log_upstream_failure, prepare_upstream_payload};
 use crate::features::chat::select::{
-    clear_unsupported_if_ok, extract_usage_from_stream, freeze_maybe, maybe_mark_unsupported,
-    record_usage, select_key_locked, upstream_key_value_locked, usage_key_name,
+    clear_unsupported_if_ok, extract_usage_from_stream, freeze_maybe, key_frozen_now,
+    maybe_mark_unsupported, record_usage, select_key_locked, upstream_key_value_locked,
+    usage_key_name,
 };
 use crate::features::responses::store;
 use crate::features::responses::translate;
@@ -211,6 +212,12 @@ pub(crate) async fn stream_responses_route(
                     // 转成 Responses SSE error 事件
                     let err = translate::upstream_error_to_responses(&body_text);
                     let message = err.get("error").and_then(|e| e.get("message")).and_then(Value::as_str).unwrap_or("upstream error");
+                    // key 级失败（freeze_maybe 触发了冻结，如订阅失效 400）：问题在这把
+                    // key 而非本次请求，换下一把 key 继续尝试，而不是把请求判死。
+                    if key_frozen_now(&app, &key) {
+                        last_error = Some(format!("upstream {status}: {message}"));
+                        continue;
+                    }
                     yield Ok(Bytes::from(sse_error_message(message)));
                     return;
                 }

@@ -195,6 +195,10 @@ pub struct Settings {
     /// 供应商模型列表持久化路径（设置界面“查看供应商详情”缓存）。
     pub provider_models_path: String,
     pub auth_invalid_freeze_seconds: f64,
+    /// 账号订阅失效/过期（如 ark coding plan "does not have a valid CodingPlan
+    /// subscription"，HTTP 400）属于 key 级永久性故障：直接冻结整把 key 排除出
+    /// 可用池，续费后可通过 dashboard 清除冻结恢复。
+    pub subscription_invalid_freeze_seconds: f64,
     /// 诊断日志落盘目录（默认 ~/.local/state/llm-provider-router/logs，journal 不可信时的持久化证据）。
     pub diag_dir: String,
     /// 单个诊断文件最大体积（字节），超限轮转。
@@ -259,6 +263,11 @@ pub fn load_settings() -> anyhow::Result<Settings> {
         ),
         auth_invalid_freeze_seconds: env_or(
             "LLM_PROVIDER_ROUTER_AUTH_INVALID_FREEZE_SECONDS",
+            "86400",
+        )
+        .parse()?,
+        subscription_invalid_freeze_seconds: env_or(
+            "LLM_PROVIDER_ROUTER_SUBSCRIPTION_INVALID_FREEZE_SECONDS",
             "86400",
         )
         .parse()?,

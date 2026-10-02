@@ -51,6 +51,7 @@ pub(crate) fn prepare_upstream_payload(payload: &Value, alias: &ModelAlias) -> V
             search_providers_path: "".into(),
             provider_models_path: "".into(),
             auth_invalid_freeze_seconds: 0.0,
+            subscription_invalid_freeze_seconds: 0.0,
             diag_dir: crate::config::DEFAULT_DIAG_DIR.to_string(),
             diag_max_bytes: 10 * 1024 * 1024,
             diag_max_files: 50,
