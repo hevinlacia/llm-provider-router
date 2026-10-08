@@ -54,7 +54,8 @@ src/
 ├── shutdown.rs             # 优雅退出
 ├── usage_store.rs          # 用量统计（sqlite）
 ├── state_store.rs          # 运行时状态持久化（key 冻结等）
-├── search.rs               # /v1/search 聚合搜索（tavily/exa/brave）
+├── search.rs               # /v1/search 聚合搜索（默认 chrome 渲染 google→bing，失败降级 key 池）
+├── search_chrome.rs        # Chrome(CDP) 渲染搜索：薄 CDP 客户端 + google/bing DOM 解析
 └── diag.rs                 # 诊断日志
 ```
 

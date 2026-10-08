@@ -191,7 +191,10 @@ pub(crate) async fn api_config_search_providers(State(app): State<AppState>) -> 
                     }),
                 );
             }
-            json_status(StatusCode::OK, json!({ "ok": true, "providers": view }))
+            json_status(
+                StatusCode::OK,
+                json!({ "ok": true, "chrome": file.chrome, "providers": view }),
+            )
         }
         Err(_) => internal_error("search pool lock poisoned"),
     }
@@ -201,10 +204,18 @@ pub(crate) async fn api_config_search_providers_update(
     State(app): State<AppState>,
     Json(payload): Json<Value>,
 ) -> Response {
-    let file: SearchProvidersFile = match serde_json::from_value(payload) {
+    let mut file: SearchProvidersFile = match serde_json::from_value(payload.clone()) {
         Ok(file) => file,
         Err(err) => return bad_request(&format!("invalid search providers config: {err}")),
     };
+    // 旧前端不知道 chrome 节：payload 里没有它时保留现有配置，避免 PUT 抹掉。
+    if payload.get("chrome").is_none() {
+        file.chrome = app
+            .search_pool
+            .lock()
+            .ok()
+            .and_then(|mut pool| pool.get().chrome);
+    }
     for name in file.providers.keys() {
         if crate::search::SearchProviderKind::from_name(name).is_none() {
             return bad_request(&format!(
