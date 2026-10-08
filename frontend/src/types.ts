@@ -291,12 +291,12 @@ export type SearchProvidersConfig = {
 // —— 报错分类规则（/api/config/error-rules）——
 
 export type ClassRule = {
-  /** 匹配的 HTTP 状态码；空 = 任意状态 */
-  status: number[];
-  /** 任一关键词命中即匹配（OR）；空 = 不要求 */
-  keywords_any: string[];
-  /** 全部关键词命中才匹配（AND） */
-  keywords_all: string[];
+  /** 匹配的 HTTP 状态码；空/缺省 = 任意状态（后端序列化会省略空字段） */
+  status?: number[];
+  /** 任一关键词命中即匹配（OR）；空/缺省 = 不要求 */
+  keywords_any?: string[];
+  /** 全部关键词命中才匹配（AND）；空/缺省 = 不要求 */
+  keywords_all?: string[];
 };
 
 export type ClassTemplate = {

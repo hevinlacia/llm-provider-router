@@ -11,9 +11,11 @@ const CLASSES: Array<{ key: keyof ClassTemplate; label: string; hint: string }> 
 
 function ruleSummary(rule: ClassRule): string {
   const parts: string[] = [];
-  if (rule.status.length) parts.push(`status ${rule.status.join(',')}`);
-  if (rule.keywords_all.length) parts.push(`all: ${rule.keywords_all.join(' + ')}`);
-  if (rule.keywords_any.length) parts.push(`any: ${rule.keywords_any.join(' / ')}`);
+  // 规则字段均为可选（如 ark 模板的 keywords_any-only 规则无 status），
+  // 裸访问会在渲染期抛 TypeError 导致整页白屏（2026-10-08 实测事故）
+  if (rule.status?.length) parts.push(`status ${rule.status.join(',')}`);
+  if (rule.keywords_all?.length) parts.push(`all: ${rule.keywords_all.join(' + ')}`);
+  if (rule.keywords_any?.length) parts.push(`any: ${rule.keywords_any.join(' / ')}`);
   return parts.join(' · ') || '任意失败';
 }
 
@@ -25,13 +27,13 @@ function RuleEditor({ rules, onChange }: { rules: ClassRule[]; onChange: (next: 
   }
   return <div className="rule-list">
     {rules.map((rule, index) => <div className="rule-row" key={index}>
-      <input className="number-input" style={{ width: 150 }} value={rule.status.join(',')}
+      <input className="number-input" style={{ width: 150 }} value={(rule.status ?? []).join(',')}
         placeholder="状态码, 如 400,401"
         onChange={(e) => update(index, { status: e.target.value.split(',').map((v) => Number(v.trim())).filter((v) => Number.isFinite(v) && v > 0) })} />
-      <input style={{ flex: 1 }} value={rule.keywords_all.join(', ')}
+      <input style={{ flex: 1 }} value={(rule.keywords_all ?? []).join(', ')}
         placeholder="AND 关键词（逗号分隔，全部命中才匹配）"
         onChange={(e) => update(index, { keywords_all: e.target.value.split(',').map((v) => v.trim().toLowerCase()).filter(Boolean) })} />
-      <input style={{ flex: 1 }} value={rule.keywords_any.join(', ')}
+      <input style={{ flex: 1 }} value={(rule.keywords_any ?? []).join(', ')}
         placeholder="OR 关键词（任一命中即匹配）"
         onChange={(e) => update(index, { keywords_any: e.target.value.split(',').map((v) => v.trim().toLowerCase()).filter(Boolean) })} />
       <span className="muted" style={{ minWidth: 180 }}>{ruleSummary(rule)}</span>
