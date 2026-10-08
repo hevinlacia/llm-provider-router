@@ -1,0 +1,23 @@
+.agents/knowledge/pitfall-deploy-binary-source-drift.md
+  b889c1d012b110cf 1-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "e95eea377dd41e73ba86c5bb3ce851d88dc07e7c",
+  "prompts": {
+    "b889c1d012b110cf": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a119a7-1f6d-7304-a5e7-0ded77bd5a4c",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 30,
+      "total_deletions": 0,
+      "accepted_lines": 30,
+      "overriden_lines": 0
+    }
+  }
+}
