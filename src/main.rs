@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod config_v2;
+mod deploy_lock;
 mod diag;
 mod error_rules;
 mod features;

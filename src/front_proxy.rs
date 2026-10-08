@@ -85,6 +85,7 @@ pub async fn serve() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/_proxy/health", get(proxy_health))
         .route("/_proxy/active/{slot}", post(set_active))
+        .route("/_proxy/deploy-lock", get(proxy_deploy_lock))
         .fallback(any(proxy))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(state);
@@ -118,7 +119,15 @@ async fn proxy_health(State(state): State<ProxyState>) -> Response {
     .into_response()
 }
 
-async fn set_active(State(state): State<ProxyState>, Path(slot): Path<String>) -> Response {
+async fn set_active(
+    State(state): State<ProxyState>,
+    headers: HeaderMap,
+    Path(slot): Path<String>,
+) -> Response {
+    // 部署互斥锁：锁被持有时仅放行携带匹配 token 的切流请求，防止两会话同时部署互相覆盖
+    if let Some(rejection) = crate::deploy_lock::check_switch_allowed(&headers) {
+        return rejection;
+    }
     if !configured_backends().contains_key(&slot) {
         return (
             StatusCode::BAD_REQUEST,
@@ -275,6 +284,20 @@ fn ordered_backends() -> Vec<Backend> {
         }
     }
     ordered
+}
+
+/// 部署锁状态查询：谁在持有、何时获取。供 skill 流程/面板/排障使用。
+async fn proxy_deploy_lock() -> Response {
+    match crate::deploy_lock::probe_lock() {
+        crate::deploy_lock::LockState::Free => Json(json!({ "locked": false })).into_response(),
+        crate::deploy_lock::LockState::Held(holder) => Json(json!({
+            "locked": true,
+            "holder": holder.holder,
+            "holder_pid": holder.holder_pid,
+            "acquired_at": holder.acquired_at,
+        }))
+        .into_response(),
+    }
 }
 
 fn write_active_backend(slot: &str) -> anyhow::Result<Backend> {

@@ -844,6 +844,7 @@ dependencies = [
  "futures-util",
  "http",
  "httpdate",
+ "libc",
  "rand 0.8.7",
  "regex",
  "reqwest",
