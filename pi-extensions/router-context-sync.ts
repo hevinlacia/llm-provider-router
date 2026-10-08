@@ -25,7 +25,7 @@ const PROVIDER_ID = "llm-provider-router";
 const FALLBACK_PROVIDER = {
   baseUrl: process.env.LLM_PROVIDER_ROUTER_BASE_URL || "http://127.0.0.1:8789/v1",
   apiKey: process.env.LLM_PROVIDER_ROUTER_API_KEY || "local-dev",
-  api: "openai-completions" as const,
+  api: "openai-responses" as const,  // 2026-10-08 迁移：router 已以 /v1/responses 为主协议（chat 端点下线）
   authHeader: true as const,
 };
 
