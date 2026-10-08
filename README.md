@@ -96,7 +96,6 @@ npm run build
 - `GET/PUT/POST /api/config/keys` — encrypted key metadata/update/add.
 - `GET /v1/models` — OpenAI-compatible model list (enriched with `context_window`/`max_output_tokens` for dynamic context negotiation).
 - `GET /api/router/capabilities` — dynamic context negotiation view: per logical model `effective: {contextWindow,maxTokens}` (conservative min across available physical targets) + per-target windows/availability.
-- `POST /v1/chat/completions` — OpenAI-compatible chat completions (non-streaming responses include `x-llm-router-*` headers for per-request precise window; streaming includes conservative hint), streaming and non-streaming.
 - `POST /v1/messages` — **Anthropic Messages API** entry（对外两种 API 之一）。Per provider it either **passes through** to a native Anthropic upstream or **translates** via the Responses machinery (see [Anthropic API Support](#anthropic-api-support)). Non-streaming JSON and streaming SSE（Anthropic `message_start` / `content_block_delta` / `message_stop` 事件）均支持。
 - `POST /v1/responses` — OpenAI **Responses API** entry（对外两种 API 之一）。Per provider it either **passes through** to a native Responses upstream or **translates** to/from chat completions (see [Responses API Support](#responses-api-support)). Non-streaming JSON and streaming SSE (Responses `response.*` events) are both supported.
 - `POST /v1/search` — unified web search proxy (search key pool): authenticated with the same local bearer token, routes to Tavily/Exa/Brave by key pool. See [Search Key Pool](#search-key-pool).
@@ -164,7 +163,7 @@ curl -X POST http://127.0.0.1:8789/v1/responses \
   }'
 ```
 
-迁移方向：`/v1/responses` 将成为 router 的主入口；`/v1/chat/completions` 暂时保留以兼容现有
+迁移完成：`/v1/chat/completions`（OpenAI chat 协议）已于 2026-10 下线删除，客户端统一走 `/v1/messages`（Anthropic）或 `/v1/responses`。
 pi / opencode 客户端。
 
 ## Configuration
@@ -341,7 +340,6 @@ The Rust schema intentionally matches the previous SQLite tables so existing loc
 
 - `GET /api/router/capabilities` → per logical model `effective` (min across available targets) + `targets[]` detail.
 - `GET /v1/models` → enriched with `context_window`/`max_output_tokens` (from capabilities effective, fallback to physical declaration).
-- `POST /v1/chat/completions` → non-streaming responses carry `x-llm-router-{model,upstream-model,provider,context-window,max-output}` for precise per-request correction; streaming carries conservative hint from preferred target.
 
 Pi extension: `pi-extensions/router-context-sync.ts` (copy to `~/.pi/agent/extensions/` and `/reload`) polls `capabilities` (fallback `v1/models`) and `after_provider_response` headers, then hot-patches via `pi.registerProvider(llm-provider-router, {modelOverrides})` — no Pi core change. Settings UI shows `Context Negotiation` panel with effective windows.
 

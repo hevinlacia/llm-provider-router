@@ -30,13 +30,14 @@ src/
 ├── config.rs               # Settings、路径常量、KeyRef/ModelAlias/RetryPolicy 基础类型
 ├── routes/                 # HTTP 薄层（handler 只做提取/状态码映射）
 │   ├── mod.rs              #   serve(): 路由表 + 中间件（路由表即 API 清单）
-│   ├── chat.rs             #   POST /v1/chat/completions、/v1/search
 │   ├── messages.rs         #   POST /v1/messages（Anthropic）
+│   ├── search.rs           #   POST /v1/search（统一搜索，与 LLM 协议无关）
 │   ├── responses.rs        #   POST /v1/responses 及子资源
 │   ├── models.rs           #   /v1/models、/api/router/capabilities
 │   ├── config.rs           #   v1/通用配置 API（权重/别名/价格/keys/搜索供应商）
 │   ├── config_v2.rs        #   v2 配置管理 API（供应商/逻辑模型/虚拟模型/物理模型）
-│   └── resp.rs             #   共享响应工具
+│   ├── session_fingerprint.rs #   会话标识提取 + 指纹兜底
+│   └── resp.rs             #   共享响应/鉴权/调用错误工具
 ├── features/
 │   ├── chat/               # 核心转发链：payload 准备→选 alias/key→upstream→SSE 流
 │   ├── router/             # 路由状态机：state/（v1+v2 权威状态）、selection、

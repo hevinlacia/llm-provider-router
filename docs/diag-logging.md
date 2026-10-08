@@ -26,7 +26,6 @@
 
 | event | 触发 | 字段 |
 |-------|------|------|
-| `request.chat_completions` | 每次 `/v1/chat/completions` 入口 | `model`, `summary`(payload_summary) |
 | `normalize.muse_spark.thinking_seen` | `muse-spark` 且 payload 含 `thinking/reasoning[_effort]` | `alias/provider/upstream_model`, `summary_before` |
 | `normalize.deepseek.applied` | `deepseek-official` 且归一化改写发生 | `before/after` payload_summary |
 | `upstream.failure` | 上游 4xx/5xx（stderr 同步落盘一份） | `provider/model/alias/status/error` |

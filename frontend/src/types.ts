@@ -287,3 +287,55 @@ export type SearchProvidersConfig = {
   ok: boolean;
   providers: Record<string, SearchProviderConfig>;
 };
+
+// —— 报错分类规则（/api/config/error-rules）——
+
+export type ClassRule = {
+  /** 匹配的 HTTP 状态码；空 = 任意状态 */
+  status: number[];
+  /** 任一关键词命中即匹配（OR）；空 = 不要求 */
+  keywords_any: string[];
+  /** 全部关键词命中才匹配（AND） */
+  keywords_all: string[];
+};
+
+export type ClassTemplate = {
+  invalid: ClassRule[];
+  rate_limited: ClassRule[];
+  model_unsupported: ClassRule[];
+  /** 文档用途：未命中以上三类时兜底就是 transient */
+  transient: ClassRule[];
+};
+
+export type Tunables = {
+  invalid_freeze_seconds?: number | null;
+  differential_freeze_seconds?: number | null;
+  transient_exhausted_freeze_seconds?: number | null;
+  transient_attempts_per_key?: number | null;
+  transient_retry_interval_ms?: number | null;
+};
+
+export type ErrorRulesConfig = {
+  tunables: Tunables;
+  templates: Record<string, ClassTemplate>;
+  provider_bindings: Record<string, string>;
+};
+
+// —— 最近报错（/api/errors/recent）——
+
+export type RecentErrorEntry = {
+  ts: number;
+  provider: string;
+  key: string;
+  alias: string;
+  model: string;
+  status: number;
+  class: string;
+  rule: string;
+  message: string;
+};
+
+export type RecentErrorsResponse = {
+  ok: boolean;
+  errors?: RecentErrorEntry[];
+};

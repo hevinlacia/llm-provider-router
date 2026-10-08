@@ -5,16 +5,24 @@
 //! - `models.rs`：模型列表 + 动态上下文协商
 //! - `config.rs`：v1/通用配置 handler（权重、别名、价格、keys、搜索供应商）
 //! - `config_v2.rs`：v2 分层配置管理 handler（供应商/逻辑模型/虚拟模型/物理模型）
-//! - `chat.rs`：OpenAI 兼容入口（转发 features/chat）
-//! - `resp.rs`：共享响应工具
+//! - `messages.rs`：Anthropic Messages 入口（/v1/messages）
+//! - `responses.rs`：Responses API 入口（/v1/responses）
+//! - `search.rs`：统一搜索入口（/v1/search）
+//! - `resp.rs`：共享响应/鉴权/调用错误工具
+//! - `session_fingerprint.rs`：会话标识提取与指纹兜底
+//!
+//! 历史说明：`/v1/chat/completions`（OpenAI chat 协议）已于 2026-10 下线删除，
+//! 客户端走 `/v1/messages`（Anthropic）或 `/v1/responses`；对仅支持 chat
+//! completions 的上游仍由 responses/messages 翻译层内部调用。
 
-pub(crate) mod chat;
 pub(crate) mod config;
 pub(crate) mod config_v2;
+pub(crate) mod errors;
 pub(crate) mod messages;
 pub(crate) mod models;
 pub(crate) mod resp;
 pub(crate) mod responses;
+pub(crate) mod search;
 pub(crate) mod session_fingerprint;
 pub(crate) mod usage;
 
@@ -32,7 +40,7 @@ use tower_http::services::ServeDir;
 /// 64MB 可容纳数张大图；链路上 front-proxy 同样放开（见 front_proxy.rs）。
 const BODY_LIMIT: usize = 64 * 1024 * 1024;
 
-pub(crate) use chat::validate_auth;
+pub(crate) use resp::validate_auth;
 
 #[derive(Debug, Deserialize)]
 pub struct UsageQuery {
@@ -79,6 +87,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         .route("/dashboard", get(usage::dashboard))
         .route("/settings", get(usage::dashboard))
         .route("/api/state", get(usage::api_state))
+        .route("/api/errors/recent", get(errors::api_errors_recent))
         .route("/api/usage", get(usage::api_usage))
         .route("/api/usage/series", get(usage::api_usage_series))
         .route("/api/sessions/active", get(usage::api_sessions_active))
@@ -138,10 +147,13 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
             get(config::api_config_search_providers)
                 .put(config::api_config_search_providers_update),
         )
-        .route("/v1/search", post(chat::search_completions))
+        .route(
+            "/api/config/error-rules",
+            get(config::api_config_error_rules).put(config::api_config_error_rules_update),
+        )
+        .route("/v1/search", post(search::search_completions))
         .route("/v1/models", get(models::models))
         .route("/api/router/capabilities", get(models::router_capabilities))
-        .route("/v1/chat/completions", post(chat::chat_completions))
         .route("/v1/messages", post(messages::messages))
         .route("/v1/responses", post(responses::responses))
         .route(

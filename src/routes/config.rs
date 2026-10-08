@@ -52,6 +52,22 @@ pub(crate) async fn api_config_token_prices(State(app): State<AppState>) -> Resp
     with_state_json(&app, |state| Ok(merge_ok(state.token_price_snapshot())))
 }
 
+/// 报错分类规则：返回生效配置（内置预设 + 文件覆盖合并后的结果）。
+pub(crate) async fn api_config_error_rules(State(app): State<AppState>) -> Response {
+    with_state_json(&app, |state| Ok(merge_ok(state.error_rules_effective())))
+}
+
+/// 报错分类规则更新：校验 + 写盘 + 热生效。
+pub(crate) async fn api_config_error_rules_update(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    with_state_json(&app, |state| {
+        state.update_error_rules(&payload)?;
+        Ok(merge_ok(state.error_rules_effective()))
+    })
+}
+
 pub(crate) async fn api_config_token_prices_update(
     State(app): State<AppState>,
     Json(payload): Json<Value>,

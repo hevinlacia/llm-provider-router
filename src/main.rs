@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod config_v2;
 mod diag;
+mod error_rules;
 mod features;
 mod front_proxy;
 mod hot_reload;
