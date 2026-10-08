@@ -40,6 +40,10 @@ pub struct RetryPolicy {
     pub max_retry_seconds: u64,
     #[allow(dead_code)]
     pub retry_delay_seconds: f64,
+    // retry_on_status 已退役（2026-10）：失败分类改由 error-rules 模板决定
+    // （失效/限流/模型不支持/其他），状态码不再决定是否切 key。字段保留用于
+    // providers-v2.json 配置兼容与展示。
+    #[allow(dead_code)]
     pub retry_on_status: Vec<u16>,
 }
 
@@ -194,6 +198,12 @@ pub struct Settings {
     pub env_file_path: Option<String>,
     /// 供应商模型列表持久化路径（设置界面“查看供应商详情”缓存）。
     pub provider_models_path: String,
+    /// 报错分类规则配置（模板 + tunables + 供应商绑定）。缺失时用内置预设。
+    pub error_rules_path: String,
+    // 已退役（2026-10）：失效类冻结时长改由 error-rules tunables
+    // invalid_freeze_seconds 控制（默认回落 subscription_invalid_freeze_seconds）。
+    // 字段保留用于 env 兼容。
+    #[allow(dead_code)]
     pub auth_invalid_freeze_seconds: f64,
     /// 账号订阅失效/过期（如 ark coding plan "does not have a valid CodingPlan
     /// subscription"，HTTP 400）属于 key 级永久性故障：直接冻结整把 key 排除出
@@ -260,6 +270,10 @@ pub fn load_settings() -> anyhow::Result<Settings> {
         provider_models_path: env_or(
             "LLM_PROVIDER_ROUTER_PROVIDER_MODELS_PATH",
             "config/provider-models.json",
+        ),
+        error_rules_path: env_or(
+            "LLM_PROVIDER_ROUTER_ERROR_RULES_PATH",
+            crate::error_rules::ERROR_RULES_PATH,
         ),
         auth_invalid_freeze_seconds: env_or(
             "LLM_PROVIDER_ROUTER_AUTH_INVALID_FREEZE_SECONDS",

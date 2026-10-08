@@ -1,0 +1,48 @@
+{
+  "tunables": {
+    "invalid_freeze_seconds": 86400,
+    "differential_freeze_seconds": 600,
+    "transient_exhausted_freeze_seconds": 300,
+    "transient_attempts_per_key": 1,
+    "transient_retry_interval_ms": 1000
+  },
+  "templates": {
+    "default": {
+      "invalid": [
+        { "status": [401, 402, 403] },
+        { "keywords_any": ["subscription has expired"] }
+      ],
+      "rate_limited": [
+        { "status": [429] }
+      ],
+      "model_unsupported": [
+        { "status": [404] }
+      ],
+      "transient": [
+        { "status": [500, 502, 503, 504] }
+      ]
+    },
+    "ark": {
+      "invalid": [
+        { "status": [401, 402, 403] },
+        {
+          "status": [400],
+          "keywords_all": ["codingplan", "subscription"]
+        },
+        { "keywords_any": ["subscription has expired"] }
+      ],
+      "rate_limited": [
+        { "status": [429] }
+      ],
+      "model_unsupported": [
+        { "status": [404] }
+      ],
+      "transient": [
+        { "status": [500, 502, 503, 504] }
+      ]
+    }
+  },
+  "provider_bindings": {
+    "ark": "ark"
+  }
+}

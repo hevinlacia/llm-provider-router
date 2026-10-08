@@ -1,6 +1,6 @@
 //! Responses API 入口 handler：`POST /v1/responses`（透传 / 翻译混合代理）。
 //!
-//! 与 `/v1/chat/completions` 共享同一套模型别名解析 / 选 key / 重试 / 冻结 / 用量链路。
+//! 与 `/v1/messages` 共享同一套模型别名解析 / 选 key / 重试 / 冻结 / 用量链路。
 //! 对每个路由目标按供应商配置的三类地址决定模式：
 //! - 配置了 `responses_base_url`（供应商原生支持 Responses API）-> **透传**：只改写 model 名，
 //!   请求原样发到 `{responses_base_url}/responses`，响应原样返回；
@@ -8,15 +8,17 @@
 //!   请求翻译成 chat completions 走 `{base_url}/chat/completions`，响应翻译回 Responses 格式。
 
 use crate::app::AppState;
-use crate::config::ModelAlias;
+use crate::config::{KeyRef, ModelAlias};
 use crate::features::chat::payload::prepare_upstream_payload;
 use crate::features::chat::select::{
-    clear_unsupported_if_ok, extract_usage, freeze_maybe, key_frozen_now, maybe_mark_unsupported,
-    record_usage, select_key_locked, upstream_key_value_locked, usage_key_name,
+    clear_unsupported_if_ok, extract_usage, record_usage, select_key_locked,
+    upstream_key_value_locked, usage_key_name,
 };
-use crate::features::chat::upstream::CallError;
 use crate::features::responses::{store, translate};
-use crate::features::router::NoAvailableKeyError;
+use crate::features::router::{
+    circuit_breaker_on_exhaustion, handle_connect_failure, handle_response_failure,
+    note_success_differential, FailureAction, NoAvailableKeyError,
+};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
@@ -25,8 +27,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
-use super::chat::{extract_session_id, validate_auth};
+use super::resp::{inject_router_headers, validate_auth, CallError};
 use super::resp::{internal_error, json_status, status_code};
+use super::session_fingerprint::extract_session_id;
 
 /// input_items 端点 query 参数。
 #[derive(Debug, Deserialize)]
@@ -215,19 +218,44 @@ async fn call_responses_passthrough(
         ));
     }
     let retry_policy = alias.retry_policy.clone();
+    let _ = &retry_policy; // retry_on_status 已退役：分类由 error-rules 决定
     let mut tried = HashSet::new();
+    // transient 失败但未冻结的 key：同请求内同行 key 成功时差分冻结。
+    let mut ambiguous: Vec<KeyRef> = Vec::new();
+    // 末次失败是否 transient（全池耗尽时决定是否触发熔断）。
+    let mut last_failure_transient = false;
+    // 同 key 重试状态（RetrySame 时绕过 select 直接复用该 key）。
+    let mut retry_key: Option<KeyRef> = None;
+    let mut same_key_attempt: usize = 0;
     let endpoint = format!("{}{}", responses_base.trim_end_matches('/'), endpoint_path);
 
     loop {
-        let selected_key = match select_key_locked(app, &alias, session_id.as_deref(), &tried) {
-            Ok(result) => result,
-            Err(message) => return Ok(internal_error(&message)),
+        let key = match retry_key.take() {
+            Some(key) => {
+                same_key_attempt += 1;
+                key
+            }
+            None => {
+                same_key_attempt = 0;
+                let selected_key =
+                    match select_key_locked(app, &alias, session_id.as_deref(), &tried) {
+                        Ok(result) => result,
+                        Err(message) => return Ok(internal_error(&message)),
+                    };
+                match selected_key {
+                    Ok(key) => {
+                        tried.insert(key.name.clone());
+                        key
+                    }
+                    Err(exc) => {
+                        if last_failure_transient {
+                            circuit_breaker_on_exhaustion(app, &alias);
+                        }
+                        return Err(CallError::NoAvailable(exc));
+                    }
+                }
+            }
         };
-        let key = match selected_key {
-            Ok(key) => key,
-            Err(exc) => return Err(CallError::NoAvailable(exc)),
-        };
-        tried.insert(key.name.clone());
 
         let key_value = match upstream_key_value_locked(app, &key) {
             Ok(value) => value,
@@ -237,11 +265,13 @@ async fn call_responses_passthrough(
             record_usage(
                 &app.state,
                 &alias.alias,
-                &usage_key_name(app, &key),
+                &usage_key_name(&key),
                 599,
                 None,
                 session_id.as_deref(),
             );
+            // 本地配置问题，不影响熔断判定。
+            last_failure_transient = false;
             continue;
         };
 
@@ -272,14 +302,14 @@ async fn call_responses_passthrough(
         let response = match response {
             Some(r) => r,
             None => {
-                record_usage(
-                    &app.state,
-                    &alias.alias,
-                    &usage_key_name(app, &key),
-                    599,
-                    None,
-                    session_id.as_deref(),
-                );
+                let exc_text = "upstream connect error";
+                if let FailureAction::NextKeyTransient(message) =
+                    handle_connect_failure(app, &alias, &key, exc_text, session_id.as_deref())
+                {
+                    ambiguous.push(key.clone());
+                    last_failure_transient = true;
+                    let _ = message;
+                }
                 continue;
             }
         };
@@ -290,60 +320,52 @@ async fn call_responses_passthrough(
             |_| json!({ "error": { "message": body_text, "type": "upstream_error" } }),
         );
 
-        if retry_policy
-            .as_ref()
-            .is_some_and(|policy| policy.retry_on_status.contains(&status))
-        {
-            freeze_maybe(
-                &app.state,
+        if status >= 400 {
+            // 统一走分类动作（失效/限流冻结换 key；模型不支持直接报错；其他类重试后切 key）。
+            let usage = extract_usage(&content).cloned();
+            match handle_response_failure(
+                app,
+                &alias,
                 &key,
                 status,
                 &headers,
                 &body_text,
-                &app.settings,
-            );
-            maybe_mark_unsupported(app, &key, &alias, status, &body_text);
-            record_usage(
-                &app.state,
-                &alias.alias,
-                &usage_key_name(app, &key),
-                status,
-                extract_usage(&content),
+                usage.as_ref(),
                 session_id.as_deref(),
-            );
-            crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
-            continue;
+                same_key_attempt,
+            ) {
+                FailureAction::NextKey(_) => {
+                    last_failure_transient = false;
+                    continue;
+                }
+                FailureAction::NextKeyTransient(_) => {
+                    ambiguous.push(key.clone());
+                    last_failure_transient = true;
+                    continue;
+                }
+                FailureAction::RetrySame(delay_ms, _) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    retry_key = Some(key);
+                    continue;
+                }
+                FailureAction::Abort {
+                    status, content, ..
+                } => {
+                    // 响应原样透传（上游已是 Responses 格式；4xx/5xx 也是 OpenAI/Responses 错误体）
+                    let mut resp = json_status(status_code(status), content);
+                    inject_router_headers(resp.headers_mut(), &alias);
+                    return Ok(resp);
+                }
+            }
         }
 
-        freeze_maybe(
-            &app.state,
-            &key,
-            status,
-            &headers,
-            &body_text,
-            &app.settings,
-        );
-        maybe_mark_unsupported(app, &key, &alias, status, &body_text);
-        record_usage(
-            &app.state,
-            &alias.alias,
-            &usage_key_name(app, &key),
-            status,
-            extract_usage(&content),
-            session_id.as_deref(),
-        );
-        crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
-        // key 级失败（freeze_maybe 触发了冻结，如订阅失效 400）：问题在这把 key
-        // 而非本次请求，换下一把 key 继续尝试；全部耗尽后由 select_key 的
-        // NoAvailableKeyError 返回，上层 fallback 到下一个 target。
-        if key_frozen_now(app, &key) {
-            continue;
-        }
+        // 成功：差分冻结 + 清除 key×模型“不支持”记录。
+        note_success_differential(app, &ambiguous);
         clear_unsupported_if_ok(app, &key, &alias, status);
 
         // 响应原样透传（上游已是 Responses 格式；4xx/5xx 也是 OpenAI/Responses 错误体）
         let mut resp = json_status(status_code(status), content);
-        crate::features::chat::upstream::inject_router_headers(resp.headers_mut(), &alias);
+        inject_router_headers(resp.headers_mut(), &alias);
         return Ok(resp);
     }
 }
@@ -367,19 +389,44 @@ async fn call_upstream_responses(
         ));
     }
     let retry_policy = alias.retry_policy.clone();
+    let _ = &retry_policy; // retry_on_status 已退役：分类由 error-rules 决定
     let mut tried = HashSet::new();
+    // transient 失败但未冻结的 key：同请求内同行 key 成功时差分冻结。
+    let mut ambiguous: Vec<KeyRef> = Vec::new();
+    // 末次失败是否 transient（全池耗尽时决定是否触发熔断）。
+    let mut last_failure_transient = false;
+    // 同 key 重试状态（RetrySame 时绕过 select 直接复用该 key）。
+    let mut retry_key: Option<KeyRef> = None;
+    let mut same_key_attempt: usize = 0;
     let upstream_model = alias.upstream_model();
 
     loop {
-        let selected_key = match select_key_locked(app, &alias, session_id.as_deref(), &tried) {
-            Ok(result) => result,
-            Err(message) => return Ok(internal_error(&message)),
+        let key = match retry_key.take() {
+            Some(key) => {
+                same_key_attempt += 1;
+                key
+            }
+            None => {
+                same_key_attempt = 0;
+                let selected_key =
+                    match select_key_locked(app, &alias, session_id.as_deref(), &tried) {
+                        Ok(result) => result,
+                        Err(message) => return Ok(internal_error(&message)),
+                    };
+                match selected_key {
+                    Ok(key) => {
+                        tried.insert(key.name.clone());
+                        key
+                    }
+                    Err(exc) => {
+                        if last_failure_transient {
+                            circuit_breaker_on_exhaustion(app, &alias);
+                        }
+                        return Err(CallError::NoAvailable(exc));
+                    }
+                }
+            }
         };
-        let key = match selected_key {
-            Ok(key) => key,
-            Err(exc) => return Err(CallError::NoAvailable(exc)),
-        };
-        tried.insert(key.name.clone());
 
         let key_value = match upstream_key_value_locked(app, &key) {
             Ok(value) => value,
@@ -389,11 +436,13 @@ async fn call_upstream_responses(
             record_usage(
                 &app.state,
                 &alias.alias,
-                &usage_key_name(app, &key),
+                &usage_key_name(&key),
                 599,
                 None,
                 session_id.as_deref(),
             );
+            // 本地配置问题，不影响熔断判定。
+            last_failure_transient = false;
             continue;
         };
 
@@ -427,14 +476,14 @@ async fn call_upstream_responses(
         let response = match response {
             Some(r) => r,
             None => {
-                record_usage(
-                    &app.state,
-                    &alias.alias,
-                    &usage_key_name(app, &key),
-                    599,
-                    None,
-                    session_id.as_deref(),
-                );
+                let exc_text = "upstream connect error";
+                if let FailureAction::NextKeyTransient(message) =
+                    handle_connect_failure(app, &alias, &key, exc_text, session_id.as_deref())
+                {
+                    ambiguous.push(key.clone());
+                    last_failure_transient = true;
+                    let _ = message;
+                }
                 continue;
             }
         };
@@ -445,63 +494,46 @@ async fn call_upstream_responses(
             |_| json!({ "error": { "message": body_text, "type": "upstream_error" } }),
         );
 
-        if retry_policy
-            .as_ref()
-            .is_some_and(|policy| policy.retry_on_status.contains(&status))
-        {
-            freeze_maybe(
-                &app.state,
+        if status >= 400 {
+            // 统一走分类动作；Abort 时上游错误体翻译成 Responses 错误。
+            let usage = extract_usage(&content).cloned();
+            match handle_response_failure(
+                app,
+                &alias,
                 &key,
                 status,
                 &headers,
                 &body_text,
-                &app.settings,
-            );
-            maybe_mark_unsupported(app, &key, &alias, status, &body_text);
-            record_usage(
-                &app.state,
-                &alias.alias,
-                &usage_key_name(app, &key),
-                status,
-                extract_usage(&content),
+                usage.as_ref(),
                 session_id.as_deref(),
-            );
-            crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
-            continue;
+                same_key_attempt,
+            ) {
+                FailureAction::NextKey(_) => {
+                    last_failure_transient = false;
+                    continue;
+                }
+                FailureAction::NextKeyTransient(_) => {
+                    ambiguous.push(key.clone());
+                    last_failure_transient = true;
+                    continue;
+                }
+                FailureAction::RetrySame(delay_ms, _) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    retry_key = Some(key);
+                    continue;
+                }
+                FailureAction::Abort { status, .. } => {
+                    return Ok(json_status(
+                        status_code(status),
+                        translate::upstream_error_to_responses(&body_text),
+                    ));
+                }
+            }
         }
 
-        freeze_maybe(
-            &app.state,
-            &key,
-            status,
-            &headers,
-            &body_text,
-            &app.settings,
-        );
-        maybe_mark_unsupported(app, &key, &alias, status, &body_text);
-        record_usage(
-            &app.state,
-            &alias.alias,
-            &usage_key_name(app, &key),
-            status,
-            extract_usage(&content),
-            session_id.as_deref(),
-        );
-        crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
-        // key 级失败（freeze_maybe 触发了冻结，如订阅失效 400）：问题在这把 key
-        // 而非本次请求，换下一把 key 继续尝试。
-        if key_frozen_now(app, &key) {
-            continue;
-        }
+        // 成功：差分冻结 + 清除 key×模型“不支持”记录。
+        note_success_differential(app, &ambiguous);
         clear_unsupported_if_ok(app, &key, &alias, status);
-
-        if status >= 400 {
-            // 上游错误体翻译成 Responses 错误
-            return Ok(json_status(
-                status_code(status),
-                translate::upstream_error_to_responses(&body_text),
-            ));
-        }
 
         // 成功：翻译成 Responses 响应对象 + 记录 previous_response_id 历史与完整响应
         let response_id = translate::next_id("resp");
@@ -515,7 +547,7 @@ async fn call_upstream_responses(
             input_items,
         );
         let mut resp = json_status(status_code(status), body);
-        crate::features::chat::upstream::inject_router_headers(resp.headers_mut(), &alias);
+        inject_router_headers(resp.headers_mut(), &alias);
         return Ok(resp);
     }
 }

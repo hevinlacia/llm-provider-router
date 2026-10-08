@@ -1,4 +1,4 @@
-import type { ActiveSessionsResponse, FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderModelsResponse, RouterCapabilities, SearchProvidersConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, V2UnsupportedEntry } from './types';
+import type { ActiveSessionsResponse, ErrorRulesConfig, FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderModelsResponse, RecentErrorsResponse, RouterCapabilities, SearchProvidersConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, V2UnsupportedEntry } from './types';
 
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
@@ -193,5 +193,18 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ providers }),
     });
+  },
+  async errorRules() {
+    return request<ErrorRulesConfig>('/api/config/error-rules');
+  },
+  saveErrorRules(config: ErrorRulesConfig) {
+    return request<ErrorRulesConfig>('/api/config/error-rules', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+  },
+  async recentErrors() {
+    return request<RecentErrorsResponse>('/api/errors/recent');
   },
 };

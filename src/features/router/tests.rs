@@ -1,9 +1,13 @@
+use crate::app::AppState;
 use crate::config::Settings;
 use crate::config::{KeyRef, ModelAlias};
 use crate::config_v2::{TargetCandidate, V2Strategy};
-use crate::features::router::freeze::{
-    is_subscription_invalid, key_state_id, maybe_freeze_key, parse_auth_invalid, parse_quota_reset,
+use crate::error_rules::{builtin_config, classify, ErrorClass};
+use crate::features::router::failure::{
+    circuit_breaker_on_exhaustion, handle_response_failure, note_success_differential,
+    FailureAction,
 };
+use crate::features::router::freeze::{key_state_id, parse_quota_reset};
 use crate::features::router::selection::{order_targets, weighted_pick};
 use crate::features::router::state::RouterState;
 use crate::json_config::TokenPrice;
@@ -30,6 +34,7 @@ fn test_settings() -> Settings {
         model_alias_config_path: ":memory:".to_string(),
         search_providers_path: ":memory:".to_string(),
         provider_models_path: ":memory:".to_string(),
+        error_rules_path: ":memory:/nonexistent/error-rules.json".to_string(),
         auth_invalid_freeze_seconds: 86400.0,
         subscription_invalid_freeze_seconds: 86400.0,
         // router_state 测试覆盖旧逻辑；v2 行为由 config_v2 模块测试覆盖。
@@ -76,125 +81,219 @@ fn weighted_pick_is_sticky_for_session() {
 
 #[test]
 fn parses_quota_reset_fallback() {
-    let settings = test_settings();
     let (until, reason) =
-        parse_quota_reset("You have exceeded the monthly usage quota", &settings).unwrap();
+        parse_quota_reset("You have exceeded the monthly usage quota", 86400.0, 5400.0).unwrap();
     assert_eq!(reason, "monthly_quota");
     assert!(until > now_seconds() + 86000.0);
 }
 
 #[test]
-fn parses_auth_invalid_error() {
-    let settings = test_settings();
-    let (until, reason) =
-        parse_auth_invalid("authentication_error: api key invalid", &settings).unwrap();
-    assert_eq!(reason, "auth_invalid");
-    assert!(until > now_seconds() + 86000.0);
+fn auth_status_codes_classify_invalid() {
+    // 401/402/403 按状态码直接归为失效，不再依赖报错文案。
+    let config = builtin_config();
+    for status in [401u16, 402, 403] {
+        assert_eq!(
+            classify(&config, "ark", status, "whatever body").class,
+            ErrorClass::Invalid,
+            "status {status} 应归为失效"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
-// 订阅失效（key 级永久故障）识别与整把冻结
+// 订阅失效（key 级永久故障）识别与整把冻结（error-rules 分类版）
 //
-// ark coding plan 账号订阅过期时以 HTTP 400 返回
-// "does not have a valid CodingPlan subscription"，400 不在 retry_on_status，
-// 修复前既不冻结 key 也不换下一把，直接以 "all 1 upstream keys failed" 终态失败。
-// 修复后：maybe_freeze_key 识别该文案即整把冻结（排除出可用池），
-// 调用方检测到冻结后换下一把 key 继续。
+// ark coding plan 账号订阅过期时以 HTTP 400 返回订阅失效文案，400 不在
+// retry_on_status。修复前既不冻结 key 也不换下一把，直接以
+// "all 1 upstream keys failed" 终态失败；分类引擎后由 ark 模板识别两代文案
+// （CodingPlan / CodingPlanEnterprise）归为 invalid，整把冻结并换下一把。
 // ---------------------------------------------------------------------------
 
 const ARK_SUBSCRIPTION_EXPIRED_BODY: &str = r#"{"error":{"code":"SubscriptionNotValid","message":"Your account (2102661813) does not have a valid CodingPlan subscription, or your subscription has expired. Please visit https://console.volcengine.com/ark/ to review your subscription status."}}"#;
 
+const ARK_ENTERPRISE_SUBSCRIPTION_BODY: &str = r#"{"error":{"message":"Your account (2102405658, 77769405) lacks a valid CodingPlanEnterprise subscription, the plan has expired, or no seat is allocated. Visit https://console.volcengine.com/ark/ to check your status or renew."}}"#;
+
 #[test]
-fn subscription_invalid_signal_matches_ark_body_only() {
-    assert!(is_subscription_invalid(ARK_SUBSCRIPTION_EXPIRED_BODY));
-    // 文案变体：小写/换个说法也命中
-    assert!(is_subscription_invalid(
-        "your subscription has expired, please renew"
-    ));
+fn ark_subscription_bodies_classify_invalid() {
+    let config = builtin_config();
+    assert_eq!(
+        classify(
+            &config,
+            "ark",
+            400,
+            &ARK_SUBSCRIPTION_EXPIRED_BODY.to_lowercase()
+        )
+        .class,
+        ErrorClass::Invalid
+    );
+    assert_eq!(
+        classify(
+            &config,
+            "ark",
+            400,
+            &ARK_ENTERPRISE_SUBSCRIPTION_BODY.to_lowercase()
+        )
+        .class,
+        ErrorClass::Invalid
+    );
     // 普通请求级 400 不命中
-    assert!(!is_subscription_invalid(
-        &json!({"error": {"message": "Invalid parameter: messages is empty"}}).to_string()
-    ));
-    assert!(!is_subscription_invalid("not json"));
+    assert_eq!(
+        classify(
+            &config,
+            "ark",
+            400,
+            &json!({"error": {"message": "Invalid parameter: messages is empty"}})
+                .to_string()
+                .to_lowercase()
+        )
+        .class,
+        ErrorClass::Transient
+    );
+}
+
+fn sub_test_key(name: &str, env_var: &str) -> KeyRef {
+    KeyRef {
+        name: name.into(),
+        env_var: env_var.into(),
+        weight: 1,
+        provider: "ark".into(),
+        billing_type: "subscription".into(),
+        persist: true,
+    }
 }
 
 #[test]
 fn subscription_invalid_400_freezes_key_and_select_skips_it() {
-    let settings = test_settings();
-    let mut state = RouterState::new(settings.clone()).unwrap();
-    let key = KeyRef {
-        name: "expired".into(),
-        env_var: "SUB_TEST_KEY".into(),
-        weight: 1,
-        provider: "ark".into(),
-        billing_type: "subscription".into(),
-        persist: true,
-    };
-    let headers = http::HeaderMap::new();
-
-    // 修复前：400 + 订阅失效文案不冻结。修复后：整把冻结。
-    maybe_freeze_key(
-        &mut state,
-        &key,
-        400,
-        &headers,
-        ARK_SUBSCRIPTION_EXPIRED_BODY,
-        &settings,
-    )
-    .unwrap();
-    let key_id = key_state_id(&key);
-    assert!(
-        state.is_frozen(&key_id).unwrap(),
-        "订阅失效 400 必须冻结整把 key"
-    );
-
-    // 冻结后的 key 不再被选中（排除出可用池）
+    let app = AppState::new(test_settings()).unwrap();
+    let expired = sub_test_key("expired", "SUB_TEST_KEY");
     let alias_with_expired = ModelAlias::new(
         "ark/test-model",
         "openai/test-model",
         "https://ark.example.com/api/coding/v3",
-        vec![
-            key.clone(),
-            KeyRef {
-                name: "healthy".into(),
-                env_var: "SUB_TEST_HEALTHY".into(),
-                weight: 1,
-                provider: "ark".into(),
-                billing_type: "subscription".into(),
-                persist: true,
-            },
-        ],
+        vec![expired.clone(), sub_test_key("healthy", "SUB_TEST_HEALTHY")],
         None,
     );
-    for _ in 0..5 {
-        let picked = state
-            .select_key_excluding(&alias_with_expired, None, &HashSet::new())
-            .unwrap();
-        assert_ne!(picked.name, "expired", "冻结的订阅失效 key 不应再被选中");
+    let headers = http::HeaderMap::new();
+
+    // 400 + 订阅失效文案 → invalid → 冻结整把 key 并换下一把。
+    let action = handle_response_failure(
+        &app,
+        &alias_with_expired,
+        &expired,
+        400,
+        &headers,
+        ARK_ENTERPRISE_SUBSCRIPTION_BODY,
+        None,
+        None,
+        0,
+    );
+    assert!(
+        matches!(action, FailureAction::NextKey(_)),
+        "订阅失效 400 应换下一把 key，实际 {action:?}"
+    );
+    {
+        let mut state = app.state.lock().unwrap();
+        assert!(
+            state.is_frozen(&key_state_id(&expired)).unwrap(),
+            "订阅失效 400 必须冻结整把 key"
+        );
     }
 
-    // 普通请求级 400（无订阅失效文案）不应冻结
-    let plain_key = KeyRef {
-        name: "plain".into(),
-        env_var: "SUB_TEST_PLAIN".into(),
-        weight: 1,
-        provider: "ark".into(),
-        billing_type: "subscription".into(),
-        persist: true,
-    };
-    maybe_freeze_key(
-        &mut state,
-        &plain_key,
+    // 冻结后的 key 不再被选中（排除出可用池）
+    {
+        let mut state = app.state.lock().unwrap();
+        for _ in 0..5 {
+            let picked = state
+                .select_key_excluding(&alias_with_expired, None, &HashSet::new())
+                .unwrap();
+            assert_ne!(picked.name, "expired", "冻结的订阅失效 key 不应再被选中");
+        }
+    }
+
+    // 普通 400（无订阅失效特征）→ transient → 不冻结，但应换下一把。
+    let plain = sub_test_key("plain", "SUB_TEST_PLAIN");
+    let action = handle_response_failure(
+        &app,
+        &alias_with_expired,
+        &plain,
         400,
         &headers,
         &json!({"error": {"message": "Invalid parameter"}}).to_string(),
-        &settings,
-    )
-    .unwrap();
+        None,
+        None,
+        0,
+    );
     assert!(
-        !state.is_frozen(&key_state_id(&plain_key)).unwrap(),
+        matches!(action, FailureAction::NextKeyTransient(_)),
+        "普通 400 应按 transient 换 key，实际 {action:?}"
+    );
+    let mut state = app.state.lock().unwrap();
+    assert!(
+        !state.is_frozen(&key_state_id(&plain)).unwrap(),
         "普通请求级 400 不应冻结 key"
     );
+}
+
+#[test]
+fn differential_success_freezes_ambiguous_keys() {
+    let app = AppState::new(test_settings()).unwrap();
+    let flaky = sub_test_key("flaky", "DIFF_TEST_KEY");
+    note_success_differential(&app, std::slice::from_ref(&flaky));
+    let mut state = app.state.lock().unwrap();
+    assert!(
+        state.is_frozen(&key_state_id(&flaky)).unwrap(),
+        "同行成功的差分证据应冻结失败 key"
+    );
+}
+
+#[test]
+fn circuit_breaker_freezes_unfrozen_pool_keys() {
+    let app = AppState::new(test_settings()).unwrap();
+    let alias = ModelAlias::new(
+        "ark/breaker",
+        "openai/breaker",
+        "https://ark.example.com/api/coding/v3",
+        vec![
+            sub_test_key("k1", "BREAKER_K1"),
+            sub_test_key("k2", "BREAKER_K2"),
+        ],
+        None,
+    );
+    circuit_breaker_on_exhaustion(&app, &alias);
+    let mut state = app.state.lock().unwrap();
+    for key in &alias.keys {
+        assert!(
+            state.is_frozen(&key_state_id(key)).unwrap(),
+            "全池 transient 耗尽后应短熔断整池 {}",
+            key.name
+        );
+    }
+}
+
+#[test]
+fn binding_skips_key_already_tried_in_request() {
+    // 回归：会话绑定存 provider/name（如 ark/a），而请求内 tried 以裸名（a）记账。
+    // 修复前 binding 分支比较两种口径永不相等，粘住的刚失败 key 会被原样返回。
+    let mut state = RouterState::new(test_settings()).unwrap();
+    let alias = ModelAlias::new(
+        "ark/binding-test",
+        "openai/binding-test",
+        "https://ark.example.com/api/coding/v3",
+        vec![
+            sub_test_key("a", "BINDING_A"),
+            sub_test_key("b", "BINDING_B"),
+        ],
+        None,
+    );
+    state
+        .bind("ark/binding-test", "sess-1", &key_state_id(&alias.keys[0]))
+        .unwrap();
+    let mut tried = HashSet::new();
+    tried.insert("a".to_string());
+    let picked = state
+        .select_key_excluding(&alias, Some("sess-1"), &tried)
+        .unwrap();
+    assert_eq!(picked.name, "b", "粘住的 key 本请求已失败过时必须换下一把");
 }
 
 #[test]

@@ -1,15 +1,13 @@
-//! key 选择/冻结/用量记录辅助（对 AppState 加锁）。
+//! key 选择/用量记录辅助（对 AppState 加锁）。
+//! 失败分类与冻结动作已统一迁至 `features/router/failure`，本模块只留
+//! 选择/记账/成功路径辅助。
 
 use crate::app::AppState;
-use crate::config::{KeyRef, ModelAlias, Settings};
-use crate::features::router::{maybe_freeze_key, NoAvailableKeyError, RouterState};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
-use axum::response::Response;
-use serde_json::{json, Value};
+use crate::config::{KeyRef, ModelAlias};
+use crate::features::router::{NoAvailableKeyError, RouterState};
+use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
-
-use crate::routes::resp::json_status;
 
 pub(crate) fn select_key_locked(
     app: &AppState,
@@ -33,38 +31,8 @@ pub(crate) fn upstream_key_value_locked(
         .map(|mut state| state.upstream_key_value(key).unwrap_or(None))
 }
 
-pub(crate) fn freeze_maybe(
-    state: &Arc<Mutex<RouterState>>,
-    key: &crate::config::KeyRef,
-    status_code: u16,
-    headers: &HeaderMap,
-    body_text: &str,
-    settings: &Settings,
-) {
-    if let Ok(mut state) = state.lock() {
-        let _ = maybe_freeze_key(&mut state, key, status_code, headers, body_text, settings);
-    }
-}
-
-/// 上游失败处理后，该 key 是否已被冻结（key 级失败信号）。
-///
-/// 非重试状态（如 ark 订阅失效的 400）若触发了 maybe_freeze_key 的 key 级冻结
-/// （配额/鉴权/订阅失效），说明问题出在这把 key 而不是本次请求本身：调用方应
-/// 换下一把 key 继续尝试，而不是把该失败当作终态直接返回。真正的请求级错误
-///（如参数非法的 400）不会触发冻结，仍按终态处理。
-pub(crate) fn key_frozen_now(app: &AppState, key: &crate::config::KeyRef) -> bool {
-    app.state
-        .lock()
-        .map(|mut state| {
-            state
-                .is_frozen(&crate::features::router::key_state_id(key))
-                .unwrap_or(false)
-        })
-        .unwrap_or(false)
-}
-
 /// usage 记录的 key 名带 provider 前缀，避免不同供应商同名 key 合并统计。
-pub(crate) fn usage_key_name(_app: &AppState, key: &KeyRef) -> String {
+pub(crate) fn usage_key_name(key: &KeyRef) -> String {
     format!("{}/{}", key.provider, key.name)
 }
 
@@ -105,36 +73,6 @@ pub(crate) fn is_unsupported_signal(status: u16, body_text: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// 上游对该 key × 模型明确拒绝时记录（阶梯退避，详见 RouterState::mark_key_model_unsupported）。
-pub(crate) fn maybe_mark_unsupported(
-    app: &AppState,
-    key: &KeyRef,
-    alias: &ModelAlias,
-    status: u16,
-    body_text: &str,
-) {
-    if !is_unsupported_signal(status, body_text) {
-        return;
-    }
-    let message = serde_json::from_str::<Value>(body_text)
-        .ok()
-        .and_then(|v| {
-            v.get("error")
-                .and_then(|e| e.get("message"))
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| "model not supported".to_string());
-    if let Ok(mut state) = app.state.lock() {
-        state.mark_key_model_unsupported(
-            &key.provider,
-            &key.name,
-            &alias.upstream_model(),
-            &message,
-        );
-    }
-}
-
 /// 该 key × 模型成功跑通：清除“不支持”记录（套餐升级后自动恢复参与）。
 pub(crate) fn clear_unsupported_if_ok(
     app: &AppState,
@@ -166,26 +104,4 @@ pub(crate) fn extract_usage_from_stream(body_text: &str) -> Option<Value> {
         }
     }
     usage
-}
-
-pub(crate) fn all_keys_frozen_response(exc: NoAvailableKeyError) -> Response {
-    let mut response = json_status(
-        StatusCode::TOO_MANY_REQUESTS,
-        json!({ "error": { "message": exc.to_string(), "type": "all_keys_frozen" } }),
-    );
-    if let Ok(value) = HeaderValue::from_str(&exc.retry_after.to_string()) {
-        response.headers_mut().insert("retry-after", value);
-    }
-    response
-}
-
-pub(crate) fn stream_error_event(alias: &str, tried: usize, exc: &str) -> String {
-    let error = json!({
-        "error": {
-            "message": format!("all {tried} upstream keys failed for {alias}"),
-            "type": "upstream_connect_error",
-            "last_error": exc,
-        }
-    });
-    format!("data: {}\n\ndata: [DONE]\n\n", error)
 }

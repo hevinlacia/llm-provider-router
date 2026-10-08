@@ -18,15 +18,18 @@
 //! 选 key / 重试 / 冻结 / 用量记录与 chat 流式主链路一致（复用 select 辅助）。
 
 use crate::app::AppState;
-use crate::config::ModelAlias;
+use crate::config::{KeyRef, ModelAlias};
 use crate::features::chat::payload::{log_upstream_failure, prepare_upstream_payload};
 use crate::features::chat::select::{
-    clear_unsupported_if_ok, extract_usage_from_stream, freeze_maybe, key_frozen_now,
-    maybe_mark_unsupported, record_usage, select_key_locked, upstream_key_value_locked,
-    usage_key_name,
+    clear_unsupported_if_ok, extract_usage_from_stream, record_usage, select_key_locked,
+    upstream_key_value_locked, usage_key_name,
 };
 use crate::features::responses::store;
 use crate::features::responses::translate;
+use crate::features::router::{
+    circuit_breaker_on_exhaustion, handle_connect_failure, handle_response_failure,
+    note_success_differential, FailureAction,
+};
 use crate::routes::resp::internal_error;
 use axum::body::{Body, Bytes};
 use axum::http::header::CONTENT_TYPE;
@@ -108,23 +111,56 @@ pub(crate) async fn stream_responses_route(
             };
             let upstream_model = alias.upstream_model();
             let mut tried = HashSet::new();
-            let retry_policy = alias.retry_policy.clone();
+            // transient 失败但未冻结的 key：同请求内同行 key 成功时差分冻结。
+            let mut ambiguous: Vec<KeyRef> = Vec::new();
+            // 末次失败是否 transient（全池耗尽时决定是否触发熔断）。
+            let mut last_failure_transient = false;
+            // 同 key 重试状态（RetrySame 时绕过 select 直接复用该 key）。
+            let mut retry_key: Option<KeyRef> = None;
+            let mut same_key_attempt: usize = 0;
 
             loop {
-                let selected_key = match select_key_locked(&app, &alias, session_id.as_deref(), &tried) {
-                    Ok(result) => result,
-                    Err(message) => {
-                        yield Ok(Bytes::from(sse_error_event(&alias.alias, tried.len(), &message)));
-                        return;
+                let key = match retry_key.take() {
+                    Some(key) => {
+                        same_key_attempt += 1;
+                        key
+                    }
+                    None => {
+                        same_key_attempt = 0;
+                        let selected_key = match select_key_locked(
+                            &app,
+                            &alias,
+                            session_id.as_deref(),
+                            &tried,
+                        ) {
+                            Ok(result) => result,
+                            Err(message) => {
+                                yield Ok(Bytes::from(sse_error_event(
+                                    &alias.alias,
+                                    tried.len(),
+                                    &message,
+                                )));
+                                return;
+                            }
+                        };
+                        match selected_key {
+                            Ok(key) => {
+                                tried.insert(key.name.clone());
+                                total_tried += 1;
+                                failed_alias = alias.alias.clone();
+                                key
+                            }
+                            Err(_) => {
+                                // key 全冻结/不可用：transient 耗尽时全池短熔断后
+                                // fallback 下一个 target
+                                if last_failure_transient {
+                                    circuit_breaker_on_exhaustion(&app, &alias);
+                                }
+                                break;
+                            }
+                        }
                     }
                 };
-                let key = match selected_key {
-                    Ok(key) => key,
-                    Err(_) => break, // key 全冻结/不可用：fallback 下一个 target
-                };
-                tried.insert(key.name.clone());
-                total_tried += 1;
-                failed_alias = alias.alias.clone();
                 let key_value = match upstream_key_value_locked(&app, &key) {
                     Ok(value) => value,
                     Err(message) => {
@@ -133,8 +169,10 @@ pub(crate) async fn stream_responses_route(
                     }
                 };
                 let Some(key_value) = key_value else {
-                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None, session_id.as_deref());
-                    last_error = Some(format!("missing key value for {}", usage_key_name(&app, &key)));
+                    record_usage(&app.state, &alias.alias, &usage_key_name(&key), 599, None, session_id.as_deref());
+                    // 本地配置问题，不影响熔断判定。
+                    last_failure_transient = false;
+                    last_error = Some(format!("missing key value for {}", usage_key_name(&key)));
                     continue;
                 };
 
@@ -167,59 +205,63 @@ pub(crate) async fn stream_responses_route(
                 let response = match response {
                     Some(r) => r,
                     None => {
-                        record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None, session_id.as_deref());
-                        last_error = Some(last_exc.unwrap_or_else(|| "upstream connect error".to_string()));
+                        let exc_text =
+                            last_exc.unwrap_or_else(|| "upstream connect error".to_string());
+                        if let FailureAction::NextKeyTransient(message) =
+                            handle_connect_failure(&app, &alias, &key, &exc_text, session_id.as_deref())
+                        {
+                            ambiguous.push(key.clone());
+                            last_failure_transient = true;
+                            last_error = Some(message);
+                        }
                         continue;
                     }
                 };
 
                 let status = response.status().as_u16();
-                let headers = response.headers().clone();
-                if retry_policy.as_ref().is_some_and(|p| p.retry_on_status.contains(&status)) {
+                if status >= 400 {
+                    // 统一走分类动作（失效/限流冻结换 key；模型不支持直接报错；其他类重试后切 key）。
+                    let headers = response.headers().clone();
                     let body_text = response.text().await.unwrap_or_default();
-                    freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
-                    maybe_mark_unsupported(&app, &key, &alias, status, &body_text);
                     let usage = extract_usage_from_stream(&body_text)
                         .or_else(|| serde_json::from_str::<Value>(&body_text).ok().and_then(|v| v.get("usage").filter(|u| u.is_object()).cloned()));
-                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref(), session_id.as_deref());
-                    log_upstream_failure(&alias, status, &body_text);
-                    // 记录可重试失败：若本 alias 所有 key 都因此类状态（如 429）失败
-                    // 且没有后备 target，流尾必须 yield 一个带状态的 SSE error 事件，
-                    // 而不是以 200 空流静默结束——空流会让客户端把限流误判成传输截断
-                    // （TRANSPORT）并反复重试，而非按 RATE_LIMIT 退避。
-                    let err = translate::upstream_error_to_responses(&body_text);
-                    let message = err
-                        .get("error")
-                        .and_then(|e| e.get("message"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("upstream error");
-                    last_error = Some(format!("upstream {status}: {message}"));
-                    continue;
-                }
-
-                if status >= 400 {
-                    let body_text = response.text().await.unwrap_or_default();
-                    freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
-                    maybe_mark_unsupported(&app, &key, &alias, status, &body_text);
-                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, None, session_id.as_deref());
-                    log_upstream_failure(&alias, status, &body_text);
-                    // 上游明确拒绝：解除会话粘性绑定，避免会话被钉死在坏 key 上。
-                    if let Some(sid) = session_id.as_deref() {
-                        if let Ok(mut state) = app.state.lock() {
-                            state.unbind(&alias.alias, sid);
+                    match handle_response_failure(
+                        &app,
+                        &alias,
+                        &key,
+                        status,
+                        &headers,
+                        &body_text,
+                        usage.as_ref(),
+                        session_id.as_deref(),
+                        same_key_attempt,
+                    ) {
+                        FailureAction::NextKey(message) => {
+                            // 记录失败：若本 alias 所有 key 都失败且没有后备 target，
+                            // 流尾必须 yield 一个带状态的 SSE error 事件，而不是以
+                            // 200 空流静默结束（客户端会当成传输截断反复重试）。
+                            last_failure_transient = false;
+                            last_error = Some(message);
+                            continue;
+                        }
+                        FailureAction::NextKeyTransient(message) => {
+                            ambiguous.push(key.clone());
+                            last_failure_transient = true;
+                            last_error = Some(message);
+                            continue;
+                        }
+                        FailureAction::RetrySame(delay_ms, message) => {
+                            last_error = Some(message);
+                            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                            retry_key = Some(key);
+                            continue;
+                        }
+                        FailureAction::Abort { message, .. } => {
+                            // 转成 Responses SSE error 事件
+                            yield Ok(Bytes::from(sse_error_message(&message)));
+                            return;
                         }
                     }
-                    // 转成 Responses SSE error 事件
-                    let err = translate::upstream_error_to_responses(&body_text);
-                    let message = err.get("error").and_then(|e| e.get("message")).and_then(Value::as_str).unwrap_or("upstream error");
-                    // key 级失败（freeze_maybe 触发了冻结，如订阅失效 400）：问题在这把
-                    // key 而非本次请求，换下一把 key 继续尝试，而不是把请求判死。
-                    if key_frozen_now(&app, &key) {
-                        last_error = Some(format!("upstream {status}: {message}"));
-                        continue;
-                    }
-                    yield Ok(Bytes::from(sse_error_message(message)));
-                    return;
                 }
 
                 // 正常流：按模式处理（透传原样转发 / 翻译成 Responses 事件）
@@ -289,10 +331,11 @@ pub(crate) async fn stream_responses_route(
                     store::put_full(&resp_id, history, response, input_items);
                 }
                 let body_text = String::from_utf8_lossy(&body_text).to_string();
-                freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
+                // 请求内差分冻结：本请求先 transient 失败过的 key 在此被同行成功反向冻结。
+                note_success_differential(&app, &ambiguous);
                 let usage = extract_usage_from_stream(&body_text)
                     .or_else(|| extract_responses_usage_from_stream(&body_text));
-                record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref(), session_id.as_deref());
+                record_usage(&app.state, &alias.alias, &usage_key_name(&key), status, usage.as_ref(), session_id.as_deref());
                 log_upstream_failure(&alias, status, &body_text);
                 clear_unsupported_if_ok(&app, &key, &alias, status);
                 return;

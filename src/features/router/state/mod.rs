@@ -8,7 +8,9 @@
 
 use crate::config::{expand_path, KeyRef, ModelAlias, Settings};
 use crate::config_v2;
+use crate::error_rules::{self, ErrorRulesConfig, ResolvedTunables};
 use crate::features::router::costing::apply_costs;
+use crate::features::router::failure::{ErrorLogEntry, RecentErrors};
 use crate::features::router::freeze::key_state_id;
 use crate::features::router::selection::weighted_pick;
 use crate::features::router::UnsupportedEntry;
@@ -17,7 +19,7 @@ use crate::state_store::{now_seconds, StateStore};
 use crate::usage_store::UsageStore;
 use anyhow::Context;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 
 pub(crate) mod config;
@@ -70,6 +72,10 @@ pub struct RouterState {
     /// 最近一次 v2 配置重载失败原因（运行期坏文件保留 last-good 时记录，
     /// 经 /api/config/v2 的 v2_error 字段透出供诊断）。
     v2_load_error: Option<String>,
+    /// 报错分类规则（模板 + tunables + 供应商绑定），config/error-rules.json。
+    error_rules: ErrorRulesConfig,
+    /// 最近上游报错 ring buffer（内存，重启丢失），供 /api/errors/recent 与 dashboard 展示。
+    recent_errors: RecentErrors,
 }
 
 impl RouterState {
@@ -104,6 +110,17 @@ impl RouterState {
         // 不静默回退——legacy 硬编码别名已随 v1 退役删除。
         let v2 = config_v2::load_v2_config()
             .context("load v2 config (providers-v2/models/logical-models) failed")?;
+        // 报错分类规则：文件缺失/非法时用内置默认（default + ark 预设），不阻断启动。
+        let (error_rules, error_rules_error) =
+            match error_rules::load_error_rules(&settings.error_rules_path) {
+                Ok(config) => (config, None),
+                Err(err) => (error_rules::builtin_config(), Some(err)),
+            };
+        if let Some(err) = &error_rules_error {
+            eprintln!(
+                "llm-provider-router: error-rules load failed, using builtin defaults: {err}"
+            );
+        }
         // First run (file missing): seed from environment so existing keys are
         // captured into the sole source of truth. Otherwise: apply stored key
         // values to the process environment without overriding existing vars.
@@ -182,6 +199,8 @@ impl RouterState {
             api_keys_store,
             v2,
             v2_load_error: None,
+            error_rules,
+            recent_errors: VecDeque::new(),
         };
         Ok(state)
     }
@@ -317,12 +336,74 @@ impl RouterState {
         }
     }
 
-    /// 只读查询会话绑定（测试用；诊断可在 dashboard 的 state 视图观察）。
-    #[cfg(test)]
-    pub fn binding_for(&self, alias: &str, session_id: &str) -> Option<&str> {
-        self.bindings
-            .get(&(alias.to_string(), session_id.to_string()))
-            .map(|b| b.key_name.as_str())
+    // -----------------------------------------------------------------------
+    // 报错分类规则（error_rules）与最近报错 ring buffer
+    // -----------------------------------------------------------------------
+
+    pub(crate) fn error_rules(&self) -> &ErrorRulesConfig {
+        &self.error_rules
+    }
+
+    /// 运行时生效参数：JSON tunables 优先，invalid 类回落 env 设置。
+    pub(crate) fn tunables(&self) -> ResolvedTunables {
+        self.error_rules
+            .tunables
+            .resolve(self.settings.subscription_invalid_freeze_seconds)
+    }
+
+    /// 月度/5小时配额重置兜底时长（settings env）。
+    pub(crate) fn quota_fallback_seconds(&self) -> (f64, f64) {
+        (
+            self.settings.monthly_quota_fallback_seconds,
+            self.settings.five_hour_quota_fallback_seconds,
+        )
+    }
+
+    /// 生效配置视图（dashboard 设置页编辑基底）。
+    pub fn error_rules_effective(&self) -> Value {
+        serde_json::to_value(&self.error_rules).unwrap_or(Value::Null)
+    }
+
+    /// 从磁盘重读 error-rules（热加载 watcher / API 写回后调用）。保留 last-good。
+    pub fn reload_error_rules(&mut self) -> bool {
+        match error_rules::load_error_rules(&self.settings.error_rules_path) {
+            Ok(config) => {
+                self.error_rules = config;
+                true
+            }
+            Err(err) => {
+                eprintln!(
+                    "llm-provider-router: error-rules reload failed, keeping last good: {err}"
+                );
+                false
+            }
+        }
+    }
+
+    /// 校验 + 写盘 + 热生效。失败时保留旧配置并返回错误。
+    pub fn update_error_rules(&mut self, value: &Value) -> anyhow::Result<()> {
+        let config: ErrorRulesConfig =
+            serde_json::from_value(value.clone()).context("invalid error-rules schema")?;
+        let path = expand_path(&self.settings.error_rules_path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, serde_json::to_string_pretty(&config)?)?;
+        self.error_rules = config;
+        Ok(())
+    }
+
+    pub(crate) fn push_recent_error(&mut self, entry: ErrorLogEntry) {
+        if self.recent_errors.len() >= super::failure::RECENT_ERRORS_CAP {
+            self.recent_errors.pop_front();
+        }
+        self.recent_errors.push_back(entry);
+    }
+
+    pub(crate) fn recent_errors_iter(
+        &self,
+    ) -> std::collections::vec_deque::Iter<'_, ErrorLogEntry> {
+        self.recent_errors.iter()
     }
 
     // -----------------------------------------------------------------------
@@ -494,6 +575,10 @@ impl RouterState {
                     if let Some(key) = alias.keys.iter().find(|key| {
                         key_state_id(key) == binding.key_name
                             && key.weight > 0
+                            // 重试循环的 tried 以裸 key.name 记账，而 binding.key_name 是
+                            // provider/name；必须按裸名再排除一次，否则粘住的本请求刚失败过
+                            // 的 key（未冻结场景，如 500/连接错误）会被原样返回，死循环重试。
+                            && !excluded.contains(&key.name)
                             && !self.key_model_blocked(&key.provider, &key.name, &upstream_model)
                     }) {
                         let key = key.clone();

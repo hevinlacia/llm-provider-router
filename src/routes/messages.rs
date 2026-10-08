@@ -11,15 +11,17 @@
 //! 鉴权：Anthropic 客户端用 `x-api-key` 头（也兼容 Authorization Bearer）。
 
 use crate::app::AppState;
-use crate::config::ModelAlias;
+use crate::config::{KeyRef, ModelAlias};
 use crate::features::anthropic::stream::SseTranslator;
 use crate::features::anthropic::translate;
 use crate::features::chat::select::{
-    clear_unsupported_if_ok, freeze_maybe, key_frozen_now, maybe_mark_unsupported, record_usage,
-    select_key_locked, upstream_key_value_locked, usage_key_name,
+    clear_unsupported_if_ok, record_usage, select_key_locked, upstream_key_value_locked,
+    usage_key_name,
 };
-use crate::features::chat::upstream::CallError;
-use crate::features::router::NoAvailableKeyError;
+use crate::features::router::{
+    circuit_breaker_on_exhaustion, handle_connect_failure, handle_response_failure,
+    note_success_differential, FailureAction, NoAvailableKeyError,
+};
 use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::{header::CONTENT_TYPE, HeaderMap, HeaderValue, StatusCode};
@@ -29,9 +31,10 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
-use super::chat::extract_session_id;
+use super::resp::{inject_router_headers, CallError};
 use super::resp::{internal_error, json_status, status_code};
 use super::responses::{responses_alias_dispatch, translate_request};
+use super::session_fingerprint::extract_session_id;
 
 /// 非流式响应体读取上限（64MB，与路由层 body limit 一致）。
 const BODY_LIMIT: usize = 64 * 1024 * 1024;
@@ -326,21 +329,49 @@ async fn stream_anthropic_passthrough(
                 obj.insert("model".to_string(), json!(alias.upstream_model()));
             }
             let mut tried = HashSet::new();
-            let retry_policy = alias.retry_policy.clone();
+            // transient 失败但未冻结的 key：同请求内同行 key 成功时差分冻结。
+            let mut ambiguous: Vec<KeyRef> = Vec::new();
+            let mut last_failure_transient = false;
+            let mut retry_key: Option<KeyRef> = None;
+            let mut same_key_attempt: usize = 0;
             loop {
-                let selected_key = match select_key_locked(&app, &alias, session_id.as_deref(), &tried) {
-                    Ok(result) => result,
-                    Err(message) => {
-                        yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(anthropic_sse_error(&message)));
-                        return;
+                let key = match retry_key.take() {
+                    Some(key) => {
+                        same_key_attempt += 1;
+                        key
+                    }
+                    None => {
+                        same_key_attempt = 0;
+                        let selected_key = match select_key_locked(
+                            &app,
+                            &alias,
+                            session_id.as_deref(),
+                            &tried,
+                        ) {
+                            Ok(result) => result,
+                            Err(message) => {
+                                yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(
+                                    anthropic_sse_error(&message),
+                                ));
+                                return;
+                            }
+                        };
+                        match selected_key {
+                            Ok(key) => {
+                                tried.insert(key.name.clone());
+                                total_tried += 1;
+                                key
+                            }
+                            Err(_) => {
+                                // key 全冻结/不可用：transient 耗尽时全池短熔断后 fallback 下一 alias
+                                if last_failure_transient {
+                                    circuit_breaker_on_exhaustion(&app, &alias);
+                                }
+                                break;
+                            }
+                        }
                     }
                 };
-                let key = match selected_key {
-                    Ok(key) => key,
-                    Err(_) => break, // key 全冻结/不可用：fallback 下一 alias
-                };
-                tried.insert(key.name.clone());
-                total_tried += 1;
                 let key_value = match upstream_key_value_locked(&app, &key) {
                     Ok(value) => value,
                     Err(message) => {
@@ -349,8 +380,10 @@ async fn stream_anthropic_passthrough(
                     }
                 };
                 let Some(key_value) = key_value else {
-                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None, session_id.as_deref());
-                    last_error = Some(format!("missing key value for {}", usage_key_name(&app, &key)));
+                    record_usage(&app.state, &alias.alias, &usage_key_name(&key), 599, None, session_id.as_deref());
+                    // 本地配置问题，不影响熔断判定。
+                    last_failure_transient = false;
+                    last_error = Some(format!("missing key value for {}", usage_key_name(&key)));
                     continue;
                 };
 
@@ -382,43 +415,56 @@ async fn stream_anthropic_passthrough(
                 let response = match response {
                     Some(r) => r,
                     None => {
-                        record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), 599, None, session_id.as_deref());
-                        last_error = Some("upstream connect error".to_string());
+                        let exc_text = "upstream connect error";
+                        if let FailureAction::NextKeyTransient(message) =
+                            handle_connect_failure(&app, &alias, &key, exc_text, session_id.as_deref())
+                        {
+                            ambiguous.push(key.clone());
+                            last_failure_transient = true;
+                            last_error = Some(message);
+                        }
                         continue;
                     }
                 };
                 let status = response.status().as_u16();
-                let headers = response.headers().clone();
-                if retry_policy.as_ref().is_some_and(|p| p.retry_on_status.contains(&status)) {
-                    let body_text = response.text().await.unwrap_or_default();
-                    freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
-                    maybe_mark_unsupported(&app, &key, &alias, status, &body_text);
-                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, None, session_id.as_deref());
-                    crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
-                    last_error = Some(format!("upstream {status}"));
-                    continue;
-                }
                 if status >= 400 {
+                    // 统一走分类动作（失效/限流冻结换 key；模型不支持直接报错；其他类重试后切 key）。
+                    let headers = response.headers().clone();
                     let body_text = response.text().await.unwrap_or_default();
-                    freeze_maybe(&app.state, &key, status, &headers, &body_text, &app.settings);
-                    maybe_mark_unsupported(&app, &key, &alias, status, &body_text);
-                    record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, None, session_id.as_deref());
-                    crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
-                    // 200 SSE 流已提交，上游错误转成 Anthropic SSE error 事件下发
-                    let message = serde_json::from_str::<Value>(&body_text)
-                        .ok()
-                        .and_then(|v| {
-                            v.pointer("/error/message").and_then(Value::as_str).map(str::to_string)
-                        })
-                        .unwrap_or_else(|| body_text.chars().take(300).collect());
-                    // key 级失败（freeze_maybe 触发了冻结，如订阅失效 400）：问题在这把
-                    // key 而非本次请求，换下一把 key 继续尝试，而不是把请求判死。
-                    if key_frozen_now(&app, &key) {
-                        last_error = Some(format!("upstream {status}: {message}"));
-                        continue;
+                    match handle_response_failure(
+                        &app,
+                        &alias,
+                        &key,
+                        status,
+                        &headers,
+                        &body_text,
+                        None,
+                        session_id.as_deref(),
+                        same_key_attempt,
+                    ) {
+                        FailureAction::NextKey(message) => {
+                            last_failure_transient = false;
+                            last_error = Some(message);
+                            continue;
+                        }
+                        FailureAction::NextKeyTransient(message) => {
+                            ambiguous.push(key.clone());
+                            last_failure_transient = true;
+                            last_error = Some(message);
+                            continue;
+                        }
+                        FailureAction::RetrySame(delay_ms, message) => {
+                            last_error = Some(message);
+                            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                            retry_key = Some(key);
+                            continue;
+                        }
+                        FailureAction::Abort { message, .. } => {
+                            // 200 SSE 流未提交，上游错误转成 Anthropic SSE error 事件下发
+                            yield Ok(Bytes::from(anthropic_sse_error(&message)));
+                            return;
+                        }
                     }
-                    yield Ok(Bytes::from(anthropic_sse_error(&message)));
-                    return;
                 }
 
                 // 正常流：SSE 字节原样转发，收集流尾 usage 记账
@@ -437,9 +483,9 @@ async fn stream_anthropic_passthrough(
                     }
                 }
                 let body_str = String::from_utf8_lossy(&body_text).to_string();
-                freeze_maybe(&app.state, &key, status, &headers, &body_str, &app.settings);
+                note_success_differential(&app, &ambiguous);
                 let usage = translate::extract_anthropic_stream_usage(&body_str);
-                record_usage(&app.state, &alias.alias, &usage_key_name(&app, &key), status, usage.as_ref(), session_id.as_deref());
+                record_usage(&app.state, &alias.alias, &usage_key_name(&key), status, usage.as_ref(), session_id.as_deref());
                 clear_unsupported_if_ok(&app, &key, &alias, status);
                 return;
             }
@@ -493,7 +539,12 @@ async fn call_anthropic_passthrough(
         ));
     };
     let retry_policy = alias.retry_policy.clone();
+    let _ = &retry_policy; // retry_on_status 已退役：分类由 error-rules 决定
     let mut tried = HashSet::new();
+    let mut ambiguous: Vec<KeyRef> = Vec::new();
+    let mut last_failure_transient = false;
+    let mut retry_key: Option<KeyRef> = None;
+    let mut same_key_attempt: usize = 0;
     let endpoint = format!("{}/v1/messages", anthropic_base.trim_end_matches('/'));
     let mut upstream_payload = payload;
     if let Some(obj) = upstream_payload.as_object_mut() {
@@ -501,15 +552,32 @@ async fn call_anthropic_passthrough(
     }
 
     loop {
-        let selected_key = match select_key_locked(app, &alias, session_id.as_deref(), &tried) {
-            Ok(result) => result,
-            Err(message) => return Ok(internal_error(&message)),
+        let key = match retry_key.take() {
+            Some(key) => {
+                same_key_attempt += 1;
+                key
+            }
+            None => {
+                same_key_attempt = 0;
+                let selected_key =
+                    match select_key_locked(app, &alias, session_id.as_deref(), &tried) {
+                        Ok(result) => result,
+                        Err(message) => return Ok(internal_error(&message)),
+                    };
+                match selected_key {
+                    Ok(key) => {
+                        tried.insert(key.name.clone());
+                        key
+                    }
+                    Err(exc) => {
+                        if last_failure_transient {
+                            circuit_breaker_on_exhaustion(app, &alias);
+                        }
+                        return Err(CallError::NoAvailable(exc));
+                    }
+                }
+            }
         };
-        let key = match selected_key {
-            Ok(key) => key,
-            Err(exc) => return Err(CallError::NoAvailable(exc)),
-        };
-        tried.insert(key.name.clone());
         let key_value = match upstream_key_value_locked(app, &key) {
             Ok(value) => value,
             Err(message) => return Ok(internal_error(&message)),
@@ -518,11 +586,13 @@ async fn call_anthropic_passthrough(
             record_usage(
                 &app.state,
                 &alias.alias,
-                &usage_key_name(app, &key),
+                &usage_key_name(&key),
                 599,
                 None,
                 session_id.as_deref(),
             );
+            // 本地配置问题，不影响熔断判定。
+            last_failure_transient = false;
             continue;
         };
 
@@ -554,14 +624,14 @@ async fn call_anthropic_passthrough(
         let response = match response {
             Some(r) => r,
             None => {
-                record_usage(
-                    &app.state,
-                    &alias.alias,
-                    &usage_key_name(app, &key),
-                    599,
-                    None,
-                    session_id.as_deref(),
-                );
+                let exc_text = "upstream connect error";
+                if let FailureAction::NextKeyTransient(message) =
+                    handle_connect_failure(app, &alias, &key, exc_text, session_id.as_deref())
+                {
+                    ambiguous.push(key.clone());
+                    last_failure_transient = true;
+                    let _ = message;
+                }
                 continue;
             }
         };
@@ -571,38 +641,45 @@ async fn call_anthropic_passthrough(
         let content: Value = serde_json::from_str(&body_text)
             .unwrap_or_else(|_| json!({ "error": { "message": body_text, "type": "api_error" } }));
 
-        if retry_policy
-            .as_ref()
-            .is_some_and(|policy| policy.retry_on_status.contains(&status))
-        {
-            freeze_maybe(
-                &app.state,
+        if status >= 400 {
+            // 统一走分类动作。
+            match handle_response_failure(
+                app,
+                &alias,
                 &key,
                 status,
                 &headers,
                 &body_text,
-                &app.settings,
-            );
-            record_usage(
-                &app.state,
-                &alias.alias,
-                &usage_key_name(app, &key),
-                status,
                 None,
                 session_id.as_deref(),
-            );
-            crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
-            continue;
+                same_key_attempt,
+            ) {
+                FailureAction::NextKey(_) => {
+                    last_failure_transient = false;
+                    continue;
+                }
+                FailureAction::NextKeyTransient(_) => {
+                    ambiguous.push(key.clone());
+                    last_failure_transient = true;
+                    continue;
+                }
+                FailureAction::RetrySame(delay_ms, _) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    retry_key = Some(key);
+                    continue;
+                }
+                FailureAction::Abort {
+                    status, content, ..
+                } => {
+                    // 响应原样透传（上游已是 Anthropic 格式）
+                    let mut resp = json_status(status_code(status), content);
+                    inject_router_headers(resp.headers_mut(), &alias);
+                    return Ok(resp);
+                }
+            }
         }
 
-        freeze_maybe(
-            &app.state,
-            &key,
-            status,
-            &headers,
-            &body_text,
-            &app.settings,
-        );
+        note_success_differential(app, &ambiguous);
         let usage = if (200..300).contains(&status) {
             translate::extract_anthropic_usage(&content)
         } else {
@@ -611,22 +688,13 @@ async fn call_anthropic_passthrough(
         record_usage(
             &app.state,
             &alias.alias,
-            &usage_key_name(app, &key),
+            &usage_key_name(&key),
             status,
             usage.as_ref(),
             session_id.as_deref(),
         );
-        crate::features::chat::payload::log_upstream_failure(&alias, status, &body_text);
-
-        // key 级失败（freeze_maybe 触发了冻结，如订阅失效 400）：换下一把 key 继续尝试；
-        // 全部耗尽后由 select_key 的 NoAvailableKeyError 返回，上层 fallback 到下一个 target。
-        if key_frozen_now(app, &key) {
-            continue;
-        }
-
-        // 响应原样透传（上游已是 Anthropic 格式）
         let mut resp = json_status(status_code(status), content);
-        crate::features::chat::upstream::inject_router_headers(resp.headers_mut(), &alias);
+        inject_router_headers(resp.headers_mut(), &alias);
         return Ok(resp);
     }
 }

@@ -14,6 +14,7 @@
 //! - `tests.rs`      RouterState/选路/解析共同测试
 
 pub(crate) mod costing;
+pub(crate) mod failure;
 pub(crate) mod freeze;
 pub(crate) mod selection;
 pub(crate) mod state;
@@ -21,8 +22,10 @@ pub(crate) mod state;
 mod tests;
 pub(crate) mod util;
 
-pub(crate) use freeze::key_state_id;
-pub use freeze::maybe_freeze_key;
+pub(crate) use failure::{
+    circuit_breaker_on_exhaustion, handle_connect_failure, handle_response_failure,
+    note_success_differential, FailureAction,
+};
 pub(crate) use state::config::PhysicalModelPatch;
 pub use state::{NoAvailableKeyError, RouterState};
 

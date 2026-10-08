@@ -253,6 +253,7 @@ async fn all_keys_429_ends_with_error_event_not_empty_stream() {
         model_alias_config_path: ":memory:".to_string(),
         search_providers_path: ":memory:".to_string(),
         provider_models_path: ":memory:".to_string(),
+        error_rules_path: ":memory:/nonexistent/error-rules.json".to_string(),
         auth_invalid_freeze_seconds: 86400.0,
         subscription_invalid_freeze_seconds: 86400.0,
         diag_dir: ":memory:".to_string(),
@@ -380,6 +381,7 @@ async fn upstream_truncated_stream_emits_response_incomplete() {
         model_alias_config_path: ":memory:".to_string(),
         search_providers_path: ":memory:".to_string(),
         provider_models_path: ":memory:".to_string(),
+        error_rules_path: ":memory:/nonexistent/error-rules.json".to_string(),
         auth_invalid_freeze_seconds: 86400.0,
         subscription_invalid_freeze_seconds: 86400.0,
         diag_dir: ":memory:".to_string(),
@@ -447,4 +449,148 @@ async fn upstream_truncated_stream_emits_response_incomplete() {
     );
     // 只发生了一次真实上游请求。
     assert_eq!(hits.load(Ordering::SeqCst), 1);
+}
+
+/// 订阅失效（key 级永久故障，ark 新文案 400）必须是"冻结该 key + 换下一把重试成功"，
+/// 而不是以 SSE error 终态失败（2026-10 事故：is_subscription_invalid 匹配不上
+/// CodingPlanEnterprise 新文案，400 被当成请求级错误直接终止）。
+/// 原测试挂在 chat 流式链路，chat 协议下线后移植到 responses 流（同一失败处理链路）。
+#[tokio::test]
+async fn subscription_invalid_400_falls_back_to_next_key() {
+    use crate::app::AppState;
+    use crate::config::{KeyRef, ModelAlias, Settings};
+    use axum::body::to_bytes;
+    use axum::response::IntoResponse;
+    use axum::routing::post;
+    use axum::{Json, Router};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    // mock 上游：第一次请求（无论哪把 key）回 400 ark 企业版订阅失效，之后回 200 SSE。
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_for_server = hits.clone();
+    let app = Router::new().route(
+        "/chat/completions",
+        post(move || {
+            let hits = hits_for_server.clone();
+            async move {
+                if hits.fetch_add(1, Ordering::SeqCst) == 0 {
+                    return (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": {
+                                "code": "SubscriptionNotValid",
+                                "message": "Your account (2102405658, 77769405) lacks a valid CodingPlanEnterprise subscription, the plan has expired, or no seat is allocated.",
+                            }
+                        })),
+                    )
+                        .into_response();
+                }
+                (
+                    axum::http::StatusCode::OK,
+                    [("content-type", "text/event-stream")],
+                    "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+                )
+                    .into_response()
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    std::env::set_var("RESP_SUB_BAD_KEY", "bad-key-value");
+    std::env::set_var("RESP_SUB_GOOD_KEY", "good-key-value");
+
+    let settings = Settings {
+        host: "127.0.0.1".to_string(),
+        port: 0,
+        session_ttl_seconds: 3600.0,
+        inject_prompt_cache_key: true,
+        monthly_quota_fallback_seconds: 86400.0,
+        five_hour_quota_fallback_seconds: 5400.0,
+        request_timeout_seconds: 30.0,
+        local_bearer_token: None,
+        usage_db_path: ":memory:".to_string(),
+        state_db_path: ":memory:".to_string(),
+        api_keys_path: ":memory:".to_string(),
+        token_price_config_path: ":memory:".to_string(),
+        model_alias_config_path: ":memory:".to_string(),
+        search_providers_path: ":memory:".to_string(),
+        provider_models_path: ":memory:".to_string(),
+        error_rules_path: ":memory:/nonexistent/error-rules.json".to_string(),
+        auth_invalid_freeze_seconds: 86400.0,
+        subscription_invalid_freeze_seconds: 86400.0,
+        diag_dir: ":memory:".to_string(),
+        diag_max_bytes: 10 * 1024 * 1024,
+        diag_max_files: 0,
+        diag_sample_every: 1,
+        env_file_path: None,
+    };
+    let app_state = AppState::new(settings).unwrap();
+
+    // 两把 key、provider=ark（命中 ark 模板的 CodingPlanEnterprise 订阅失效规则）。
+    let key = |name: &str, env_var: &str| KeyRef {
+        name: name.into(),
+        env_var: env_var.into(),
+        weight: 1,
+        provider: "ark".into(),
+        billing_type: "subscription".into(),
+        persist: true,
+    };
+    let alias = ModelAlias::new(
+        "ark/sub-fallback",
+        "openai/sub-fallback",
+        &format!("http://{addr}"),
+        vec![
+            key("bad", "RESP_SUB_BAD_KEY"),
+            key("good", "RESP_SUB_GOOD_KEY"),
+        ],
+        None,
+    );
+
+    let response = stream_responses_route(
+        app_state.clone(),
+        vec![alias],
+        None,
+        json!({ "model": "ark/sub-fallback", "input": "hi", "stream": true }),
+        Some(json!({
+            "model": "ark/sub-fallback",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": true,
+        })),
+    )
+    .await;
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8_lossy(&body);
+    server.abort();
+
+    // 第一把 key 失败后应换第二把成功：流正常收尾，无 error 事件。
+    assert!(
+        text.contains("response.created"),
+        "第二把 key 应成功产出正常事件，got: {text}"
+    );
+    assert!(
+        !text.contains("event: error"),
+        "订阅失效应换 key 而非终态失败，got: {text}"
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 2, "应恰好两次上游调用");
+
+    // 撞 400 的那把 key（无会话时加权随机选首选，可能是两把中任一把）
+    // 被整把冻结（invalid 分类），另一把继续服务。
+    let snapshot = app_state.state.lock().unwrap().snapshot().unwrap();
+    let frozen = snapshot["frozen"].as_object().expect("frozen map in state");
+    assert_eq!(frozen.len(), 1, "只应冻结订阅失效的那把 key: {frozen:?}");
+    let entry = frozen.values().next().unwrap();
+    assert!(
+        entry["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("invalid"),
+        "冻结 reason 应为 invalid 分类，实际 {:?}",
+        entry["reason"]
+    );
 }

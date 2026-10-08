@@ -1,9 +1,15 @@
-//! 配额/鉴权失败/retry-after 解析与 key 冻结判定（纯函数）。
+//! 限流恢复时刻解析与 key 状态 id（纯函数）。
+//!
+//! 历史说明：本模块原先还承担 key 级失效判定（is_subscription_invalid /
+//! parse_auth_invalid / maybe_freeze_key，靠报错文案匹配）。2026-10 起
+//! 失效/限流/模型不支持/其他四类判定迁移到 `error_rules`（模板化规则 +
+//! 差分冻结），文案匹配不再是"是否切 key"的裁判；这里只保留
+//! 限流恢复时刻的解析（retry-after 头 / body reset-at 时间戳）。
+//! "subscription has expired" / 401-403 / ark codingplan 组合等特征
+//! 已移入 error_rules 内置模板（default / ark），可在 dashboard 设置页编辑。
 
-use super::state::RouterState;
-use crate::config::{KeyRef, Settings};
+use crate::config::KeyRef;
 use crate::state_store::now_seconds;
-use http::HeaderMap;
 use regex::Regex;
 
 pub fn parse_retry_after(value: Option<&str>) -> Option<f64> {
@@ -18,7 +24,12 @@ pub fn parse_retry_after(value: Option<&str>) -> Option<f64> {
     })
 }
 
-pub fn parse_quota_reset(text: &str, settings: &Settings) -> Option<(f64, &'static str)> {
+/// 解析月度/5小时配额重置时刻；未解析到时用调用方给的兜底时长。
+pub fn parse_quota_reset(
+    text: &str,
+    monthly_fallback_seconds: f64,
+    five_hour_fallback_seconds: f64,
+) -> Option<(f64, &'static str)> {
     let lowered = text.to_lowercase();
     let monthly = lowered.contains("you have exceeded the monthly usage quota");
     let five_hour = lowered.contains("you have exceeded the 5-hour usage quota");
@@ -36,41 +47,13 @@ pub fn parse_quota_reset(text: &str, settings: &Settings) -> Option<(f64, &'stat
         ));
     }
     if monthly {
-        Some((
-            now_seconds() + settings.monthly_quota_fallback_seconds,
-            "monthly_quota",
-        ))
+        Some((now_seconds() + monthly_fallback_seconds, "monthly_quota"))
     } else {
         Some((
-            now_seconds() + settings.five_hour_quota_fallback_seconds,
+            now_seconds() + five_hour_fallback_seconds,
             "five_hour_quota",
         ))
     }
-}
-
-pub fn parse_auth_invalid(text: &str, settings: &Settings) -> Option<(f64, &'static str)> {
-    let lowered = text.to_lowercase();
-    if lowered.contains("authentication_error")
-        || lowered.contains("authentication fails")
-        || (lowered.contains("api key") && lowered.contains("invalid"))
-    {
-        Some((
-            now_seconds() + settings.auth_invalid_freeze_seconds,
-            "auth_invalid",
-        ))
-    } else {
-        None
-    }
-}
-
-/// 账号订阅失效/过期识别（key 级永久性故障）：覆盖 ark coding plan 的
-/// "Your account (...) does not have a valid CodingPlan subscription, or your
-/// subscription has expired"。这类错误通常以 HTTP 400 到达（不在 retry_on_status），
-/// 但本质与 401/402 同级——是账号/密钥问题而非请求问题，该 key 上所有模型
-/// 都会失败，应整把冻结排除出可用池，而不是原地报错。
-pub fn is_subscription_invalid(text: &str) -> bool {
-    let lowered = text.to_lowercase();
-    lowered.contains("codingplan subscription") || lowered.contains("subscription has expired")
 }
 
 fn parse_reset_timestamp(text: &str) -> Option<f64> {
@@ -91,45 +74,4 @@ pub(crate) fn key_state_id(key: &KeyRef) -> String {
     } else {
         format!("{}/{}", key.provider, key.name)
     }
-}
-
-pub fn maybe_freeze_key(
-    state: &mut RouterState,
-    key: &KeyRef,
-    status_code: u16,
-    headers: &HeaderMap,
-    body_text: &str,
-    settings: &Settings,
-) -> anyhow::Result<()> {
-    if status_code < 400 {
-        return Ok(());
-    }
-    if let Some((until, reason)) = parse_quota_reset(body_text, settings) {
-        state.freeze(&key_state_id(key), until, reason)?;
-        return Ok(());
-    }
-    if is_subscription_invalid(body_text) {
-        state.freeze(
-            &key_state_id(key),
-            now_seconds() + settings.subscription_invalid_freeze_seconds,
-            "subscription_invalid",
-        )?;
-        return Ok(());
-    }
-    if matches!(status_code, 401 | 403) {
-        if let Some((until, reason)) = parse_auth_invalid(body_text, settings) {
-            state.freeze(&key_state_id(key), until, reason)?;
-            return Ok(());
-        }
-    }
-    if status_code == 429 {
-        if let Some(until) = parse_retry_after(
-            headers
-                .get("retry-after")
-                .and_then(|value| value.to_str().ok()),
-        ) {
-            state.freeze(&key_state_id(key), until, "retry_after")?;
-        }
-    }
-    Ok(())
 }

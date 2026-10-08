@@ -14,12 +14,13 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::time::{Duration, SystemTime};
 
-/// 监听的 v2 配置文件（与 `load_v2_config` 读取的路径一致）。
+/// 监听的配置文件（v2 + 报错分类规则）。
 const WATCH_PATHS: &[&str] = &[
     config_v2::V2_PROVIDERS_PATH,
     config_v2::V2_MODELS_PATH,
     config_v2::V2_LOGICAL_MODELS_PATH,
     config_v2::V2_VIRTUAL_MODELS_PATH,
+    crate::error_rules::ERROR_RULES_PATH,
 ];
 
 /// 轮询间隔。
@@ -60,7 +61,7 @@ pub(crate) fn spawn_watcher(app: AppState) {
                 .collect();
             last = current;
             // std Mutex 只在同步块内持有，重载为快速文件 IO + 解析，不跨 await。
-            let loaded = {
+            let (v2_loaded, rules_loaded) = {
                 let mut state = match app.state.lock() {
                     Ok(state) => state,
                     Err(_) => {
@@ -68,15 +69,14 @@ pub(crate) fn spawn_watcher(app: AppState) {
                         continue;
                     }
                 };
-                state.hot_reload_v2()
+                let v2_loaded = state.hot_reload_v2();
+                let rules_loaded = state.reload_error_rules();
+                (v2_loaded, rules_loaded)
             };
             eprintln!(
-                "llm-provider-router hot-reload: v2 config change detected in {changed:?}; {}",
-                if loaded {
-                    "config reloaded"
-                } else {
-                    "reload failed, keeping last good config (v2 config invalid)"
-                }
+                "llm-provider-router hot-reload: config change detected in {changed:?}; v2={}, error-rules={}",
+                if v2_loaded { "reloaded" } else { "reload failed, keeping last good" },
+                if rules_loaded { "reloaded" } else { "reload failed, keeping last good" },
             );
         }
     });
