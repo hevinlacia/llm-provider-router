@@ -1,0 +1,27 @@
+.agents/skills/llm-router-deploy/scripts/probe_slot.py
+  494af3194e2303f5 1-61,66,74,77,84-114
+.agents/skills/llm-router-deploy/references/incident-2026-10-08-405.md
+  494af3194e2303f5 1-42
+.agents/skills/llm-router-deploy/SKILL.md
+  494af3194e2303f5 1-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "3b5f1ded43693542347d8b988a32e4203ac46909",
+  "prompts": {
+    "494af3194e2303f5": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a11976-b8c5-7188-b8a7-c601b9d6fcaf",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 253,
+      "total_deletions": 0,
+      "accepted_lines": 229,
+      "overriden_lines": 15
+    }
+  }
+}
