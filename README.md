@@ -98,7 +98,7 @@ npm run build
 - `GET /api/router/capabilities` — dynamic context negotiation view: per logical model `effective: {contextWindow,maxTokens}` (conservative min across available physical targets) + per-target windows/availability.
 - `POST /v1/messages` — **Anthropic Messages API** entry（对外两种 API 之一）。Per provider it either **passes through** to a native Anthropic upstream or **translates** via the Responses machinery (see [Anthropic API Support](#anthropic-api-support)). Non-streaming JSON and streaming SSE（Anthropic `message_start` / `content_block_delta` / `message_stop` 事件）均支持。
 - `POST /v1/responses` — OpenAI **Responses API** entry（对外两种 API 之一）。Per provider it either **passes through** to a native Responses upstream or **translates** to/from chat completions (see [Responses API Support](#responses-api-support)). Non-streaming JSON and streaming SSE (Responses `response.*` events) are both supported.
-- `POST /v1/search` — unified web search proxy (search key pool): authenticated with the same local bearer token, routes to Tavily/Exa/Brave by key pool. See [Search Key Pool](#search-key-pool).
+- `POST /v1/search` — unified web search proxy: authenticated with the same local bearer token. Defaults to **Chrome-rendered search** (Google → Bing, no API key needed), falls back to the Tavily/Exa/Brave key pool. See [Search](#search-key-pool).
 - `GET/PUT /api/config/search-providers` — inspect/update the search key pool configuration.
 - `GET /_proxy/health` — front-proxy backend health.
 - `POST /_proxy/active/{slot}` — switch active blue/green slot.
@@ -201,14 +201,29 @@ bin/vault.sh status    # 校验副本存在与可解密（不回显内容）
 
 新增 key 后：Settings 里保存 provider → Set 值 → `bin/vault.sh encrypt` → commit。
 
-## Search Key Pool
+## Search
 
-The router exposes a **unified web search endpoint** `POST /v1/search` that hides multiple search providers (Tavily / Exa / Brave) behind the router's single local bearer token — clients only need one key.
+The router exposes a **unified web search endpoint** `POST /v1/search` behind the router's single local bearer token — clients only need one key.
+
+Two paths, tried in order:
+
+1. **Chrome (default)** — drives a dedicated headless Chrome (systemd user unit `llm-provider-router-chrome.service`, CDP `:9223`, isolated profile) to render Google → Bing result pages and parse them into the unified format. No API key, no third-party search API. Failures / empty results degrade to the key pool.
+2. **API key pool** — Tavily / Exa / Brave, weighted key selection (legacy path, still available via `provider`).
+
+Notes:
+- Google is tried first: measured result quality is better than cn.bing.com (which serves generic results for some queries regardless of `mkt`/`ensearch`). Unauthenticated Google serves encrypted `/goto` hrefs; the parser restores URLs from `cite` display URLs and drops results it cannot restore.
+- Logging a Google account into the dedicated profile (`~/.local/share/llm-provider-router/chrome-profile`) upgrades URLs to plaintext hrefs and reduces CAPTCHA risk.
 
 ### Configuration (`config/search-providers.json`)
 
 ```jsonc
 {
+  "chrome": {
+    "enabled": true,                                  // auto (default) tries Chrome-rendered search first
+    "cdp_url": "http://127.0.0.1:9223",               // dedicated headless Chrome (systemd user unit)
+    "engines": ["google", "bing"],                    // engine priority
+    "timeout_ms": 20000
+  },
   "providers": {
     "tavily": {
       "base_url": "https://api.tavily.com",          // optional, defaults to official endpoint
@@ -223,6 +238,7 @@ The router exposes a **unified web search endpoint** `POST /v1/search` that hide
 }
 ```
 
+- `chrome` section is optional; omitting it enables Chrome search with defaults. Set `"chrome": {"enabled": false}` to make `auto` go straight to the key pool.
 - Provider names must be one of `tavily` / `exa` / `brave`; `base_url` is optional (official endpoint is the default).
 - `keys.<name>.env_var` reads the actual key value from the environment; `weight` controls weighted random selection inside the provider; `enabled: false` takes the key out of rotation.
 - Key values are never written to disk by the router — configure them in the environment (e.g. `~/.config/opencode/agent-secrets.env`).
@@ -236,7 +252,8 @@ curl -X POST http://127.0.0.1:8789/v1/search \
   -d '{
     "query": "Spring Boot 4 requirements",
     "max_results": 5,
-    "provider": "auto",                 // auto | tavily | exa | brave
+    "provider": "auto",                 // auto | chrome | bing | google | tavily | exa | brave
+                                        // bing/google lock the chrome engine to a single engine (explicit, no fallback)
     "search_depth": "basic",            // tavily: basic | advanced
     "topic": "general",                 // tavily: general | news | finance
     "time_range": "week",               // tavily: optional day|week|month|year

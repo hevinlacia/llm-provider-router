@@ -1,12 +1,23 @@
 //! 搜索 key 池 + 统一 `/v1/search` 契约。
 //!
 //! 对外：`POST /v1/search`，用 router 本地 bearer token 认证（对外只暴露一个 key）。
-//! 对内：按 key 池（providers → keys）加权选择供应商与 key，把统一请求翻译成
-//!       各搜索供应商的 API 请求，再把响应归一化为统一结构。
+//! 对内：两条路径 ——
+//!   1. chrome（默认）：驱动本机专用 headless Chrome 渲染搜索引擎结果页并解析，
+//!      无需 key，详见 `search_chrome.rs`；`provider` 缺省/`auto` 时优先走它
+//!      （引擎顺序默认 google→bing，bing 兜底；实测 cn.bing.com 对部分查询降质），
+//!      失败/空结果时降级到 key 池 API 供应商。
+//!   2. API key 池（tavily/exa/brave）：按 providers → keys 加权选择供应商与 key，
+//!      把统一请求翻译成各搜索供应商的 API 请求，再把响应归一化为统一结构。
 //!
 //! 配置：`config/search-providers.json`（路径可用 `LLM_PROVIDER_ROUTER_SEARCH_PROVIDERS_PATH` 覆盖）
 //! ```jsonc
 //! {
+//!   "chrome": {
+//!     "enabled": true,                                  // auto 默认先走 chrome 渲染搜索
+//!     "cdp_url": "http://127.0.0.1:9223",               // 专用 headless Chrome（systemd user unit）
+//!     "engines": ["google", "bing"],                    // 引擎优先级（默认 google 先）
+//!     "timeout_ms": 20000
+//!   },
 //!   "providers": {
 //!     "tavily": {
 //!       "base_url": "https://api.tavily.com",           // 可选，缺省用官方默认
@@ -38,7 +49,7 @@
 //! 统一响应体：
 //! ```json
 //! {
-//!   "provider": "tavily",
+//!   "provider": "chrome-bing",
 //!   "query": "...",
 //!   "results": [
 //!     { "title": "...", "url": "...", "snippet": "...", "published_date": "...", "score": 0.9 }
@@ -48,6 +59,7 @@
 //! ```
 
 use crate::config::expand_path;
+use crate::search_chrome::ChromeSearchConfig;
 use anyhow::{anyhow, Context};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -90,8 +102,17 @@ pub struct SearchProviderConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct SearchProvidersFile {
+    /// Chrome(CDP) 渲染搜索配置（无 key）；缺省时启用（enabled=true，google→bing，bing 兜底）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chrome: Option<ChromeSearchConfig>,
     #[serde(default)]
     pub providers: HashMap<String, SearchProviderConfig>,
+}
+
+impl SearchProvidersFile {
+    pub fn chrome_config(&self) -> ChromeSearchConfig {
+        self.chrome.clone().unwrap_or_default()
+    }
 }
 
 /// 供应商类型：名字（tavily/exa/brave）决定请求翻译与响应归一化方式。
@@ -194,7 +215,20 @@ fn unified_response(
 // SearchPool：配置加载 / 写回 / key 值解析 / key 池选择 / 统一搜索
 // ---------------------------------------------------------------------------
 
+/// resolve 的产出：chrome 渲染搜索（engines 依序尝试）或 API key 池目标。
+/// `explicit=true` 表示请求点名了 chrome/bing/google，失败时不降级 API。
+#[derive(Debug)]
+pub enum SearchPlan {
+    Chrome {
+        cfg: ChromeSearchConfig,
+        engines: Vec<String>,
+        explicit: bool,
+    },
+    Api(ResolvedSearch),
+}
+
 /// 锁内同步解析出的搜索目标（provider / key / base_url），锁外执行网络请求。
+#[derive(Debug)]
 pub struct ResolvedSearch {
     pub provider: String,
     pub key_value: String,
@@ -257,7 +291,8 @@ impl SearchPool {
                 }),
             );
         }
-        let payload = serde_json::json!({ "providers": providers });
+        // chrome 节保留写回（None → null，读回即 None）。
+        let payload = serde_json::json!({ "chrome": file.chrome, "providers": providers });
         fs::write(
             &self.config_path,
             format!("{}\n", serde_json::to_string_pretty(&payload)?),
@@ -381,10 +416,60 @@ impl SearchPool {
         Ok((provider_name, key_name, key_value))
     }
 
-    /// 锁内同步：选供应商 + key，返回解析结果（不含网络 IO）。
+    /// 锁内同步：把统一请求解析为执行计划（不含网络 IO）。
+    ///
+    /// - 缺省 / "auto"：chrome 配置 enabled（默认）时优先 chrome 渲染搜索（默认 google→bing，
+    ///   bing 兜底）；
+    ///   disabled 或执行失败时由 handler 降级到 API key 池。
+    /// - "chrome" / "bing" / "google"：强制 chrome（显式点名，失败不降级）。
+    ///   "bing"/"google" 分别锁定单引擎；"chrome" 用配置的引擎顺序。
+    /// - "tavily" / "exa" / "brave"：API key 池，同原逻辑。
+    pub fn resolve(&mut self, req: &UnifiedSearchRequest) -> anyhow::Result<SearchPlan> {
+        let query = req.query.trim();
+        if query.is_empty() {
+            return Err(anyhow!("query must not be empty"));
+        }
+        let requested = req
+            .provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let chrome = self.get().chrome_config();
+        match requested {
+            Some(name @ ("chrome" | "bing" | "google")) => {
+                if !chrome.enabled {
+                    return Err(anyhow!("chrome search disabled in search-providers config"));
+                }
+                let engines = match name {
+                    "bing" => vec!["bing".to_string()],
+                    "google" => vec!["google".to_string()],
+                    _ => chrome.engines_or_default(),
+                };
+                Ok(SearchPlan::Chrome {
+                    cfg: chrome,
+                    engines,
+                    explicit: true,
+                })
+            }
+            Some(_) => Ok(SearchPlan::Api(self.resolve_api(req)?)),
+            None => {
+                if chrome.enabled {
+                    Ok(SearchPlan::Chrome {
+                        engines: chrome.engines_or_default(),
+                        cfg: chrome,
+                        explicit: false,
+                    })
+                } else {
+                    Ok(SearchPlan::Api(self.resolve_api(req)?))
+                }
+            }
+        }
+    }
+
+    /// API key 池路径：选供应商 + key，返回解析结果（不含网络 IO）。
     /// `requested` 为 None / "auto" 时在全部可用供应商间按"供应商可用 key 权重和"加权选择；
     /// 指定供应商时只在它内部选（其下无可用 key 则报错）。
-    pub fn resolve(&mut self, req: &UnifiedSearchRequest) -> anyhow::Result<ResolvedSearch> {
+    pub fn resolve_api(&mut self, req: &UnifiedSearchRequest) -> anyhow::Result<ResolvedSearch> {
         let query = req.query.trim();
         if query.is_empty() {
             return Err(anyhow!("query must not be empty"));
@@ -818,12 +903,105 @@ mod tests {
     #[test]
     fn pick_provider_key_unknown_provider_errors() {
         let mut pool = test_pool(r#"{"providers":{}}"#);
-        let result = pool.pick_provider_key(Some("google"));
+        let result = pool.pick_provider_key(Some("nosuchprovider"));
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
             .to_string()
             .contains("unknown search provider"));
+    }
+
+    #[test]
+    fn resolve_defaults_to_chrome_plan() {
+        // chrome 配置缺省时：auto 默认 chrome（google→bing），而非 API key 池
+        let mut pool = test_pool(r#"{"providers":{}}"#);
+        let req = UnifiedSearchRequest {
+            query: "q".into(),
+            max_results: None,
+            provider: None,
+            search_depth: None,
+            topic: None,
+            time_range: None,
+            include_answer: None,
+            include_domains: None,
+            exclude_domains: None,
+        };
+        match pool.resolve(&req).unwrap() {
+            SearchPlan::Chrome {
+                engines, explicit, ..
+            } => {
+                assert_eq!(engines, vec!["google".to_string(), "bing".to_string()]);
+                assert!(!explicit);
+            }
+            other => panic!("expected chrome plan, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_chrome_disabled_falls_back_to_api_error() {
+        // chrome 禁用且无 API key 配置时：auto 应报“无可用搜索供应商”而非误走 chrome
+        let mut pool = test_pool(r#"{"chrome":{"enabled":false},"providers":{}}"#);
+        let req = UnifiedSearchRequest {
+            query: "q".into(),
+            max_results: None,
+            provider: None,
+            search_depth: None,
+            topic: None,
+            time_range: None,
+            include_answer: None,
+            include_domains: None,
+            exclude_domains: None,
+        };
+        let err = pool.resolve(&req).unwrap_err();
+        assert!(err.to_string().contains("no available search key"));
+    }
+
+    #[test]
+    fn resolve_explicit_bing_locks_single_engine() {
+        let mut pool = test_pool(r#"{"providers":{}}"#);
+        let req = UnifiedSearchRequest {
+            query: "q".into(),
+            max_results: None,
+            provider: Some("bing".into()),
+            search_depth: None,
+            topic: None,
+            time_range: None,
+            include_answer: None,
+            include_domains: None,
+            exclude_domains: None,
+        };
+        match pool.resolve(&req).unwrap() {
+            SearchPlan::Chrome {
+                engines, explicit, ..
+            } => {
+                assert_eq!(engines, vec!["bing".to_string()]);
+                assert!(explicit);
+            }
+            other => panic!("expected explicit chrome plan, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn chrome_config_roundtrip_preserved_on_write() {
+        // set() 写回时 chrome 节不能丢
+        let dir =
+            std::env::temp_dir().join(format!("lpr-search-chrome-write-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("search-providers.json");
+        let mut pool = SearchPool::new(path.to_str().unwrap());
+        let mut file = SearchProvidersFile::default();
+        file.chrome = Some(ChromeSearchConfig {
+            enabled: true,
+            cdp_url: "http://127.0.0.1:9300".into(),
+            engines: vec!["bing".into()],
+            timeout_ms: 9_000,
+        });
+        pool.set(file).unwrap();
+        let reloaded = SearchPool::new(path.to_str().unwrap()).get();
+        let chrome = reloaded.chrome_config();
+        assert_eq!(chrome.cdp_url, "http://127.0.0.1:9300");
+        assert_eq!(chrome.engines, vec!["bing".to_string()]);
+        assert_eq!(chrome.timeout_ms, 9_000);
     }
 
     #[test]

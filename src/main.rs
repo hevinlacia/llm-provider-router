@@ -9,6 +9,7 @@ mod hot_reload;
 mod json_config;
 mod routes;
 mod search;
+mod search_chrome;
 mod shutdown;
 mod slot_manager;
 mod state_store;

@@ -1,0 +1,24 @@
+# llm-provider-router 的搜索后端：专用 headless Chrome（CDP :9223）。
+#
+# 为什么独立 user-data-dir：M136+ 默认 profile 有 CDP lockdown、M147+ 禁用 /json/*
+# discovery、且日常 Chrome 的 remote debugging toggle 带 per-session 审批弹窗——
+# 都不适合无人值守服务。独立 profile 还可单独维护搜索引擎登录态（登录一次
+# google.com 可显著改善结果质量：明文 href、更少风控）。
+#
+# 安装：
+#   cp systemd/llm-provider-router-chrome.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now llm-provider-router-chrome.service
+# 验证：curl http://127.0.0.1:9223/json/version
+
+[Unit]
+Description=Headless Chrome for llm-provider-router search (CDP :9223)
+After=network-online.target
+
+[Service]
+ExecStart=/opt/google/chrome/chrome --headless=new --remote-debugging-port=9223 --user-data-dir=%h/.local/share/llm-provider-router/chrome-profile --no-first-run --no-default-browser-check --disable-blink-features=AutomationControlled --window-size=1440,900 about:blank
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
