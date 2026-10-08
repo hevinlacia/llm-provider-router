@@ -1,5 +1,20 @@
 {
   "providers": {
+    "deepseek-official": {
+      "base_url": "",
+      "responses_base_url": "https://api.deepseek.com",
+      "anthropic_base_url": "https://api.deepseek.com/anthropic",
+      "retry": null,
+      "keys": {
+        "deepseek-official": {
+          "env_var": "AGENT_AI_DEEPSEEK_API_KEY",
+          "weight": 1,
+          "billing_type": "payg",
+          "enabled": false,
+          "persist": true
+        }
+      }
+    },
     "opencode-go": {
       "base_url": "https://opencode.ai/zen/go/v1",
       "responses_base_url": "https://opencode.ai/zen/go/v1",
@@ -33,6 +48,20 @@
         ]
       },
       "keys": {
+        "hevin": {
+          "env_var": "AGENT_AI_ARK_HEVIN_API_KEY",
+          "weight": 1,
+          "billing_type": "subscription",
+          "enabled": true,
+          "persist": true
+        },
+        "cyw": {
+          "env_var": "",
+          "weight": 1,
+          "billing_type": "subscription",
+          "enabled": true,
+          "persist": true
+        },
         "hevin2": {
           "env_var": "AGENT_AI_ARK_HEVIN2_API_KEY",
           "weight": 1,
@@ -44,29 +73,7 @@
           "env_var": "AGENT_AI_ARK_HEVIN_PRIVATE_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
-          "enabled": false,
-          "persist": true
-        },
-        "hevin": {
-          "env_var": "AGENT_AI_ARK_HEVIN_API_KEY",
-          "weight": 1,
-          "billing_type": "subscription",
           "enabled": true,
-          "persist": true
-        }
-      }
-    },
-    "deepseek-official": {
-      "base_url": "",
-      "responses_base_url": "https://api.deepseek.com",
-      "anthropic_base_url": "https://api.deepseek.com/anthropic",
-      "retry": null,
-      "keys": {
-        "deepseek-official": {
-          "env_var": "AGENT_AI_DEEPSEEK_API_KEY",
-          "weight": 1,
-          "billing_type": "payg",
-          "enabled": false,
           "persist": true
         }
       }
