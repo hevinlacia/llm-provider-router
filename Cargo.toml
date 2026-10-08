@@ -13,6 +13,7 @@ chrono = { version = "0.4", features = ["clock", "serde"] }
 futures-util = "0.3"
 http = "1.3"
 httpdate = "1.0"
+libc = "0.2"
 rand = "0.8"
 regex = "1.11"
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "stream"] }

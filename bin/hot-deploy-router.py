@@ -11,6 +11,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from deploy_lock import HeldLock, LockHeldError, acquire as lock_acquire, probe as lock_probe, release as lock_release  # noqa: E402
+
 SLOTS = {
     "blue": {"port": 8790, "url": "http://127.0.0.1:8790"},
     "green": {"port": 8791, "url": "http://127.0.0.1:8791"},
@@ -191,6 +194,29 @@ def status() -> None:
     print(f"active_file={ACTIVE_FILE}")
 
 
+def switch_via_proxy(slot: str, token: str | None) -> dict:
+    """通过 front-proxy 切流（携带部署锁 token；proxy 侧校验失败会返回 409）。"""
+    ensure_proxy_running()
+    url = f"{proxy_url().rstrip('/')}/_proxy/active/{slot}"
+    req = urllib.request.Request(url, method="POST", data=b"")
+    if token:
+        req.add_header("X-Deploy-Lock", token)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        try:
+            detail = json.loads(body)
+        except json.JSONDecodeError:
+            detail = {"error": body[:200]}
+        lock = detail.get("lock") or {}
+        raise RuntimeError(
+            f"proxy rejected switch (HTTP {exc.code}): {detail.get('error', body[:120])}"
+            + (f"; lock held by {lock.get('holder')} pid={lock.get('holder_pid')}" if lock else "")
+        ) from None
+
+
 def deploy(args: argparse.Namespace) -> int:
     ensure_proxy_running()
     current = read_active_slot()
@@ -205,22 +231,30 @@ def deploy(args: argparse.Namespace) -> int:
     old = current if current in SLOTS and current != target else None
 
     print(f"current={current or 'unset'} target={target} old={old or 'none'}")
-    # 部署必强制重启目标 slot，确保加载当前二进制（start 对已运行服务是 no-op）
-    bring_up_backend(target, args.health_timeout, restart=True)
-    write_active_slot(target)
-    print(f"switched active backend to {target} ({SLOTS[target]['url']})")
+    try:
+        # 部署互斥锁（2026-10-08 事故：两会话同时部署互相覆盖槽位状态）：
+        # 整个重启目标槽→切流→复检→（可能回滚）流程持锁，其他部署等待或失败
+        with HeldLock(args.lock_wait, holder=f"deploy(pid:{os.getpid()})") as lock_token:
+            # 部署必强制重启目标 slot，确保加载当前二进制（start 对已运行服务是 no-op）
+            bring_up_backend(target, args.health_timeout, restart=True)
+            # 必须携带自己的 token：proxy 对持锁状态的切流请求校验 token，不带会 409
+            switch_via_proxy(target, lock_token)
+            print(f"switched active backend to {target} ({SLOTS[target]['url']})")
 
-    # 切换后立即用 front-proxy 复检（AGENTS.md）；任一失败即回滚，不得停留在未验证状态
-    ok, failures = verify_after_switch()
-    if not ok:
-        for failure in failures:
-            print(f"VERIFY FAIL: {failure}", file=sys.stderr)
-        if old:
-            print(f"rolling back to {old}...", file=sys.stderr)
-            write_active_slot(old)
-            bring_up_backend(old, args.health_timeout, restart=False)
-        stop_backend(target)
-        status()
+            # 切换后立即用 front-proxy 复检（AGENTS.md）；任一失败即回滚，不得停留在未验证状态
+            ok, failures = verify_after_switch()
+            if not ok:
+                for failure in failures:
+                    print(f"VERIFY FAIL: {failure}", file=sys.stderr)
+                if old:
+                    print(f"rolling back to {old}...", file=sys.stderr)
+                    switch_via_proxy(old, lock_token)
+                    bring_up_backend(old, args.health_timeout, restart=False)
+                stop_backend(target)
+                status()
+                return 1
+    except LockHeldError as exc:
+        print(f"ERROR: another deploy is in progress: {exc}", file=sys.stderr)
         return 1
 
     if old:
@@ -236,6 +270,64 @@ def deploy(args: argparse.Namespace) -> int:
     return 0
 
 
+def stage(args: argparse.Namespace) -> int:
+    """两段式部署阶段 1：重启非活跃槽加载新二进制，获取并持有部署锁（跨调用存活）。
+
+    锁由 fork 出的 holder 子进程持有，stage→probe→switch 之间不释放；
+    switch 后用 `lock-release --token <T>` 释放。
+    """
+    ensure_proxy_running()
+    current = read_active_slot()
+    target = args.slot or inactive_slot(current)
+    try:
+        token = lock_acquire(args.lock_wait, holder=f"stage(slot:{target}, pid:{os.getpid()})")
+    except LockHeldError as exc:
+        print(f"ERROR: another deploy is in progress: {exc}", file=sys.stderr)
+        return 1
+    bring_up_backend(target, args.health_timeout, restart=True)
+    print(f"staged slot={target} health=ok (current active={current or 'unset'} unchanged)")
+    print(f"lock_token={token}")
+    print(f"next: probe the slot, then `hot-deploy-router.py switch --slot {target} --lock-token {token}`, finally `lock-release --token {token}`")
+    return 0
+
+
+def switch(args: argparse.Namespace) -> int:
+    """两段式部署阶段 2：校验锁持有后经 front-proxy 切流并复检。"""
+    state = lock_probe()
+    if not state["locked"]:
+        print(
+            "ERROR: no deploy lock is held; run `lock-acquire` (or one-shot `deploy`) first — "
+            "unlocked switches are how two sessions overwrite each other (2026-10-08)",
+            file=sys.stderr,
+        )
+        return 1
+    holder = state["holder"] or {}
+    if not args.lock_token or args.lock_token != holder.get("token"):
+        print(
+            f"ERROR: deploy lock is held by {holder.get('holder', 'unknown')} "
+            f"(pid={holder.get('holder_pid')}) and the provided token does not match",
+            file=sys.stderr,
+        )
+        return 1
+    current = read_active_slot()
+    if args.slot == current:
+        print(f"slot {args.slot} is already active; nothing to do")
+        return 0
+    result = switch_via_proxy(args.slot, args.lock_token)
+    print(f"switched active backend to {args.slot} ({result.get('backend', '')})")
+    ok, failures = verify_after_switch()
+    if not ok:
+        for failure in failures:
+            print(f"VERIFY FAIL: {failure}", file=sys.stderr)
+        print(f"rolling back to {current}...", file=sys.stderr)
+        switch_via_proxy(current, args.lock_token)
+        bring_up_backend(current, args.health_timeout, restart=False)
+        return 1
+    print(f"lock_token={args.lock_token} still held; release with `lock-release --token {args.lock_token}` when done")
+    status()
+    return 0
+
+
 def bootstrap(args: argparse.Namespace) -> None:
     slot = args.slot
     bring_up_backend(slot, args.health_timeout, restart=False)
@@ -245,6 +337,28 @@ def bootstrap(args: argparse.Namespace) -> None:
     if args.stop_other:
         stop_backend(other)
     status()
+
+
+def lock_release_cmd(a: argparse.Namespace) -> None:
+    if not lock_release(a.token, a.force):
+        raise SystemExit(1)
+
+
+def _print_lock(fn) -> None:
+    """lock 子命令统一出口：异常转 stderr + 退出码，成功打印返回值。"""
+    try:
+        result = fn()
+        if isinstance(result, dict):
+            holder = result.get("holder") or {}
+            if result.get("locked"):
+                print(f"locked by {holder.get('holder', 'unknown')} (pid={holder.get('holder_pid', '?')}, since={holder.get('acquired_at', '?')}, token={holder.get('token', '?')})")
+            else:
+                print("free")
+        elif result is not None:
+            print(result)
+    except LockHeldError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
 
 
 def main() -> int:
@@ -257,10 +371,36 @@ def main() -> int:
     p_boot.add_argument("--stop-other", action="store_true")
     p_boot.set_defaults(func=bootstrap)
 
-    p_deploy = sub.add_parser("deploy", help="Restart inactive slot with current binary, switch traffic, verify, keep old slot as warm standby.")
+    p_deploy = sub.add_parser("deploy", help="Restart inactive slot with current binary, switch traffic, verify, keep old slot as warm standby. Holds the deploy mutex for the whole run.")
     p_deploy.add_argument("--slot", choices=sorted(SLOTS), help="Target slot. Defaults to inactive slot.")
     p_deploy.add_argument("--health-timeout", type=int, default=30)
+    p_deploy.add_argument("--lock-wait", type=int, default=300, help="Seconds to wait when another deploy holds the lock (0=fail fast, default 300).")
     p_deploy.set_defaults(func=deploy)
+
+    p_stage = sub.add_parser("stage", help="Two-phase deploy step 1: restart inactive slot with current binary; acquires and HOLDS the deploy lock across invocations.")
+    p_stage.add_argument("--slot", choices=sorted(SLOTS), help="Target slot. Defaults to inactive slot.")
+    p_stage.add_argument("--health-timeout", type=int, default=30)
+    p_stage.add_argument("--lock-wait", type=int, default=300, help="Seconds to wait when another deploy holds the lock (0=fail fast, default 300).")
+    p_stage.set_defaults(func=stage)
+
+    p_switch = sub.add_parser("switch", help="Two-phase deploy step 2: verify deploy lock token, switch traffic via front-proxy, verify, keep old slot warm.")
+    p_switch.add_argument("--slot", choices=sorted(SLOTS), required=True, help="Target slot.")
+    p_switch.add_argument("--lock-token", required=True, help="Token printed by `stage`/`lock-acquire`.")
+    p_switch.add_argument("--health-timeout", type=int, default=30)
+    p_switch.set_defaults(func=switch)
+
+    p_lacq = sub.add_parser("lock-acquire", help="Acquire the deploy lock without touching slots; prints token.")
+    p_lacq.add_argument("--wait", type=int, default=300)
+    p_lacq.add_argument("--holder", default=f"manual(pid:{os.getpid()})")
+    p_lacq.set_defaults(func=lambda a: _print_lock(lambda: lock_acquire(a.wait, a.holder)))
+
+    p_lrel = sub.add_parser("lock-release", help="Release the deploy lock (token must match; --force for emergencies).")
+    p_lrel.add_argument("--token", required=True)
+    p_lrel.add_argument("--force", action="store_true")
+    p_lrel.set_defaults(func=lock_release_cmd)
+
+    p_lstat = sub.add_parser("lock-status", help="Show deploy lock holder or free.")
+    p_lstat.set_defaults(func=lambda _a: _print_lock(lock_probe))
 
     p_status = sub.add_parser("status", help="Print active slot, services, and health.")
     p_status.set_defaults(func=lambda _args: status())
