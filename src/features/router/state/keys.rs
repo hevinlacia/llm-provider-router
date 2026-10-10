@@ -27,7 +27,7 @@ impl RouterState {
     }
 
     /// 仅保留模型池实际引用的供应商真实模型（物理模型 id）。
-    pub(super) fn referenced_physical_model_ids(&self) -> HashSet<String> {
+    pub(crate) fn referenced_physical_model_ids(&self) -> HashSet<String> {
         let cfg = &self.v2;
         let physical_ids: HashSet<&String> = cfg.models.keys().collect();
         let mut referenced = HashSet::new();

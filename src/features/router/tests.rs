@@ -382,9 +382,18 @@ fn zero_weight_key_is_not_selected_or_reused_from_binding() {
 fn usage_snapshot_includes_cost_by_model() {
     let settings = test_settings();
     let mut state = RouterState::new(settings).unwrap();
+    // 价格模型必须是被引用的物理模型（set_token_prices 校验），
+    // 而本机 config/ 是随 dashboard 漂移的线上数据 —— 取记账池 glm-latest-auto
+    // 实际解析出的物理模型，避免测试与具体模型名耦合（测试意图是成本计算）。
+    let routed = state
+        .route_aliases("glm-latest-auto", None)
+        .into_iter()
+        .next()
+        .expect("glm-latest-auto should resolve to at least one alias");
+    let model_id = format!("{}/{}", routed.provider(), routed.upstream_model());
     state
         .set_token_prices(HashMap::from([(
-            "ark/glm-5-3-260801".to_string(),
+            model_id,
             TokenPrice {
                 input_uncached_per_million: 10.0,
                 input_cached_per_million: 1.0,
