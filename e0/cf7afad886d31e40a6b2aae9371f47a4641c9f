@@ -1,0 +1,45 @@
+frontend/src/features/settings/editors.tsx
+  8c4ef849e4dbc99d 5,12,28,59,77,98,101
+frontend/src/types.ts
+  8c4ef849e4dbc99d 140-141
+src/features/router/selection.rs
+  8c4ef849e4dbc99d 2,9,50-78,81-100
+src/config.rs
+  8c4ef849e4dbc99d 29-32,90-92,116,120-123
+src/config/v2/fold.rs
+  8c4ef849e4dbc99d 85,107
+src/config/v2/resolve.rs
+  8c4ef849e4dbc99d 133,172-173,226-227
+src/routes/config_v2.rs
+  8c4ef849e4dbc99d 103
+src/features/router/state/mod.rs
+  8c4ef849e4dbc99d 11,16,585-604,638-652,654-662
+src/features/router/state/routing.rs
+  8c4ef849e4dbc99d 6-8,24-39
+src/config/v2/types.rs
+  8c4ef849e4dbc99d 31-34
+src/features/router/state/v2.rs
+  8c4ef849e4dbc99d 40,96
+src/usage_store.rs
+  8c4ef849e4dbc99d 370-407
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "e0cf7afad886d31e40a6b2aae9371f47a4641c9f",
+  "prompts": {
+    "8c4ef849e4dbc99d": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a12373-8d09-70ea-8785-0384e7e4efb4",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 206,
+      "total_deletions": 25,
+      "accepted_lines": 193,
+      "overriden_lines": 2
+    }
+  }
+}
