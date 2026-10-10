@@ -276,6 +276,7 @@ async fn all_keys_429_ends_with_error_event_not_empty_stream() {
             provider: "mock-provider".into(),
             billing_type: "subscription".into(),
             persist: true,
+            daily_token_quota: None,
         }],
         Some(RetryPolicy::new(
             300,
@@ -404,6 +405,7 @@ async fn upstream_truncated_stream_emits_response_incomplete() {
             provider: "mock-provider".into(),
             billing_type: "subscription".into(),
             persist: true,
+            daily_token_quota: None,
         }],
         Some(RetryPolicy::new(
             300,
@@ -539,6 +541,7 @@ async fn subscription_invalid_400_falls_back_to_next_key() {
         provider: "ark".into(),
         billing_type: "subscription".into(),
         persist: true,
+        daily_token_quota: None,
     };
     let alias = ModelAlias::new(
         "ark/sub-fallback",

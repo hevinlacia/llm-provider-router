@@ -1,10 +1,12 @@
 //! 选路排序与加权采样（纯函数）：order_targets / weighted_pick / 自定义 key 名归一。
+//! 以及三种策略共用的耗尽判定（日配额）与 priority 降级选择。
 
 use crate::config::{KeyRef, ModelAlias};
 use crate::config_v2::{TargetCandidate, V2Strategy};
 use crate::usage_store::UsageStore;
 use rand::Rng;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 /// 第 1 层路由排序：把物理模型候选排成"首选在前，其余作为回退"。
 /// - priority：按 route.targets 原序；
@@ -43,6 +45,59 @@ pub fn order_targets(
             out
         }
     }
+}
+
+/// 判定单个 key 当日是否耗尽：配置了日配额且当日 tokens 已达限。
+/// 无配额 = 永不耗尽（上游 429 冻结独立兜底）。
+pub fn key_exhausted(key: &KeyRef, used_today: i64) -> bool {
+    key.daily_token_quota
+        .is_some_and(|quota| used_today as u64 >= quota)
+}
+
+/// priority 策略（池层）：耗尽候选软降级。
+/// 候选 key 池内全部 weight>0 的 key 都耗尽 → 该候选耗尽；
+/// 任一 key 无配额（不限）或未达限 → 候选保留。
+/// 全部候选都耗尽时保留原列表：耗尽只是软偏好，退化为失败 failover，
+/// 避免配额配置不准（小于实际上游额度）时把请求直接打死。
+pub fn drop_exhausted_candidates(
+    candidates: Vec<TargetCandidate>,
+    totals: &HashMap<String, i64>,
+) -> Vec<TargetCandidate> {
+    let exhausted = |c: &TargetCandidate| -> bool {
+        let mut has_weighted = false;
+        let mut all_exhausted = true;
+        for key in &c.model.keys {
+            if key.weight <= 0 {
+                continue;
+            }
+            has_weighted = true;
+            let used = totals.get(&key.name).copied().unwrap_or(0);
+            if !key_exhausted(key, used) {
+                all_exhausted = false;
+                break;
+            }
+        }
+        has_weighted && all_exhausted
+    };
+    if candidates.iter().any(|c| !exhausted(c)) {
+        candidates.into_iter().filter(|c| !exhausted(c)).collect()
+    } else {
+        candidates
+    }
+}
+
+/// priority 策略（key 层）：weight 降序（同权重按名字升序稳定排序）为优先级序，
+/// 取第一个未耗尽的 key。全部耗尽返回 None，调用方回退（加权采样 / 失败 failover）。
+pub fn priority_key_pick(keys: &[KeyRef], totals: &HashMap<String, i64>) -> Option<KeyRef> {
+    let mut sorted: Vec<&KeyRef> = keys.iter().collect();
+    sorted.sort_by(|a, b| b.weight.cmp(&a.weight).then_with(|| a.name.cmp(&b.name)));
+    sorted
+        .into_iter()
+        .find(|key| {
+            let used = totals.get(&key.name).copied().unwrap_or(0);
+            !key_exhausted(key, used)
+        })
+        .cloned()
 }
 
 /// 按 weight 加权采样首选的下标（session 粘性：同 session 结果稳定）。

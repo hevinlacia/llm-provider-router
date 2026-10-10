@@ -2,14 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../api';
 import type { TargetCandidateGroup, V2LogicalModel, V2ProviderStatus, V2Status } from '../../types';
 
-type KeyDraft = { name: string; env_var: string; weight: number; billing_type: string; enabled: boolean };
+type KeyDraft = { name: string; env_var: string; weight: number; billing_type: string; daily_token_quota: string; enabled: boolean };
 
 type ProviderDraft = {
   name: string;
   base_url: string;
   responses_base_url?: string | null;
   anthropic_base_url?: string | null;
-  keys: Record<string, { env_var: string; weight: number; billing_type: string; enabled: boolean }>;
+  keys: Record<string, { env_var: string; weight: number; billing_type: string; daily_token_quota?: number | null; enabled: boolean }>;
 };
 
 export function ProviderEditor({ providerName, provider, isNew = false, onCancel, onSaved, onError }: {
@@ -25,7 +25,7 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
   const [responsesBaseUrl, setResponsesBaseUrl] = useState(provider.responses_base_url ?? '');
   const [anthropicBaseUrl, setAnthropicBaseUrl] = useState(provider.anthropic_base_url ?? '');
   const [keys, setKeys] = useState<KeyDraft[]>(() =>
-    Object.entries(provider.keys).map(([k, v]) => ({ name: k, env_var: v.env_var, weight: v.weight, billing_type: v.billing_type, enabled: v.enabled })),
+    Object.entries(provider.keys).map(([k, v]) => ({ name: k, env_var: v.env_var, weight: v.weight, billing_type: v.billing_type, daily_token_quota: v.daily_token_quota != null ? String(v.daily_token_quota) : '', enabled: v.enabled })),
   );
   // —— 密钥配置状态（/api/config/keys snapshot：environment / vault / missing，不回显明文）——
   const [keySource, setKeySource] = useState<Record<string, string>>({});
@@ -56,7 +56,7 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
     setKeys(next);
   }
   function addKey() {
-    setKeys([...keys, { name: '', env_var: '', weight: 1, billing_type: 'subscription', enabled: true }]);
+    setKeys([...keys, { name: '', env_var: '', weight: 1, billing_type: 'subscription', daily_token_quota: '', enabled: true }]);
   }
   function removeKey(index: number) {
     setKeys(keys.filter((_, i) => i !== index));
@@ -74,6 +74,7 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
         env_var: k.env_var.trim(),
         weight: Math.max(0, Number(k.weight) || 0),
         billing_type: k.billing_type || 'subscription',
+        daily_token_quota: k.daily_token_quota.trim() === '' ? null : Math.max(0, Math.floor(Number(k.daily_token_quota) || 0)),
         enabled: k.enabled,
       };
     }
@@ -94,10 +95,10 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
     <div className="field"><label>Responses API</label><input value={responsesBaseUrl} onChange={(event) => setResponsesBaseUrl(event.target.value)} placeholder="https://api.example.com/v1（留空则翻译）" /></div>
     <div className="field"><label>Anthropic API</label><input value={anthropicBaseUrl} onChange={(event) => setAnthropicBaseUrl(event.target.value)} placeholder="https://api.anthropic.com" /></div>
     <h4>Keys — 通过「密钥配置」列选择环境变量或明文密钥（明文保存后立即生效；git 副本经 bin/vault.sh 加密）</h4>
-    <div className="table-wrap"><table><colgroup><col style={{ width: '16%' }} /><col style={{ width: '34%' }} /><col style={{ width: '10%' }} /><col style={{ width: '14%' }} /><col style={{ width: '11%' }} /><col style={{ width: '15%' }} /></colgroup><thead><tr><th>Key</th><th>密钥配置</th><th>Weight</th><th>Billing</th><th>Enabled</th><th></th></tr></thead><tbody>
+    <div className="table-wrap"><table><colgroup><col style={{ width: '15%' }} /><col style={{ width: '28%' }} /><col style={{ width: '9%' }} /><col style={{ width: '16%' }} /><col style={{ width: '14%' }} /><col style={{ width: '8%' }} /><col style={{ width: '10%' }} /></colgroup><thead><tr><th>Key</th><th>密钥配置</th><th>Weight</th><th>Billing</th><th title="当日 token 配额；priority 策略下耗尽则降级到下一优先级；留空 = 不限">日配额</th><th>Enabled</th><th></th></tr></thead><tbody>
       {keys.map((k, i) => {
         const src = sourceOf(k.name);
-        return <tr key={i}><td><input value={k.name} onChange={(event) => updateKey(i, { name: event.target.value })} /></td><td><span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><button type="button" className={`secondary compact-button ${src === 'environment' ? 'key-src-active' : ''}`} title={k.env_var ? `当前环境变量：${k.env_var}` : '绑定环境变量名，值从进程环境读取'} onClick={() => setKeyConfigEditing({ index: i, name: k.name, mode: 'env' })}>环境变量</button><button type="button" className={`secondary compact-button ${src === 'vault' ? 'key-src-active' : ''}`} title={src === 'vault' ? '已设置明文密钥（立即生效）' : '直接粘贴明文密钥值，存本机 vault'} onClick={() => setKeyConfigEditing({ index: i, name: k.name, mode: 'plain' })}>明文密钥</button>{src === 'missing' && <span className="muted small-text">未配置</span>}</span></td><td><input className="weight-input" type="number" min="0" step="1" value={k.weight} onChange={(event) => updateKey(i, { weight: Number(event.target.value) || 0 })} /></td><td><select value={k.billing_type} onChange={(event) => updateKey(i, { billing_type: event.target.value })}><option value="subscription">subscription</option><option value="payg">payg</option></select></td><td><input type="checkbox" checked={k.enabled} onChange={(event) => updateKey(i, { enabled: event.target.checked })} /></td><td><button className="secondary" onClick={() => removeKey(i)}>Delete</button></td></tr>;
+        return <tr key={i}><td><input value={k.name} onChange={(event) => updateKey(i, { name: event.target.value })} /></td><td><span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><button type="button" className={`secondary compact-button ${src === 'environment' ? 'key-src-active' : ''}`} title={k.env_var ? `当前环境变量：${k.env_var}` : '绑定环境变量名，值从进程环境读取'} onClick={() => setKeyConfigEditing({ index: i, name: k.name, mode: 'env' })}>环境变量</button><button type="button" className={`secondary compact-button ${src === 'vault' ? 'key-src-active' : ''}`} title={src === 'vault' ? '已设置明文密钥（立即生效）' : '直接粘贴明文密钥值，存本机 vault'} onClick={() => setKeyConfigEditing({ index: i, name: k.name, mode: 'plain' })}>明文密钥</button>{src === 'missing' && <span className="muted small-text">未配置</span>}</span></td><td><input className="weight-input" type="number" min="0" step="1" value={k.weight} onChange={(event) => updateKey(i, { weight: Number(event.target.value) || 0 })} /></td><td><select value={k.billing_type} onChange={(event) => updateKey(i, { billing_type: event.target.value })}><option value="subscription">subscription</option><option value="payg">payg</option></select></td><td><input className="weight-input" type="number" min="0" step="1" placeholder="不限" title="日 token 配额（tokens）：priority 策略下当日用量达限则降级到下一优先级；usage-aware 不看配额只平衡消耗" value={k.daily_token_quota} onChange={(event) => updateKey(i, { daily_token_quota: event.target.value })} /></td><td><input type="checkbox" checked={k.enabled} onChange={(event) => updateKey(i, { enabled: event.target.checked })} /></td><td><button className="secondary" onClick={() => removeKey(i)}>Delete</button></td></tr>;
       })}
     </tbody></table></div>
     <div className="toolbar" style={{ justifyContent: 'space-between' }}><button className="secondary" onClick={addKey}>Add Key</button><span style={{ display: 'flex', gap: 10 }}><button className="secondary" onClick={onCancel}>Cancel</button><button onClick={() => void save()}>Save</button></span></div>

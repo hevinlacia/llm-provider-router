@@ -85,6 +85,7 @@ pub fn fold_to_aliases(cfg: &V2Config) -> anyhow::Result<HashMap<String, ModelAl
                 provider: model.provider.clone(),
                 billing_type: key.billing_type.clone(),
                 persist: key.persist,
+                daily_token_quota: key.daily_token_quota,
             })
             .collect();
 
@@ -106,6 +107,7 @@ pub fn fold_to_aliases(cfg: &V2Config) -> anyhow::Result<HashMap<String, ModelAl
         alias_obj = alias_obj.with_windows(model.context_window, model.max_output_tokens);
         alias_obj = alias_obj.with_responses_base_url(provider.responses_base_url.clone());
         alias_obj = alias_obj.with_anthropic_base_url(provider.anthropic_base_url.clone());
+        alias_obj = alias_obj.with_strategy(lm.route.strategy.clone());
         // 思考强度：能力参数只属于物理模型，逻辑模型不再持有（池聚合见 router_capabilities）
         let thinking_map = model.thinking_level_map.clone();
         let thinking_fmt = model.thinking_format.clone();

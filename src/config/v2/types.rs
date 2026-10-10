@@ -28,6 +28,10 @@ pub struct V2Key {
     pub weight: i64,
     #[serde(default = "default_billing")]
     pub billing_type: String,
+    /// 日 token 配额（可选，自然日口径）。当日 tokens ≥ 配额则该 key 视为耗尽：
+    /// priority 策略下耗尽则换下一优先级；无配额 = 永不耗尽（上游 429 冻结仍兜底）。
+    #[serde(default)]
+    pub daily_token_quota: Option<u64>,
     /// 手动启用/停用开关（默认 true）。停用的 key 不参与负载均衡。
     #[serde(default = "default_enabled")]
     pub enabled: bool,

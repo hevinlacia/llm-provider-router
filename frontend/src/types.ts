@@ -137,6 +137,8 @@ export type V2KeyStatus = {
   env_var: string;
   weight: number;
   billing_type: string;
+  /** 日 token 配额（可选）：当日 tokens 达限则该 key 视为耗尽（priority 降级用）；null = 不限 */
+  daily_token_quota?: number | null;
   enabled: boolean;
   frozen: boolean;
   frozen_reason?: string | null;

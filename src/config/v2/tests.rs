@@ -879,3 +879,14 @@ fn resolve_and_fold_skip_disabled_targets() {
         "折叠视图应落到 enabled 的 target（两者 upstream 相同，验证未因 disabled 而失败）"
     );
 }
+
+/// key.daily_token_quota 反序列化：缺省 None（不限），显式数值保留。
+#[test]
+fn key_daily_token_quota_defaults_to_none() {
+    let k: V2Key = serde_json::from_str(r#"{ "env_var": "X" }"#).unwrap();
+    assert_eq!(k.daily_token_quota, None, "缺省应不限量");
+
+    let k: V2Key =
+        serde_json::from_str(r#"{ "env_var": "X", "daily_token_quota": 5000000 }"#).unwrap();
+    assert_eq!(k.daily_token_quota, Some(5_000_000));
+}

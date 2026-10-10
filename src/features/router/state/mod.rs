@@ -8,11 +8,12 @@
 
 use crate::config::{expand_path, KeyRef, ModelAlias, Settings};
 use crate::config_v2;
+use crate::config_v2::V2Strategy;
 use crate::error_rules::{self, ErrorRulesConfig, ResolvedTunables};
 use crate::features::router::costing::apply_costs;
 use crate::features::router::failure::{ErrorLogEntry, RecentErrors};
 use crate::features::router::freeze::key_state_id;
-use crate::features::router::selection::weighted_pick;
+use crate::features::router::selection::{key_exhausted, priority_key_pick, weighted_pick};
 use crate::features::router::UnsupportedEntry;
 use crate::json_config::{ApiKeysStore, ModelAliasConfig, TokenPriceConfig};
 use crate::state_store::{now_seconds, StateStore};
@@ -581,9 +582,26 @@ impl RouterState {
                             && !excluded.contains(&key.name)
                             && !self.key_model_blocked(&key.provider, &key.name, &upstream_model)
                     }) {
-                        let key = key.clone();
-                        let _ = self.bind(&alias.alias, session_id, &key_state_id(&key));
-                        return Ok(key);
+                        // 日配额耗尽的 key 不再粘性复用：priority 语义下耗尽即降级，
+                        // 解除绑定后由下方按策略重选（无配额字段时零查询开销）。
+                        if key.daily_token_quota.is_some() {
+                            let totals = self
+                                .usage_store
+                                .key_token_totals_today(std::slice::from_ref(&key.name))
+                                .unwrap_or_default();
+                            if key_exhausted(key, *totals.get(&key.name).unwrap_or(&0)) {
+                                let _ = self.unbind(&alias.alias, session_id);
+                                // 落到下方正常选择流程
+                            } else {
+                                let key = key.clone();
+                                let _ = self.bind(&alias.alias, session_id, &key_state_id(&key));
+                                return Ok(key);
+                            }
+                        } else {
+                            let key = key.clone();
+                            let _ = self.bind(&alias.alias, session_id, &key_state_id(&key));
+                            return Ok(key);
+                        }
                     }
                 }
             }
@@ -617,12 +635,31 @@ impl RouterState {
                 .unwrap_or(60);
             return Err(NoAvailableKeyError { retry_after });
         }
-        let key = self
-            .usage_adjusted_pick(alias, &candidates, session_id)
-            .unwrap_or_else(|_| {
-                weighted_pick(&candidates, session_id, &alias.alias)
+        // key 层负载均衡：与所属模型池同一套策略（alias.strategy），两层独立计算。
+        let key = match alias.strategy {
+            // weighted：按 key.weight 纯概率采样（session 粘性），不做用量调整。
+            V2Strategy::Weighted => weighted_pick(&candidates, session_id, &alias.alias)
+                .unwrap_or_else(|| candidates[0].clone()),
+            // priority：weight 降序为优先级序，先用未耗尽的最高优先级 key；
+            // 全耗尽回退加权采样（quota 配置不准时不把请求打死，freeze 兜底）。
+            V2Strategy::Priority => {
+                let names: Vec<String> = candidates.iter().map(|k| k.name.clone()).collect();
+                let totals = self
+                    .usage_store
+                    .key_token_totals_today(&names)
+                    .unwrap_or_default();
+                priority_key_pick(&candidates, &totals)
+                    .or_else(|| weighted_pick(&candidates, session_id, &alias.alias))
                     .unwrap_or_else(|| candidates[0].clone())
-            });
+            }
+            // usage-aware：选当日 tokens/weight 比值最低的 key（平衡消耗，不看剩余额度）。
+            V2Strategy::UsageAware => self
+                .usage_adjusted_pick(alias, &candidates, session_id)
+                .unwrap_or_else(|_| {
+                    weighted_pick(&candidates, session_id, &alias.alias)
+                        .unwrap_or_else(|| candidates[0].clone())
+                }),
+        };
         if let Some(session_id) = session_id {
             let _ = self.bind(&alias.alias, session_id, &key_state_id(&key));
         }

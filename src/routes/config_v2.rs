@@ -100,6 +100,7 @@ fn parse_v2_provider_body(
                         .and_then(Value::as_str)
                         .unwrap_or("subscription")
                         .to_string(),
+                    daily_token_quota: value.get("daily_token_quota").and_then(Value::as_u64),
                     enabled: value
                         .get("enabled")
                         .and_then(Value::as_bool)
