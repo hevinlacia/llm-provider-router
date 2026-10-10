@@ -41,6 +41,9 @@ fn resolve_targets_inner(
     }
     let mut candidates = Vec::with_capacity(lm.route.targets.len());
     for target in &lm.route.targets {
+        if !target.enabled {
+            continue; // 手动停用的 target：整跳过，等价从池里临时移除
+        }
         if cfg.models.contains_key(&target.model) {
             if let Some(candidate) = physical_candidate(
                 cfg,

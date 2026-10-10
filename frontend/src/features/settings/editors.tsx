@@ -162,15 +162,15 @@ export function LogicalModelEditor({ name, logical, candidates, isNew = false, o
 }) {
   const [poolName, setPoolName] = useState(name);
   const [strategy, setStrategy] = useState(logical.strategy);
-  const [targets, setTargets] = useState<Array<{ model: string; weight: string; keys: string }>>(() =>
-    logical.targets.map((t) => ({ model: t.model, weight: t.weight != null ? String(t.weight) : '', keys: (t.keys ?? []).join(', ') })),
+  const [targets, setTargets] = useState<Array<{ model: string; weight: string; keys: string; enabled: boolean }>>(() =>
+    logical.targets.map((t) => ({ model: t.model, weight: t.weight != null ? String(t.weight) : '', keys: (t.keys ?? []).join(', '), enabled: t.enabled !== false })),
   );
-  function updateTarget(index: number, patch: Partial<{ model: string; weight: string; keys: string }>) {
+  function updateTarget(index: number, patch: Partial<{ model: string; weight: string; keys: string; enabled: boolean }>) {
     const next = [...targets];
     next[index] = { ...next[index], ...patch };
     setTargets(next);
   }
-  function addTarget() { setTargets([...targets, { model: '', weight: '', keys: '' }]); }
+  function addTarget() { setTargets([...targets, { model: '', weight: '', keys: '', enabled: true }]); }
   function removeTarget(index: number) { setTargets(targets.filter((_, i) => i !== index)); }
   async function save() {
     const cleaned = targets.filter((t) => t.model.trim());
@@ -181,6 +181,7 @@ export function LogicalModelEditor({ name, logical, candidates, isNew = false, o
       return {
         model: t.model.trim(),
         weight: t.weight.trim() === '' ? null : Math.max(0, Number(t.weight) || 0),
+        enabled: t.enabled,
         // 留空 = 不限制（null）；发空数组会被后端当成“白名单匹配 0 个 key”，整池 404
         keys: keys.length ? keys : null,
       };
@@ -214,8 +215,8 @@ export function LogicalModelEditor({ name, logical, candidates, isNew = false, o
     </div>
     <h4>Targets — physical model (provider/upstream), model pool, or virtual model. Keys: optional comma-separated key-name allowlist (empty = all enabled keys of the provider).</h4>
     <datalist id={datalistId}>{candidates.filter((g) => g.items.length > 0).map((group) => <optgroup key={group.group} label={group.group}>{group.items.map((candidate) => <option key={candidate} value={candidate} />)}</optgroup>)}</datalist>
-    <div className="table-wrap"><table><thead><tr><th>Target</th><th>Weight</th><th>Keys allowlist</th><th></th></tr></thead><tbody>
-      {targets.map((t, i) => <tr key={i}><td><input list={datalistId} value={t.model} placeholder="e.g. openai-relay/grok-4.6 (physical), a pool name, or a virtual model" onChange={(event) => updateTarget(i, { model: event.target.value })} /></td><td><input className="weight-input" type="number" min="0" value={t.weight} placeholder="optional" onChange={(event) => updateTarget(i, { weight: event.target.value })} /></td><td><input value={t.keys} placeholder="optional, e.g. hevin, hevin2" onChange={(event) => updateTarget(i, { keys: event.target.value })} /></td><td><button className="secondary" onClick={() => removeTarget(i)}>Delete</button></td></tr>)}
+    <div className="table-wrap"><table><thead><tr><th>Target</th><th>Weight</th><th>Keys allowlist</th><th title="停用后该 target 整体跳过（临时排除），不删配置">启用</th><th></th></tr></thead><tbody>
+      {targets.map((t, i) => <tr key={i} style={t.enabled ? undefined : { opacity: 0.5 }}><td><input list={datalistId} value={t.model} placeholder="e.g. openai-relay/grok-4.6 (physical), a pool name, or a virtual model" onChange={(event) => updateTarget(i, { model: event.target.value })} /></td><td><input className="weight-input" type="number" min="0" value={t.weight} placeholder="optional" onChange={(event) => updateTarget(i, { weight: event.target.value })} /></td><td><input value={t.keys} placeholder="optional, e.g. hevin, hevin2" onChange={(event) => updateTarget(i, { keys: event.target.value })} /></td><td style={{ textAlign: 'center' }}><input type="checkbox" checked={t.enabled} onChange={(event) => updateTarget(i, { enabled: event.target.checked })} /></td><td><button className="secondary" onClick={() => removeTarget(i)}>Delete</button></td></tr>)}
     </tbody></table></div>
     <button className="secondary" onClick={addTarget}>Add Target</button>
     <div className="toolbar"><button className="secondary" onClick={onCancel}>Cancel</button><button onClick={() => void save()}>{isNew ? 'Create' : 'Save'}</button></div>

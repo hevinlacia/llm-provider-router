@@ -142,7 +142,7 @@ impl RouterState {
                 .route
                 .targets
                 .iter()
-                .map(|t| json!({ "model": t.model, "weight": t.weight }))
+                .map(|t| json!({ "model": t.model, "weight": t.weight, "enabled": t.enabled }))
                 .collect();
             let strategy = match lm.route.strategy {
                 V2Strategy::Priority => "priority",
