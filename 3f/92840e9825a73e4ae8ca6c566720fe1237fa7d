@@ -1,0 +1,41 @@
+frontend/src/features/settings/v2.tsx
+  8c4ef849e4dbc99d 36
+src/routes/config_v2.rs
+  8c4ef849e4dbc99d 233
+src/config/v2/types.rs
+  8c4ef849e4dbc99d 158-161
+src/config/v2/tests.rs
+  8c4ef849e4dbc99d 857-860
+frontend/src/types.ts
+  8c4ef849e4dbc99d 209
+src/config/v2/resolve.rs
+  8c4ef849e4dbc99d 44-46
+src/config/v2/fold.rs
+  8c4ef849e4dbc99d 15-17
+src/features/router/state/v2.rs
+  8c4ef849e4dbc99d 145
+frontend/src/features/settings/editors.tsx
+  8c4ef849e4dbc99d 165-166,168,173,184,218-219
+frontend/src/api.ts
+  8c4ef849e4dbc99d 145,152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "3f92840e9825a73e4ae8ca6c566720fe1237fa7d",
+  "prompts": {
+    "8c4ef849e4dbc99d": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a12373-8d09-70ea-8785-0384e7e4efb4",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 28,
+      "total_deletions": 13,
+      "accepted_lines": 25,
+      "overriden_lines": 0
+    }
+  }
+}
