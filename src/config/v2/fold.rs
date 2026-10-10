@@ -12,6 +12,9 @@ fn first_physical_target<'a>(
     visited: &mut HashSet<String>,
 ) -> Option<&'a V2Target> {
     for target in targets {
+        if !target.enabled {
+            continue; // 折叠视图跳过手动停用的 target
+        }
         if cfg.models.contains_key(&target.model) {
             if target_keys_usable(cfg, target) {
                 return Some(target);

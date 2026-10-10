@@ -230,6 +230,7 @@ fn parse_logical_model_body(
         targets.push(crate::config_v2::V2Target {
             model: model.trim().to_string(),
             weight: item.get("weight").and_then(Value::as_i64),
+            enabled: item.get("enabled").and_then(Value::as_bool).unwrap_or(true),
             keys,
         });
     }

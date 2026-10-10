@@ -142,14 +142,14 @@ export const api = {
       body: JSON.stringify({ provider }),
     });
   },
-  updateV2LogicalModel(name: string, body: { strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null; keys?: string[] | null }>; newName?: string }) {
+  updateV2LogicalModel(name: string, body: { strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null; keys?: string[] | null; enabled?: boolean | null }>; newName?: string }) {
     return request<V2Status>('/api/config/v2/logical-models', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, ...body }),
     });
   },
-  createV2LogicalModel(body: { name: string; strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null; keys?: string[] | null }> }) {
+  createV2LogicalModel(body: { name: string; strategy: string; params?: Record<string, unknown>; targets: Array<{ model: string; weight?: number | null; keys?: string[] | null; enabled?: boolean | null }> }) {
     return request<V2Status>('/api/config/v2/logical-models', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

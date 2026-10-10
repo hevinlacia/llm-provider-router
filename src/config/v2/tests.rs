@@ -820,3 +820,62 @@ fn target_keys_allowlist_empty_normalizes_to_none() {
         Some(vec!["a".to_string()])
     );
 }
+
+/// target.enabled 反序列化：缺省 true，显式 false 保留（API 与文件加载共用 serde 默认）。
+#[test]
+fn target_enabled_defaults_to_true() {
+    let t: V2Target = serde_json::from_str(r#"{ "model": "ark/test" }"#).unwrap();
+    assert!(t.enabled, "enabled 缺省应为 true");
+
+    let t: V2Target = serde_json::from_str(r#"{ "model": "ark/test", "enabled": false }"#).unwrap();
+    assert!(!t.enabled);
+}
+
+/// 停用的 target 在 resolve / fold 两条链路都应整跳过（临时排除语义），
+/// 但仍参与 validate 引用校验（避免重新启用时报错）。
+#[test]
+fn resolve_and_fold_skip_disabled_targets() {
+    let dir = std::env::temp_dir().join(format!("lpr-v2-disabled-{}", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    let logical = r#"{
+      "logical_models": {
+        "test-pool": {
+          "route": {
+            "strategy": "priority",
+            "targets": [
+              { "model": "ark/deepseek-v4-flash", "enabled": false },
+              { "model": "deepseek-official/deepseek-v4-flash" }
+            ]
+          }
+        }
+      }
+    }"#;
+    let p = write_temp(&dir, "providers.json", PROVIDERS);
+    let m = write_temp(&dir, "models.json", MODELS);
+    let l = write_temp(&dir, "logical.json", logical);
+    let v = write_temp(&dir, "virtual.json", r#"{"virtual_models":{}}"#);
+    let cfg = load_v2_config_from(&p, &m, &l, &v).unwrap();
+
+    // validate 通过：disabled target 仍算有效引用
+    super::validate::validate(&cfg).unwrap();
+
+    // resolve：只剩 enabled 的候选
+    let cands = resolve_targets(&cfg, "test-pool").unwrap();
+    assert_eq!(cands.len(), 1, "disabled target 应被跳过");
+    assert!(
+        cands[0]
+            .model
+            .keys
+            .iter()
+            .all(|k| k.provider == "deepseek-official"),
+        "候选应来自 deepseek-official（ark target 已停用）"
+    );
+
+    // fold：折叠主目标跳过 disabled，落到 enabled 的物理模型
+    let aliases = fold_to_aliases(&cfg).unwrap();
+    let alias = aliases.get("test-pool").unwrap();
+    assert_eq!(
+        alias.litellm_model, "openai/deepseek-v4-flash",
+        "折叠视图应落到 enabled 的 target（两者 upstream 相同，验证未因 disabled 而失败）"
+    );
+}

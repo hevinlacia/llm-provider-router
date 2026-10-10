@@ -155,6 +155,10 @@ pub struct V2Target {
     pub model: String,
     #[serde(default)]
     pub weight: Option<i64>,
+    /// 手动启用/停用开关（默认 true）。停用的 target 在 resolve 时整跳过，
+    /// 等价从池里临时移除但不丢配置，用于临时排除某个 key/上游。
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
     /// 可选：该目标可用的 key 名白名单（provider 内的 key 名，不含 provider 前缀）。
     /// 仅对直接指向物理模型 / 虚拟模型的目标生效；嵌套逻辑模型沿用其自身 targets 的
     /// keys 配置。None / 缺省 = 使用该 provider 全部 enabled key。
