@@ -367,6 +367,44 @@ impl UsageStore {
         Ok(totals)
     }
 
+    /// key 全局当日 token 总量（不按 model 过滤）：日配额耗尽判定用本口径，
+    /// 因为配额是 key 在供应商侧的全局属性，同一 key 被多个池共用时需合计消耗。
+    pub fn key_token_totals_today(
+        &self,
+        key_names: &[String],
+    ) -> anyhow::Result<HashMap<String, i64>> {
+        let mut totals = key_names
+            .iter()
+            .map(|name| (name.clone(), 0))
+            .collect::<HashMap<_, _>>();
+        if key_names.is_empty() {
+            return Ok(totals);
+        }
+        let (range_start, range_end) = resolve_time_range("today", None, None);
+        let (where_sql, mut args) = time_filter_sql(range_start, range_end);
+        let placeholders = key_names.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let conjunction = if where_sql.is_empty() { "WHERE" } else { "AND" };
+        let query = format!(
+            r#"
+            SELECT key_name, COALESCE(SUM(total_tokens), 0) AS total_tokens
+            FROM usage_events
+            {where_sql}
+            {conjunction} key_name IN ({placeholders})
+            GROUP BY key_name
+            "#,
+        );
+        args.extend(key_names.iter().cloned().map(SqlValue::Text));
+        let mut stmt = self.conn.prepare(&query)?;
+        let rows = stmt.query_map(params_from_iter(args.iter()), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (name, total) = row?;
+            totals.insert(name, total);
+        }
+        Ok(totals)
+    }
+
     fn started_at(&self) -> anyhow::Result<f64> {
         Ok(self
             .conn

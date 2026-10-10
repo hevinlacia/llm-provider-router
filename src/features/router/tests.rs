@@ -8,7 +8,9 @@ use crate::features::router::failure::{
     FailureAction,
 };
 use crate::features::router::freeze::{key_state_id, parse_quota_reset};
-use crate::features::router::selection::{order_targets, weighted_pick};
+use crate::features::router::selection::{
+    drop_exhausted_candidates, key_exhausted, order_targets, priority_key_pick, weighted_pick,
+};
 use crate::features::router::state::RouterState;
 use crate::json_config::TokenPrice;
 use crate::state_store::now_seconds;
@@ -56,6 +58,7 @@ fn weighted_pick_is_sticky_for_session() {
             provider: "ark".into(),
             billing_type: "subscription".into(),
             persist: true,
+            daily_token_quota: None,
         },
         KeyRef {
             name: "b".into(),
@@ -64,6 +67,7 @@ fn weighted_pick_is_sticky_for_session() {
             provider: "ark".into(),
             billing_type: "subscription".into(),
             persist: true,
+            daily_token_quota: None,
         },
         KeyRef {
             name: "c".into(),
@@ -72,6 +76,7 @@ fn weighted_pick_is_sticky_for_session() {
             provider: "ark".into(),
             billing_type: "subscription".into(),
             persist: true,
+            daily_token_quota: None,
         },
     ];
     let first = weighted_pick(&keys, Some("session-1"), "alias").unwrap();
@@ -159,6 +164,7 @@ fn sub_test_key(name: &str, env_var: &str) -> KeyRef {
         provider: "ark".into(),
         billing_type: "subscription".into(),
         persist: true,
+        daily_token_quota: None,
     }
 }
 
@@ -351,6 +357,7 @@ fn zero_weight_key_is_not_selected_or_reused_from_binding() {
                 provider: "ark".into(),
                 billing_type: "subscription".into(),
                 persist: true,
+                daily_token_quota: None,
             },
             KeyRef {
                 name: "on".into(),
@@ -359,6 +366,7 @@ fn zero_weight_key_is_not_selected_or_reused_from_binding() {
                 provider: "ark".into(),
                 billing_type: "subscription".into(),
                 persist: true,
+                daily_token_quota: None,
             },
         ],
         None,
@@ -577,6 +585,7 @@ fn two_key_alias() -> ModelAlias {
                 provider: "ark".into(),
                 billing_type: "subscription".into(),
                 persist: true,
+                daily_token_quota: None,
             },
             KeyRef {
                 name: "bad".into(),
@@ -585,6 +594,7 @@ fn two_key_alias() -> ModelAlias {
                 provider: "ark".into(),
                 billing_type: "subscription".into(),
                 persist: true,
+                daily_token_quota: None,
             },
         ],
         None,
@@ -721,6 +731,7 @@ fn inline_key_value_reads_from_store_by_name() {
         provider: "ark".into(),
         billing_type: "subscription".into(),
         persist: true,
+        daily_token_quota: None,
     };
     assert_eq!(
         state.upstream_key_value(&inline).unwrap().as_deref(),
@@ -735,6 +746,7 @@ fn inline_key_value_reads_from_store_by_name() {
         provider: "ark".into(),
         billing_type: "subscription".into(),
         persist: true,
+        daily_token_quota: None,
     };
     assert_eq!(
         state.upstream_key_value(&with_env).unwrap().as_deref(),
@@ -748,7 +760,85 @@ fn inline_key_value_reads_from_store_by_name() {
         provider: "ark".into(),
         billing_type: "subscription".into(),
         persist: true,
+        daily_token_quota: None,
     };
     assert_eq!(state.upstream_key_value(&missing).unwrap(), None);
     env::remove_var("INLINE_KEY_ENV_TEST");
+}
+
+/// —— 负载均衡策略：日配额耗尽与 priority 降级 ——
+
+fn quota_key(name: &str, weight: i64, quota: Option<u64>) -> KeyRef {
+    KeyRef {
+        name: name.into(),
+        env_var: format!("{name}-env"),
+        weight,
+        provider: "ark".into(),
+        billing_type: "subscription".into(),
+        persist: true,
+        daily_token_quota: quota,
+    }
+}
+
+#[test]
+fn key_exhausted_only_when_quota_reached() {
+    let key = quota_key("k", 1, Some(1_000_000));
+    assert!(!key_exhausted(&key, 999_999), "未达配额不算耗尽");
+    assert!(key_exhausted(&key, 1_000_000), "达到配额即耗尽");
+    let unlimited = quota_key("k", 1, None);
+    assert!(
+        !key_exhausted(&unlimited, i64::MAX as u64 as i64),
+        "无配额永不耗尽"
+    );
+}
+
+#[test]
+fn priority_key_pick_descends_weight_and_skips_exhausted() {
+    let keys = vec![
+        quota_key("big", 5, Some(100)),
+        quota_key("mid", 3, Some(100)),
+        quota_key("small", 1, None),
+    ];
+    // 无用量：最高 weight 优先
+    let totals = HashMap::new();
+    assert_eq!(priority_key_pick(&keys, &totals).unwrap().name, "big");
+    // big 耗尽 -> mid
+    let mut totals = HashMap::new();
+    totals.insert("big".to_string(), 100i64);
+    assert_eq!(priority_key_pick(&keys, &totals).unwrap().name, "mid");
+    // big+mid 耗尽 -> small（无配额永不用尽）
+    totals.insert("mid".to_string(), 200i64);
+    assert_eq!(priority_key_pick(&keys, &totals).unwrap().name, "small");
+    // 全耗尽（small 无配额所以不可能）—— 全部有配额且达限时返回 None
+    let all_quota = vec![quota_key("a", 2, Some(10)), quota_key("b", 1, Some(10))];
+    let mut totals = HashMap::new();
+    totals.insert("a".to_string(), 10i64);
+    totals.insert("b".to_string(), 99i64);
+    assert!(
+        priority_key_pick(&all_quota, &totals).is_none(),
+        "全耗尽应返回 None"
+    );
+}
+
+#[test]
+fn drop_exhausted_candidates_skips_only_when_alternative_exists() {
+    let mk = |quota: Option<u64>, url: &str| {
+        let mut alias = test_alias("m", url);
+        alias.keys = vec![quota_key("k", 1, quota)];
+        TargetCandidate {
+            model: alias,
+            weight: None,
+            strategy: V2Strategy::Priority,
+        }
+    };
+    // 首选耗尽、次选可用 -> 跳过首选
+    let mut totals = HashMap::new();
+    totals.insert("k".to_string(), 50i64);
+    let kept = drop_exhausted_candidates(vec![mk(Some(10), "u-1"), mk(None, "u-2")], &totals);
+    let urls: Vec<&str> = kept.iter().map(|c| c.model.base_url.as_str()).collect();
+    assert_eq!(urls, vec!["u-2"], "耗尽候选应被跳过");
+    // 全部耗尽 -> 保留原列表（软偏好，freeze 兜底）
+    let all_exhausted = vec![mk(Some(10), "u-1"), mk(Some(10), "u-2")];
+    let kept = drop_exhausted_candidates(all_exhausted, &totals);
+    assert_eq!(kept.len(), 2, "全耗尽应保留原列表");
 }

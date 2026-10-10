@@ -37,6 +37,7 @@ impl RouterState {
                     provider: custom.provider.clone(),
                     billing_type: key.billing_type.clone(),
                     persist: key.persist,
+                    daily_token_quota: key.daily_token_quota,
                 })
                 .collect();
             out.insert(
@@ -92,6 +93,7 @@ impl RouterState {
                         "env_var": key.env_var,
                         "weight": key.weight,
                         "billing_type": key.billing_type,
+                        "daily_token_quota": key.daily_token_quota,
                         "enabled": key.enabled,
                         "frozen": frozen,
                         "frozen_reason": reason,

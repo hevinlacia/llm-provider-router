@@ -86,7 +86,9 @@ pub(crate) async fn search_completions(
             match fallback {
                 Ok(resolved) => {
                     match crate::search::SearchPool::execute(&resolved, &app.client, &req).await {
-                        Ok(payload) if has_results(&payload) => json_status(StatusCode::OK, payload),
+                        Ok(payload) if has_results(&payload) => {
+                            json_status(StatusCode::OK, payload)
+                        }
                         Ok(_) => json_status(
                             StatusCode::SERVICE_UNAVAILABLE,
                             json!({ "detail": format!("chrome search: {chrome_detail}; api fallback returned no results") }),

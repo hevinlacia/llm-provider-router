@@ -26,6 +26,10 @@ pub struct KeyRef {
     /// Env-only keys (persist=false) are read strictly from the environment.
     #[serde(default = "default_persist")]
     pub persist: bool,
+    /// 日 token 配额（可选，自然日口径）：当日 tokens ≥ 配额则该 key 视为耗尽。
+    /// None = 不限（永不耗尽）；上游 429 冻结仍独立兜底。
+    #[serde(default)]
+    pub daily_token_quota: Option<u64>,
 }
 
 fn default_persist() -> bool {
@@ -83,6 +87,9 @@ pub struct ModelAlias {
     /// 对 `/v1/messages` 请求透传到 `{anthropic_base_url}/v1/messages`；
     /// None = 由 Router 翻译成 Responses 请求走现有 /v1/responses 机制。
     pub anthropic_base_url: Option<String>,
+    /// 所属模型池的路由策略（weighted / priority / usage-aware）。
+    /// key 层负载均衡按同一策略分派：weighted=纯概率、priority=顺序用尽、usage-aware=tokens/weight 均衡。
+    pub strategy: crate::config_v2::V2Strategy,
 }
 
 impl ModelAlias {
@@ -106,7 +113,14 @@ impl ModelAlias {
             thinking_format: None,
             responses_base_url: None,
             anthropic_base_url: None,
+            strategy: crate::config_v2::V2Strategy::Weighted,
         }
+    }
+
+    /// 标记所属模型池的路由策略（默认 weighted；resolve/fold 按 route 实际策略覆写）。
+    pub fn with_strategy(mut self, strategy: crate::config_v2::V2Strategy) -> Self {
+        self.strategy = strategy;
+        self
     }
 
     /// 追加服务器侧参数（v2 路由展开时用于携带逻辑模型默认 + 物理模型覆写）。

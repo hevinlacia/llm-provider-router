@@ -3,7 +3,9 @@
 use super::RouterState;
 use crate::config::ModelAlias;
 use crate::config_v2::{self, TargetCandidate, V2Strategy};
-use crate::features::router::selection::{order_targets, usage_preferred_index};
+use crate::features::router::selection::{
+    drop_exhausted_candidates, order_targets, usage_preferred_index,
+};
 
 impl RouterState {
     pub fn route_aliases(&mut self, model_name: &str, session_id: Option<&str>) -> Vec<ModelAlias> {
@@ -19,6 +21,22 @@ impl RouterState {
             let customs = self.custom_alias_models();
             let mut out = Vec::new();
             for (name, candidates) in expanded {
+                // priority 策略：耗尽候选软降级（全部耗尽时保留原列表，freeze 兜底）。
+                let candidates = if matches!(
+                    candidates.first().map(|c| &c.strategy),
+                    Some(&V2Strategy::Priority)
+                ) {
+                    let names: Vec<String> = candidates
+                        .iter()
+                        .flat_map(|c| c.model.keys.iter().map(|k| k.name.clone()))
+                        .collect();
+                    match self.usage_store.key_token_totals_today(&names) {
+                        Ok(totals) => drop_exhausted_candidates(candidates, &totals),
+                        Err(_) => candidates,
+                    }
+                } else {
+                    candidates
+                };
                 let preferred = if matches!(
                     candidates.first().map(|c| &c.strategy),
                     Some(&V2Strategy::UsageAware)
