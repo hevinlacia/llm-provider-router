@@ -27,7 +27,8 @@ use crate::features::chat::select::{
 use crate::features::responses::store;
 use crate::features::responses::translate;
 use crate::features::router::{
-    circuit_breaker_on_exhaustion, handle_connect_failure, handle_response_failure,
+    apply_embedded_failure, circuit_breaker_on_exhaustion, extract_stream_error_event,
+    handle_connect_failure, handle_embedded_failure, handle_response_failure,
     note_success_differential, FailureAction,
 };
 use crate::routes::resp::internal_error;
@@ -150,12 +151,15 @@ pub(crate) async fn stream_responses_route(
                                 failed_alias = alias.alias.clone();
                                 key
                             }
-                            Err(_) => {
+                            Err(exc) => {
                                 // key 全冻结/不可用：transient 耗尽时全池短熔断后
-                                // fallback 下一个 target
+                                // fallback 下一个 target；若所有 target 都无可用 key
+                                // （如 zp 冻结后仅剩单目标），流尾必须下发明确错误
+                                // （含 retry-after 提示）而非空流（客户端会当成传输截断反复重试）。
                                 if last_failure_transient {
                                     circuit_breaker_on_exhaustion(&app, &alias);
                                 }
+                                last_error.get_or_insert(exc.to_string());
                                 break;
                             }
                         }
@@ -303,7 +307,28 @@ pub(crate) async fn stream_responses_route(
                                     if body == "[DONE]" {
                                         continue;
                                     }
-                                    if let Ok(value) = serde_json::from_str::<Value>(body) {
+                                    let parsed = serde_json::from_str::<Value>(body).ok();
+                                    // 流内错误事件（chat 错误体如 zp 5 小时限额）：冻结坏 key + 解绑会话，
+                                    // 并向客户端下发 Responses 错误事件后终止流；
+                                    // 本请求已开始无法换 key，冻结保证下次请求自动故障切换。
+                                    if let Some(found) =
+                                        parsed.as_ref().and_then(extract_stream_error_event)
+                                    {
+                                        let (code, message) = found;
+                                        apply_embedded_failure(
+                                            &app,
+                                            &alias,
+                                            &key,
+                                            &code,
+                                            &message,
+                                            session_id.as_deref(),
+                                        );
+                                        yield Ok(Bytes::from(sse_error_message(&format!(
+                                            "{code}: {message}"
+                                        ))));
+                                        return;
+                                    }
+                                    if let Some(value) = parsed {
                                         let events = sse.feed(&value);
                                         if !events.is_empty() {
                                             yield Ok(Bytes::from(events));
@@ -331,13 +356,24 @@ pub(crate) async fn stream_responses_route(
                     store::put_full(&resp_id, history, response, input_items);
                 }
                 let body_text = String::from_utf8_lossy(&body_text).to_string();
-                // 请求内差分冻结：本请求先 transient 失败过的 key 在此被同行成功反向冻结。
-                note_success_differential(&app, &ambiguous);
+                // 流内/嵌入错误（HTTP 200 但流里携带 error / response.failed）：
+                // 识别并冻结坏 key；流已提交无法对本请求换 key 重试，
+                // 冻结 + 解绑保证下一次请求自动故障切换到健康 target。
+                // （翻译分支检测到错误时已提前返回，此处主要覆盖透传分支。）
+                let stream_failed =
+                    handle_embedded_failure(&app, &alias, &key, &body_text, session_id.as_deref());
+                if !stream_failed {
+                    // 请求内差分冻结：本请求先 transient 失败过的 key 在此被同行成功反向冻结。
+                    // 流实际失败时不做差分冻结（同行成功的前提不成立）。
+                    note_success_differential(&app, &ambiguous);
+                }
                 let usage = extract_usage_from_stream(&body_text)
                     .or_else(|| extract_responses_usage_from_stream(&body_text));
                 record_usage(&app.state, &alias.alias, &usage_key_name(&key), status, usage.as_ref(), session_id.as_deref());
                 log_upstream_failure(&alias, status, &body_text);
-                clear_unsupported_if_ok(&app, &key, &alias, status);
+                if !stream_failed {
+                    clear_unsupported_if_ok(&app, &key, &alias, status);
+                }
                 return;
             }
         }

@@ -23,7 +23,8 @@ mod tests;
 pub(crate) mod util;
 
 pub(crate) use failure::{
-    circuit_breaker_on_exhaustion, handle_connect_failure, handle_response_failure,
+    apply_embedded_failure, circuit_breaker_on_exhaustion, extract_stream_error_event,
+    handle_connect_failure, handle_embedded_failure, handle_response_failure,
     note_success_differential, FailureAction,
 };
 pub(crate) use state::config::PhysicalModelPatch;

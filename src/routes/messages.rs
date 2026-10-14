@@ -19,8 +19,8 @@ use crate::features::chat::select::{
     usage_key_name,
 };
 use crate::features::router::{
-    circuit_breaker_on_exhaustion, handle_connect_failure, handle_response_failure,
-    note_success_differential, FailureAction, NoAvailableKeyError,
+    circuit_breaker_on_exhaustion, handle_connect_failure, handle_embedded_failure,
+    handle_response_failure, note_success_differential, FailureAction, NoAvailableKeyError,
 };
 use axum::body::{Body, Bytes};
 use axum::extract::State;
@@ -362,11 +362,13 @@ async fn stream_anthropic_passthrough(
                                 total_tried += 1;
                                 key
                             }
-                            Err(_) => {
-                                // key 全冻结/不可用：transient 耗尽时全池短熔断后 fallback 下一 alias
+                            Err(exc) => {
+                                // key 全冻结/不可用：transient 耗尽时全池短熔断后 fallback 下一 alias；
+                                // 所有 alias 都无可用 key 时流尾下发明确错误而非空流。
                                 if last_failure_transient {
                                     circuit_breaker_on_exhaustion(&app, &alias);
                                 }
+                                last_error.get_or_insert(exc.to_string());
                                 break;
                             }
                         }
@@ -483,10 +485,18 @@ async fn stream_anthropic_passthrough(
                     }
                 }
                 let body_str = String::from_utf8_lossy(&body_text).to_string();
-                note_success_differential(&app, &ambiguous);
+                // 流内错误事件（HTTP 200 但流里携带 error，如 Anthropic error 事件）：
+                // 识别并冻结坏 key + 解绑会话，保证下一次请求自动故障切换。
+                let stream_failed =
+                    handle_embedded_failure(&app, &alias, &key, &body_str, session_id.as_deref());
+                if !stream_failed {
+                    note_success_differential(&app, &ambiguous);
+                }
                 let usage = translate::extract_anthropic_stream_usage(&body_str);
                 record_usage(&app.state, &alias.alias, &usage_key_name(&key), status, usage.as_ref(), session_id.as_deref());
-                clear_unsupported_if_ok(&app, &key, &alias, status);
+                if !stream_failed {
+                    clear_unsupported_if_ok(&app, &key, &alias, status);
+                }
                 return;
             }
         }
