@@ -597,3 +597,241 @@ async fn subscription_invalid_400_falls_back_to_next_key() {
         entry["reason"]
     );
 }
+
+fn embedded_error_settings() -> crate::config::Settings {
+    use crate::config::Settings;
+    Settings {
+        host: "127.0.0.1".to_string(),
+        port: 0,
+        session_ttl_seconds: 3600.0,
+        inject_prompt_cache_key: true,
+        monthly_quota_fallback_seconds: 86400.0,
+        five_hour_quota_fallback_seconds: 5400.0,
+        request_timeout_seconds: 30.0,
+        local_bearer_token: None,
+        usage_db_path: ":memory:".to_string(),
+        state_db_path: ":memory:".to_string(),
+        api_keys_path: ":memory:".to_string(),
+        token_price_config_path: ":memory:".to_string(),
+        model_alias_config_path: ":memory:".to_string(),
+        search_providers_path: ":memory:".to_string(),
+        provider_models_path: ":memory:".to_string(),
+        error_rules_path: ":memory:/nonexistent/error-rules.json".to_string(),
+        auth_invalid_freeze_seconds: 86400.0,
+        subscription_invalid_freeze_seconds: 86400.0,
+        diag_dir: ":memory:".to_string(),
+        diag_max_bytes: 10 * 1024 * 1024,
+        diag_max_files: 0,
+        diag_sample_every: 1,
+        env_file_path: None,
+    }
+}
+
+/// 2026-10 zp 5 小时限额回归（翻译模式）：上游 HTTP 200 + SSE 流内 chat 错误事件
+/// （code=rate_limit_exceeded + 中文限额文案）时：
+/// 1) 流尾必须下发 Responses 错误事件（而非静默中断/空流）；
+/// 2) key 按 zp 模板归为限流，冻结到「后可继续使用」时刻（reason=five_hour_quota）；
+/// 3) 会话粘性绑定被解除——修复前 key 不冻结、会话被钉死在坏 key 上，故障切换失效。
+#[tokio::test]
+async fn zp_midstream_quota_error_freezes_key_and_unbinds_session() {
+    use crate::app::AppState;
+    use crate::config::{KeyRef, ModelAlias, Settings};
+    use axum::body::to_bytes;
+    use axum::routing::post;
+    use axum::Router;
+    use futures_util::stream::once;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_for_server = hits.clone();
+    let app = Router::new().route(
+        "/chat/completions",
+        post(move || {
+            let hits = hits_for_server.clone();
+            async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                let sse = concat!(
+                    "data: {\"error\":{\"code\":\"rate_limit_exceeded\",\"message\":",
+                    "\"已达到 5 小时使用上限，2099-01-01 00:00:00 后可继续使用。",
+                    "如需超限额按量付费使用，可联系管理员开启超额按量付费。\"}}\n\n"
+                );
+                (
+                    axum::http::StatusCode::OK,
+                    [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                    axum::body::Body::from_stream(once(async move {
+                        Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(sse))
+                    })),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    std::env::set_var("ZP_MIDSTREAM_KEY", "zp-key-value");
+
+    let settings: Settings = embedded_error_settings();
+    let app_state = AppState::new(settings).unwrap();
+
+    let alias = ModelAlias::new(
+        "zp/mid-stream-test",
+        "openai/zp-mid-stream-test",
+        &format!("http://{addr}"),
+        vec![KeyRef {
+            name: "jt".into(),
+            env_var: "ZP_MIDSTREAM_KEY".into(),
+            weight: 1,
+            provider: "zp".into(),
+            billing_type: "subscription".into(),
+            persist: true,
+            daily_token_quota: None,
+        }],
+        None,
+    );
+
+    // 预绑定会话到该 key（模拟粘性会话撞上限额）
+    app_state
+        .state
+        .lock()
+        .unwrap()
+        .bind("zp/mid-stream-test", "sess-zp-1", "jt")
+        .unwrap();
+
+    let response = crate::features::responses::stream::stream_responses_route(
+        app_state.clone(),
+        vec![alias],
+        Some("sess-zp-1".to_string()),
+        json!({ "model": "zp/mid-stream-test", "input": "hi", "stream": true }),
+        Some(json!({
+            "model": "zp/mid-stream-test",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": true,
+        })),
+    )
+    .await;
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8_lossy(&body);
+    server.abort();
+
+    assert!(
+        text.contains("event: error"),
+        "流尾应下发错误事件而非静默中断: {text}"
+    );
+    assert!(
+        text.contains("5 小时使用上限"),
+        "错误事件应携带上游限额文案: {text}"
+    );
+
+    let snapshot = app_state.state.lock().unwrap().snapshot().unwrap();
+    let frozen = snapshot["frozen"].as_object().expect("frozen map in state");
+    let entry = frozen.get("zp/jt").expect("zp/jt 应按流内限流错误被冻结");
+    assert_eq!(
+        entry["reason"], "five_hour_quota",
+        "应按 5 小时限额冻结: {frozen:?}"
+    );
+    assert_eq!(
+        snapshot["bindings"], 0,
+        "会话粘性绑定应被解除（避免钉死在坏 key 上）"
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+}
+
+/// 透传模式（zp 配置了 responses_base_url）：上游 HTTP 200 + Responses 原生
+/// `response.failed` 流内事件时，事件原样转发给客户端，且 key 按限流冻结。
+#[tokio::test]
+async fn zp_passthrough_response_failed_event_freezes_key() {
+    use crate::app::AppState;
+    use crate::config::{KeyRef, ModelAlias, Settings};
+    use axum::body::to_bytes;
+    use axum::routing::post;
+    use axum::Router;
+    use futures_util::stream::once;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_for_server = hits.clone();
+    let app = Router::new().route(
+        "/responses",
+        post(move || {
+            let hits = hits_for_server.clone();
+            async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                let sse = concat!(
+                    "event: response.failed\n",
+                    "data: {\"type\":\"response.failed\",\"sequence_number\":1,",
+                    "\"response\":{\"id\":\"resp_1\",\"status\":\"failed\",",
+                    "\"error\":{\"code\":\"rate_limit_exceeded\",",
+                    "\"message\":\"已达到 5 小时使用上限，2099-01-01 00:00:00 后可继续使用。\"}}}\n\n"
+                );
+                (
+                    axum::http::StatusCode::OK,
+                    [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                    axum::body::Body::from_stream(once(async move {
+                        Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(sse))
+                    })),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    std::env::set_var("ZP_PASSTHROUGH_KEY", "zp-key-value-2");
+
+    let settings: Settings = embedded_error_settings();
+    let app_state = AppState::new(settings).unwrap();
+
+    let alias = ModelAlias::new(
+        "zp/passthrough-test",
+        "openai/zp-passthrough-test",
+        "",
+        vec![KeyRef {
+            name: "jt2".into(),
+            env_var: "ZP_PASSTHROUGH_KEY".into(),
+            weight: 1,
+            provider: "zp".into(),
+            billing_type: "subscription".into(),
+            persist: true,
+            daily_token_quota: None,
+        }],
+        None,
+    )
+    .with_responses_base_url(Some(format!("http://{addr}")));
+
+    let response = crate::features::responses::stream::stream_responses_route(
+        app_state.clone(),
+        vec![alias],
+        None,
+        json!({ "model": "zp/passthrough-test", "input": "hi", "stream": true }),
+        None,
+    )
+    .await;
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8_lossy(&body);
+    server.abort();
+
+    assert!(
+        text.contains("response.failed"),
+        "透传模式下 response.failed 事件应原样转发: {text}"
+    );
+    let snapshot = app_state.state.lock().unwrap().snapshot().unwrap();
+    let frozen = snapshot["frozen"].as_object().expect("frozen map in state");
+    let entry = frozen
+        .get("zp/jt2")
+        .expect("透传流内 response.failed 也应冻结 key");
+    assert_eq!(
+        entry["reason"], "five_hour_quota",
+        "实际冻结状态: {frozen:?}"
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+}

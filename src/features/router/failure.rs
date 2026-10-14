@@ -27,6 +27,8 @@ use super::state::RouterState;
 pub(crate) const RECENT_ERRORS_CAP: usize = 200;
 /// 连接层失败的内部状态码（无 HTTP 状态可用）。
 pub(crate) const CONNECT_ERROR_STATUS: u16 = 599;
+/// 流内错误的展示状态码：上游返回 HTTP 200 但 SSE 流/响应体里携带错误事件。
+pub(crate) const EMBEDDED_ERROR_STATUS: u16 = 200;
 
 /// 单条最近报错记录（内存 ring buffer，重启丢失）。
 #[derive(Clone, Debug)]
@@ -68,6 +70,165 @@ fn extract_error_message(body_text: &str) -> String {
                 .map(str::to_string)
         })
         .unwrap_or_else(|| body_text.chars().take(300).collect())
+}
+
+/// 识别单个 SSE/JSON 事件是否为上游错误，返回 (code, message)。
+/// 兼容四种形状（2026-10 zp 线上事故：5 小时限额以 HTTP 200 + 流内错误事件返回，
+/// 此前被当成正常流转发，key 不冻结、会话不解绑，故障切换失效）：
+/// - chat/自定义错误体：`{"error":{"code":..., "message":...}}`；
+/// - Responses 流内错误事件：`{"type":"error","code":...,"message":...}`；
+/// - Responses 失败事件：`{"type":"response.failed","response":{"error":{...}}}`；
+/// - 路由自身错误事件：`{"code":...,"message":...}`（无 type 字段）。
+pub(crate) fn extract_stream_error_event(value: &Value) -> Option<(String, String)> {
+    let typ = value.get("type").and_then(Value::as_str).unwrap_or("");
+    if typ == "response.failed" {
+        let err = value.pointer("/response/error").filter(|v| v.is_object())?;
+        let message = err.get("message").and_then(Value::as_str)?;
+        let code = err
+            .get("code")
+            .and_then(Value::as_str)
+            .or_else(|| err.get("type").and_then(Value::as_str))
+            .unwrap_or("upstream_error");
+        return Some((code.to_string(), message.to_string()));
+    }
+    if let Some(err) = value.get("error").filter(|v| v.is_object()) {
+        if let Some(message) = err.get("message").and_then(Value::as_str) {
+            let code = err
+                .get("code")
+                .and_then(Value::as_str)
+                .or_else(|| err.get("type").and_then(Value::as_str))
+                .unwrap_or("upstream_error");
+            return Some((code.to_string(), message.to_string()));
+        }
+    }
+    if typ == "error" || typ.is_empty() {
+        if let Some(message) = value.get("message").and_then(Value::as_str) {
+            let code = value
+                .get("code")
+                .and_then(Value::as_str)
+                .unwrap_or("upstream_error");
+            return Some((code.to_string(), message.to_string()));
+        }
+    }
+    None
+}
+
+/// 从已收集的完整响应/流文本扫描错误事件：先试整体 JSON（非流式 200 错误体），
+/// 再逐行扫描 SSE `data:` 事件。返回最后一个可识别的 (code, message)。
+fn scan_error_event_text(body_text: &str) -> Option<(String, String)> {
+    let trimmed = body_text.trim();
+    if !trimmed.starts_with('{') && !trimmed.starts_with('[') {
+        // SSE 流文本：逐行找 data: 事件
+        for line in body_text.lines() {
+            let trimmed = line.trim();
+            let Some(data) = trimmed.strip_prefix("data:") else {
+                continue;
+            };
+            let body = data.trim();
+            if body.is_empty() || body == "[DONE]" {
+                continue;
+            }
+            let parsed = serde_json::from_str::<Value>(body).ok();
+            if let Some(found) = parsed.and_then(|value| extract_stream_error_event(&value)) {
+                return Some(found);
+            }
+        }
+        return None;
+    }
+    serde_json::from_str::<Value>(trimmed)
+        .ok()
+        .and_then(|value| extract_stream_error_event(&value))
+}
+
+/// 对流内/嵌入失败执行分类动作：invalid/限流冻结 + 解绑会话 + 记录最近报错。
+/// 返回是否识别并处理了错误。流已开始（HTTP 200 已提交），本请求无法换 key 重试；
+/// 冻结与解绑保证下一次请求自动故障切换到健康 key/target。
+pub(crate) fn apply_embedded_failure(
+    app: &AppState,
+    alias: &ModelAlias,
+    key: &KeyRef,
+    code: &str,
+    message: &str,
+    session_id: Option<&str>,
+) -> bool {
+    let Ok(mut state) = app.state.lock() else {
+        return false;
+    };
+    let lowered = format!("{code} {message}").to_lowercase();
+    let classified = classify(
+        state.error_rules(),
+        &alias.provider(),
+        EMBEDDED_ERROR_STATUS,
+        &lowered,
+    );
+    state.push_recent_error(ErrorLogEntry {
+        ts: crate::state_store::now_seconds(),
+        provider: alias.provider(),
+        key: key.name.clone(),
+        alias: alias.alias.clone(),
+        model: alias.upstream_model(),
+        status: EMBEDDED_ERROR_STATUS,
+        class: classified.class.as_str().to_string(),
+        rule: classified.rule.clone(),
+        message: format!("[stream] {code}: {message}")
+            .chars()
+            .take(300)
+            .collect(),
+    });
+    // 上游明确拒绝：解除会话粘性绑定，避免会话被钉死在坏 key 上。
+    if let Some(sid) = session_id {
+        state.unbind(&alias.alias, sid);
+    }
+    match classified.class {
+        ErrorClass::Invalid => {
+            let until = crate::state_store::now_seconds() + state.tunables().invalid_freeze_seconds;
+            let _ = state.freeze(
+                &key_state_id(key),
+                until,
+                &format!("invalid:{}", classified.rule),
+            );
+        }
+        ErrorClass::RateLimited => {
+            let (monthly_fallback, five_hour_fallback) = state.quota_fallback_seconds();
+            if let Some((until, reason)) =
+                parse_quota_reset(message, monthly_fallback, five_hour_fallback)
+            {
+                let _ = state.freeze(&key_state_id(key), until, reason);
+            }
+        }
+        ErrorClass::ModelUnsupported | ErrorClass::Transient => {}
+    }
+    eprintln!(
+        "llm-provider-router embedded_failure provider={} model={} key={} status=200 class={} rule={} error={}",
+        alias.provider(),
+        alias.upstream_model(),
+        key.name,
+        classified.class.as_str(),
+        classified.rule,
+        message.chars().take(300).collect::<String>()
+    );
+    true
+}
+
+/// 扫描已收集的流/响应体，发现嵌入错误则分类处理。返回是否发现错误。
+/// 调用方在成功尾部调用：发现错误时跳过差分冻结与“不支持”清除（不是成功流）。
+pub(crate) fn handle_embedded_failure(
+    app: &AppState,
+    alias: &ModelAlias,
+    key: &KeyRef,
+    body_text: &str,
+    session_id: Option<&str>,
+) -> bool {
+    // 快速门禁：正文不含错误标记时直接返回（成功流零开销路径）。
+    if !body_text.contains("\"error\"") && !body_text.contains("response.failed") {
+        return false;
+    }
+    match scan_error_event_text(body_text) {
+        Some((code, message)) => {
+            apply_embedded_failure(app, alias, key, &code, &message, session_id)
+        }
+        None => false,
+    }
 }
 
 /// 响应级失败（status >= 400）统一处理。调用方保证只传失败状态。
