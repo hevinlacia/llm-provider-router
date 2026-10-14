@@ -1,0 +1,39 @@
+src/routes/responses.rs
+  9b22a1717498bfd8 19-20,363-370
+src/features/responses/stream/mod.rs
+  9b22a1717498bfd8 30-31,154,156-158,162,310-331,359-369,374-376
+src/features/router/freeze.rs
+  9b22a1717498bfd8 34-41,66-70,80-92
+src/routes/messages.rs
+  9b22a1717498bfd8 22-23,365-367,371,488-494,497-499
+src/error_rules.rs
+  9b22a1717498bfd8 175-187,220-234,237-276,293,470-528
+src/features/router/mod.rs
+  9b22a1717498bfd8 27
+config/error-rules.json
+  9b22a1717498bfd8 16-17,36-53,64-65
+src/features/responses/stream/tests.rs
+  9b22a1717498bfd8 601-602
+src/features/router/failure.rs
+  9b22a1717498bfd8 30-31,75-161,163-231
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7223b25794163a9ac01addedc01d1df15de54df1",
+  "prompts": {
+    "9b22a1717498bfd8": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a139a6-dab1-75e2-9589-05392618297e",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevin <hevin@local>",
+      "messages": [],
+      "total_additions": 409,
+      "total_deletions": 52,
+      "accepted_lines": 410,
+      "overriden_lines": 3
+    }
+  }
+}
