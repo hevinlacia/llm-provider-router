@@ -15,29 +15,14 @@
         }
       }
     },
-    "ark-agent": {
+    "zp": {
       "base_url": "",
-      "responses_base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+      "responses_base_url": "https://open.bigmodel.cn/api/v1",
       "anthropic_base_url": null,
       "retry": null,
       "keys": {
-        "hevin-6544": {
-          "env_var": "PROVIDER_ARK_AGENT_6544_API_KEY",
-          "weight": 1,
-          "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
-        }
-      }
-    },
-    "opencode-go": {
-      "base_url": "https://opencode.ai/zen/go/v1",
-      "responses_base_url": "https://opencode.ai/zen/go/v1",
-      "anthropic_base_url": null,
-      "retry": null,
-      "keys": {
-        "hevin": {
-          "env_var": "AGENT_AI_OPENCODEGO_HEVIN_API_KEY",
+        "jt": {
+          "env_var": "PROVIDER_ARK_AGENT_JT_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
           "enabled": true,
@@ -69,20 +54,6 @@
           "billing_type": "subscription",
           "enabled": true,
           "persist": true
-        },
-        "hevin": {
-          "env_var": "AGENT_AI_ARK_HEVIN_API_KEY",
-          "weight": 1,
-          "billing_type": "subscription",
-          "enabled": false,
-          "persist": true
-        },
-        "hevin-private": {
-          "env_var": "AGENT_AI_ARK_HEVIN_PRIVATE_API_KEY",
-          "weight": 1,
-          "billing_type": "subscription",
-          "enabled": false,
-          "persist": true
         }
       }
     },
@@ -111,14 +82,29 @@
         }
       }
     },
-    "zp": {
+    "ark-agent": {
       "base_url": "",
-      "responses_base_url": "https://open.bigmodel.cn/api/v1",
+      "responses_base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
       "anthropic_base_url": null,
       "retry": null,
       "keys": {
-        "jt": {
-          "env_var": "PROVIDER_ARK_AGENT_JT_API_KEY",
+        "hevin-6544": {
+          "env_var": "PROVIDER_ARK_AGENT_6544_API_KEY",
+          "weight": 1,
+          "billing_type": "subscription",
+          "enabled": true,
+          "persist": true
+        }
+      }
+    },
+    "opencode-go": {
+      "base_url": "https://opencode.ai/zen/go/v1",
+      "responses_base_url": "https://opencode.ai/zen/go/v1",
+      "anthropic_base_url": null,
+      "retry": null,
+      "keys": {
+        "hevin": {
+          "env_var": "AGENT_AI_OPENCODEGO_HEVIN_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
           "enabled": true,
