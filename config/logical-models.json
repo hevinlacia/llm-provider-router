@@ -1,17 +1,19 @@
 {
   "logical_models": {
-    "high-model-auto": {
+    "openai-gpt-5.5-hevin": {
       "params": {},
       "route": {
         "strategy": "priority",
         "targets": [
           {
-            "model": "glm-latest-auto",
-            "weight": null
+            "model": "aixhan/gpt-5.5",
+            "weight": null,
+            "enabled": true,
+            "keys": null
           }
         ]
       },
-      "display_name": "High Model Auto"
+      "display_name": "OpenAI GPT-5.5 Hevin"
     },
     "low-model-auto": {
       "params": {},
@@ -20,76 +22,13 @@
         "targets": [
           {
             "model": "glm-flash-latest-auto",
-            "weight": null
+            "weight": null,
+            "enabled": true,
+            "keys": null
           }
         ]
       },
       "display_name": "Low Model Auto"
-    },
-    "gpt-medium-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "aixhan/gpt-5.6-sol",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "GPT Medium Latest Auto"
-    },
-    "glm-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "zp/glm-5.3",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "GLM Latest Auto"
-    },
-    "gpt-high-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "aixhan/gpt-6-astra",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "GPT High Latest Auto"
-    },
-    "deepseek-flash-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "weighted",
-        "targets": [
-          {
-            "model": "ark/deepseek-v4.1-flash",
-            "weight": 1
-          }
-        ]
-      },
-      "display_name": "DeepSeek V4 Flash Auto"
-    },
-    "medium-model-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "ark/glm-5.3-flash",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "Medium Model Auto"
     },
     "glm-flash-latest-auto": {
       "params": {},
@@ -98,15 +37,21 @@
         "targets": [
           {
             "model": "ark/glm-5.3-flash",
-            "weight": 1
+            "weight": 2,
+            "enabled": true,
+            "keys": null
           },
           {
             "model": "ark-agent/glm-5.3-flash",
-            "weight": 1
+            "weight": 1,
+            "enabled": true,
+            "keys": null
           },
           {
             "model": "zp/glm-5.3-flash",
-            "weight": 0
+            "weight": 4,
+            "enabled": true,
+            "keys": null
           }
         ]
       },
@@ -119,24 +64,13 @@
         "targets": [
           {
             "model": "aixhan/gpt-6-luna",
-            "weight": null
+            "weight": null,
+            "enabled": true,
+            "keys": null
           }
         ]
       },
       "display_name": "GPT Low Latest Auto"
-    },
-    "openai-gpt-5.5-hevin": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "aixhan/gpt-5.5",
-            "weight": null
-          }
-        ]
-      },
-      "display_name": "OpenAI GPT-5.5 Hevin"
     },
     "grok-latest-auto": {
       "params": {},
@@ -145,15 +79,109 @@
         "targets": [
           {
             "model": "aixhan/grok-4.6",
-            "weight": null
+            "weight": null,
+            "enabled": true,
+            "keys": null
           },
           {
             "model": "aixhan/gpt-5.5",
-            "weight": null
+            "weight": null,
+            "enabled": true,
+            "keys": null
           }
         ]
       },
       "display_name": "Grok Latest Auto"
+    },
+    "high-model-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "zp/glm-5.3",
+            "weight": null,
+            "enabled": true,
+            "keys": null
+          }
+        ]
+      },
+      "display_name": "High Model Auto"
+    },
+    "medium-model-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "ark/glm-5.3-flash",
+            "weight": null,
+            "enabled": true,
+            "keys": null
+          }
+        ]
+      },
+      "display_name": "Medium Model Auto"
+    },
+    "glm-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "zp/glm-5.3",
+            "weight": null,
+            "enabled": true,
+            "keys": null
+          }
+        ]
+      },
+      "display_name": "GLM Latest Auto"
+    },
+    "gpt-high-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "aixhan/gpt-6-astra",
+            "weight": null,
+            "enabled": true,
+            "keys": null
+          }
+        ]
+      },
+      "display_name": "GPT High Latest Auto"
+    },
+    "deepseek-flash-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "weighted",
+        "targets": [
+          {
+            "model": "ark/deepseek-v4.1-flash",
+            "weight": 1,
+            "enabled": true,
+            "keys": null
+          }
+        ]
+      },
+      "display_name": "DeepSeek V4 Flash Auto"
+    },
+    "gpt-medium-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "aixhan/gpt-5.6-sol",
+            "weight": null,
+            "enabled": true,
+            "keys": null
+          }
+        ]
+      },
+      "display_name": "GPT Medium Latest Auto"
     }
   }
 }

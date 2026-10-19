@@ -172,10 +172,19 @@ pub fn default_template() -> ClassTemplate {
                 keywords_all: Vec::new(),
             },
         ],
-        rate_limited: vec![ClassRule {
-            status: vec![429],
-            ..Default::default()
-        }],
+        rate_limited: vec![
+            ClassRule {
+                status: vec![429],
+                ..Default::default()
+            },
+            // 流内限流错误（HTTP 200 + SSE error 事件）没有状态码可判，
+            // 按错误码关键词识别；解冻时刻仍由 freeze::parse_quota_reset 决定。
+            ClassRule {
+                status: Vec::new(),
+                keywords_any: vec!["rate_limit_error".into(), "rate_limit_exceeded".into()],
+                keywords_all: Vec::new(),
+            },
+        ],
         model_unsupported: vec![ClassRule {
             status: vec![404],
             ..Default::default()
@@ -208,10 +217,63 @@ pub fn ark_template() -> ClassTemplate {
                 keywords_all: Vec::new(),
             },
         ],
-        rate_limited: vec![ClassRule {
-            status: vec![429],
+        rate_limited: vec![
+            ClassRule {
+                status: vec![429],
+                ..Default::default()
+            },
+            // 流内限流错误（HTTP 200 + SSE error 事件）没有状态码可判，
+            // 按错误码关键词识别（Anthropic 流内事件 error.type=rate_limit_error 等）。
+            ClassRule {
+                status: Vec::new(),
+                keywords_any: vec!["rate_limit_error".into(), "rate_limit_exceeded".into()],
+                keywords_all: Vec::new(),
+            },
+        ],
+        model_unsupported: vec![ClassRule {
+            status: vec![404],
             ..Default::default()
         }],
+        transient: vec![ClassRule {
+            status: vec![500, 502, 503, 504],
+            ..Default::default()
+        }],
+    }
+}
+
+/// 内置预设：zp（智谱 bigmodel GLM Coding Plan，open.bigmodel.cn）。
+///
+/// 2026-10 线上事实：5 小时限额用尽时上游以 **HTTP 200 + SSE 流内错误事件**
+/// 返回中文文案（code=rate_limit_exceeded：
+/// "已达到 5 小时使用上限，2026-10-14 19:14:36 后可继续使用。..."），
+/// 也可能以 HTTP 4xx 返回同文案。因此限流判定按关键词（不限状态码），
+/// 恢复时刻由 freeze::parse_quota_reset 解析中文时间戳（北京时间）。
+pub fn zp_template() -> ClassTemplate {
+    ClassTemplate {
+        invalid: vec![
+            ClassRule {
+                status: vec![401, 402, 403],
+                ..Default::default()
+            },
+            ClassRule {
+                status: Vec::new(),
+                keywords_any: vec!["subscription has expired".into()],
+                keywords_all: Vec::new(),
+            },
+        ],
+        rate_limited: vec![
+            ClassRule {
+                status: vec![429],
+                ..Default::default()
+            },
+            // "使用上限" 同时覆盖 5 小时/包月两种额度文案；
+            // "rate_limit_exceeded" 覆盖错误码形状。
+            ClassRule {
+                status: Vec::new(),
+                keywords_any: vec!["使用上限".into(), "rate_limit_exceeded".into()],
+                keywords_all: Vec::new(),
+            },
+        ],
         model_unsupported: vec![ClassRule {
             status: vec![404],
             ..Default::default()
@@ -228,6 +290,7 @@ pub fn builtin_config() -> ErrorRulesConfig {
     let mut templates = BTreeMap::new();
     templates.insert("default".to_string(), default_template());
     templates.insert("ark".to_string(), ark_template());
+    templates.insert("zp".to_string(), zp_template());
     ErrorRulesConfig {
         tunables: Tunables::default(),
         templates,
@@ -401,6 +464,65 @@ mod tests {
         assert_eq!(
             classify(&config, "opencode-go", 401, "").rule,
             "default/invalid#0"
+        );
+    }
+
+    #[test]
+    fn zp_template_classifies_chinese_quota_error_regardless_of_status() {
+        let config = builtin_config();
+        let body = r#"{"error":{"code":"rate_limit_exceeded","message":"已达到 5 小时使用上限，2026-10-14 19:14:36 后可继续使用。如需超限额按量付费使用，可联系管理员开启超额按量付费。"}}"#.to_lowercase();
+        // 流内错误：HTTP 200 + SSE error 事件 → 关键词命中限流
+        assert_eq!(
+            classify(&config, "zp", 200, &body).class,
+            ErrorClass::RateLimited
+        );
+        assert_eq!(
+            classify(&config, "zp", 200, &body).rule,
+            "zp/rate_limited#1"
+        );
+        // HTTP 状态错误：不限状态码都能命中
+        assert_eq!(
+            classify(&config, "zp", 400, &body).class,
+            ErrorClass::RateLimited
+        );
+        assert_eq!(
+            classify(&config, "zp", 429, &body).class,
+            ErrorClass::RateLimited
+        );
+        // 普通 400 / 401 / 404 不误伤
+        assert_eq!(
+            classify(&config, "zp", 400, "invalid parameter: messages is empty").class,
+            ErrorClass::Transient
+        );
+        assert_eq!(classify(&config, "zp", 401, "").class, ErrorClass::Invalid);
+        assert_eq!(
+            classify(&config, "zp", 404, "model not found").class,
+            ErrorClass::ModelUnsupported
+        );
+    }
+
+    #[test]
+    fn default_template_matches_midstream_rate_limit_codes() {
+        let config = builtin_config();
+        // 非 zp 供应商的流内限流错误码也能归类（default 模板关键词规则）
+        assert_eq!(
+            classify(
+                &config,
+                "aixhan",
+                200,
+                "rate_limit_exceeded: too many requests"
+            )
+            .class,
+            ErrorClass::RateLimited
+        );
+        assert_eq!(
+            classify(&config, "aixhan", 200, "rate_limit_error").class,
+            ErrorClass::RateLimited
+        );
+        // 普通文本不含限流错误码时不误伤
+        assert_eq!(
+            classify(&config, "aixhan", 200, "response.output_text.delta").class,
+            ErrorClass::Transient
         );
     }
 

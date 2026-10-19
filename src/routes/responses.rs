@@ -16,8 +16,8 @@ use crate::features::chat::select::{
 };
 use crate::features::responses::{store, translate};
 use crate::features::router::{
-    circuit_breaker_on_exhaustion, handle_connect_failure, handle_response_failure,
-    note_success_differential, FailureAction, NoAvailableKeyError,
+    circuit_breaker_on_exhaustion, handle_connect_failure, handle_embedded_failure,
+    handle_response_failure, note_success_differential, FailureAction, NoAvailableKeyError,
 };
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -360,8 +360,14 @@ async fn call_responses_passthrough(
         }
 
         // 成功：差分冻结 + 清除 key×模型“不支持”记录。
-        note_success_differential(app, &ambiguous);
-        clear_unsupported_if_ok(app, &key, &alias, status);
+        // HTTP 200 但响应体本身是错误对象（如 zp 限额 200 错误体）时按嵌入失败处理：
+        // 冻结坏 key + 解绑会话，响应仍原样透传给客户端。
+        let stream_failed =
+            handle_embedded_failure(app, &alias, &key, &body_text, session_id.as_deref());
+        if !stream_failed {
+            note_success_differential(app, &ambiguous);
+            clear_unsupported_if_ok(app, &key, &alias, status);
+        }
 
         // 响应原样透传（上游已是 Responses 格式；4xx/5xx 也是 OpenAI/Responses 错误体）
         let mut resp = json_status(status_code(status), content);
