@@ -31,12 +31,25 @@ export function ErrorsPage() {
     }
   }, []);
 
+  // 页面在后台时暂停自动刷新（浏览器仍会触发定时器，白白消耗带宽）。
+  const [pageVisible, setPageVisible] = useState(() => document.visibilityState === 'visible');
+
+  useEffect(() => {
+    const onVisibility = () => {
+      const visible = document.visibilityState === 'visible';
+      setPageVisible(visible);
+      if (visible) void load();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [load]);
+
   useEffect(() => {
     void load();
-    if (!autoRefresh) return;
+    if (!autoRefresh || !pageVisible) return;
     const timer = setInterval(() => void load(), 5000);
     return () => clearInterval(timer);
-  }, [load, autoRefresh]);
+  }, [load, autoRefresh, pageVisible]);
 
   const visible = errors.filter((item) => !classFilter || item.class === classFilter);
 

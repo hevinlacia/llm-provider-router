@@ -29,12 +29,18 @@ pub(crate) mod usage;
 use crate::app::AppState;
 use crate::config::Settings;
 use axum::extract::DefaultBodyLimit;
+use axum::http::header::CACHE_CONTROL;
+use axum::http::HeaderValue;
 use axum::routing::{get, post, put};
 use axum::Router;
 use serde::Deserialize;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
+use tower::ServiceBuilder;
+use tower_http::compression::predicate::{DefaultPredicate, NotForContentType};
+use tower_http::compression::{CompressionLayer, Predicate};
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 /// 请求体上限：图片以 base64 内嵌 JSON（约 1.37x 原始大小），2MB 默认限制会直接 413。
 /// 64MB 可容纳数张大图；链路上 front-proxy 同样放开（见 front_proxy.rs）。
@@ -173,9 +179,28 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
             "/v1/responses/input_tokens",
             post(responses::response_input_tokens),
         )
-        .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
+        .nest_service(
+            "/assets",
+            // 静态资源文件名带内容 hash：可永久缓存。部署新版本后 hash 变化，
+            // 自然失效；index.html 用 no-cache 每次回源验证，保证拿到新引用。
+            ServiceBuilder::new()
+                .layer(SetResponseHeaderLayer::overriding(
+                    CACHE_CONTROL,
+                    HeaderValue::from_static("public, max-age=31536000, immutable"),
+                ))
+                .service(ServeDir::new("frontend/dist/assets")),
+        )
         .fallback(get(usage::dashboard))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
+        .layer(
+            // API/静态资源 gzip：dashboard 轮询（/api/state ~22KB → ~4KB）与
+            // JS bundle（~322KB → ~90KB）走 peer-relay 隧道，与 LLM 流共享带宽。
+            // 显式排除 text/event-stream（0.6 的 DefaultPredicate 已排除，
+            // 写出防上游默认变更）：/v1/messages、/v1/responses 的 SSE 流
+            // 被压缩层缓冲会直接破坏流式语义。
+            CompressionLayer::new()
+                .compress_when(DefaultPredicate::new().and(NotForContentType::SSE)),
+        )
         .with_state(app_state);
 
     let addr: SocketAddr = format!("{}:{}", settings.host, settings.port).parse()?;
