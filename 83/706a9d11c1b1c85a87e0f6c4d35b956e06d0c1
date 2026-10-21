@@ -1,0 +1,23 @@
+src/features/responses/stream/passthrough.rs
+  61ca1792b013c04f 76-79,91-92,201-202,208,225-227,238-239,245-246,287-344
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "83706a9d11c1b1c85a87e0f6c4d35b956e06d0c1",
+  "prompts": {
+    "61ca1792b013c04f": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a15c07-76b1-77f8-aed9-7730d07be2b1",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 74,
+      "total_deletions": 12,
+      "accepted_lines": 74,
+      "overriden_lines": 0
+    }
+  }
+}
