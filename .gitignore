@@ -12,6 +12,7 @@ frontend/node_modules
 # 根级 pnpm/npm 产物：全局 lefthook hook 兜底跑 `pnpm lefthook` 时会在带 package.json 的仓库自动安装
 /node_modules/
 /pnpm-lock.yaml
+/bun.lock
 frontend/dist/
 frontend/tsconfig.tsbuildinfo
 
