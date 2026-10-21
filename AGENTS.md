@@ -7,10 +7,22 @@ Personal tool project under `~/Developer/tools/`.
 - Do not read or print real API keys. Use environment variables only.
 - Follow the `tools/` worktree rule: do not develop directly on `main`; use an isolated git worktree + branch and merge back to `main` after verification (see `~/Developer/tools/AGENTS.md` — Git, Branching & Worktree).
 
+## 字节/头变更检查清单（流式与代理路径改动必过）
+
+> 2026-10-21 两起部署事故的固化教训：单组件测试全过 ≠ 全链路字节正确。
+> 改动涉及**响应头、内容类型、SSE/流式转发路径**（含压缩层、守卫、翻译、front-proxy 头处理）时，逐条自查：
+
+1. **字节路径**：这段流经的每一跳（守卫/翻译/压缩层/front-proxy）对字节做了什么？谁复制？谁丢弃？冲刷/转发的字节集合是否恰好等于上游字节集合（不多不少）？
+2. **头路径**：每一跳对头做了什么？skip 列表改过吗？`content-encoding`/`content-type`/`cache-control` 是否原样到达客户端？
+3. **chunk 边界**：测试是否覆盖行中间截断的多 chunk 场景（`tests/e2e_stream.rs` 字节级回归为准）？
+4. **验收口径**：断言“客户端可见结果”（重建后的完整字节流/透传后的头），而不是断言某单组件的内部返回值；存量测试语义可疑时先确认它断的不是 bug 行为。
+
 ## Deploy & Switch (部署替换必须验证)
 
 > 切换流量到新版本前,必须先验证新版本能正常工作;未经验证就切换,一旦新版本异常,整个 llm router 会直接瘫痪。
 
+- **标准部署路径是 one-shot `deploy`（2026-10-21 起）**：`deploy` 在拉起→切流之间亚秒级窗口内持锁完成，不受 front-proxy 旧槽 idle 下线竞态影响。两段式 `stage`→`switch` 仅用于需要在切流前长时间人工探测的场景——间隔超过一个检查周期（默认 30s）时，刚拉起的非活跃槽可能被 idle 下线机制误杀（旧槽流量时钟不随重启重置，`idle_for` 会沿用 proxy 启动时刻）；用两段式时必须在 stage 后立即 switch，且结束必 `lock-release --token <T>`（忘释放会阻塞后续部署）。
+- **自动化探针（2026-10-21 事故后内置）**：`deploy` 切流前对新槽跑 `precheck`（头语义 + SSE 字节完整性探针，硬失败中止部署），切流后 `verify_after_switch` 在原有 4 路径 JSON 检查上追加同样探针（失败自动回滚）。探针 verdict 分级：结构性损坏（malformed JSON/事件重复/头错误）= fail；上游原因（超时/上游错误/HTTP 4xx 重试后仍失败）= skip（不阻塞）。手动探针：`python3 bin/hot-deploy-router.py precheck --slot <slot>` 或 `--url <base>`；探针模型可用 `--model` 或 `$LLM_PROVIDER_ROUTER_PROBE_MODEL` 覆盖（默认 low-model-auto）。全链路字节级集成测试见 `tests/e2e_stream.rs`（真实二进制 + mock 上游，含行中间截断的多 chunk 场景）。
 - **部署互斥锁(2026-10-08 事故:两会话同时部署互相覆盖槽位状态)**:任何部署/切流操作必须持有部署锁 —— `python3 bin/hot-deploy-router.py stage/switch/deploy`(内部自动持锁)或 `python3 bin/deploy_lock.py acquire/release`。锁为 `flock` 文件锁(`~/.local/state/llm-provider-router/deploy.lock`,进程死亡自动释放),acquire 产出 token;锁被持有期间 front-proxy 的 `POST /_proxy/active/{slot}` 只放行携带匹配 `X-Deploy-Lock` 头的请求,否则 409。拿不到锁 = 有其他部署在进行,等待或放弃,绝不并行部署。锁状态:`lock-status` 或 `GET /_proxy/deploy-lock`。
 - **先验证,后切换**:部署时先在非活跃 slot(blue/green)拉起新版本,确认 `python3 bin/hot-deploy-router.py status` 显示该 slot `health=ok` 后才允许切换 `active_slot`。
 - **切换后立即复检**:切换完成后必须立刻用 front-proxy 入口验证——`/health` 健康、`/api/config/token-prices`、`/api/config/v2/physical-models`、`/api/router/capabilities` 等核心 API 返回正常 JSON(而非 dashboard HTML fallback)。

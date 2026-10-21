@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import os
 import subprocess
@@ -131,11 +132,12 @@ VERIFY_PATHS = [
 ]
 
 
-def verify_after_switch() -> tuple[bool, list[str]]:
+def verify_after_switch(model: str = "low-model-auto") -> tuple[bool, list[str]]:
     """通过 front-proxy 校验核心 API 未被 dashboard HTML fallback 兜住。
 
     判定：响应 Content-Type 不含 `text/html` 即视为路由正常（注册路由的 4xx 如
-    PUT-only 的 405 不算 fallback）。返回 (是否全部通过, 失败明细)。
+    PUT-only 的 405 不算 fallback）。另跑头语义与 SSE 完整性探针（2026-10-21 事故后新增）。
+    返回 (是否全部通过, 失败明细)。
     """
     base = proxy_url().rstrip("/")
     failures: list[str] = []
@@ -156,7 +158,174 @@ def verify_after_switch() -> tuple[bool, list[str]]:
             failures.append(
                 f"{path}: dashboard HTML fallback (HTTP {status}, content-type={ctype})"
             )
+    failures += header_probe(base)
+    verdict, detail = sse_probe(base, model)
+    if verdict == "fail":
+        failures.append(f"SSE probe: {detail}")
     return (not failures, failures)
+
+
+# ---------- 部署探针（2026-10-21 两起事故后新增） ----------
+# 口径：不信任单组件测试与人工冒烟，对“客户端可见结果”做验证。
+# - SSE 完整性：逐行 JSON 可解析、事件无重复、终态存在、SSE 不被压缩。
+#   结构性损坏 = fail（阻塞部署/触发回滚）；上游原因（超时/上游错误）= skip（不阻塞）。
+# - 头语义：JSON 压缩带头且可解压；dashboard no-cache。
+
+
+def _http(url: str, method: str = "GET", data: bytes | None = None,
+          headers: dict | None = None, timeout: int = 8):
+    req = urllib.request.Request(url, method=method, data=data)
+    for key, value in (headers or {}).items():
+        req.add_header(key, value)
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def sse_probe(base_url: str, model: str, timeout: int = 25) -> tuple[str, str]:
+    """流式 /v1/responses 字节级完整性探针。返回 (verdict, detail)。
+
+    verdict: "pass" | "fail"（结构性损坏，阻塞）| "skip"（上游原因，不阻塞）。
+    """
+    try:
+        payload = json.dumps(
+            {"model": model, "stream": True, "input": "hi", "max_output_tokens": 32}
+        ).encode("utf-8")
+        headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+        # 上游偶发 4xx/抖动（如 Ark 瞬时 400）会污染探针：非 200 重试一次再定 skip
+        last_error: Exception | None = None
+        resp = status = ctype = enc = None
+        for attempt in range(2):
+            try:
+                resp = _http(
+                    f"{base_url.rstrip('/')}/v1/responses",
+                    "POST",
+                    payload,
+                    headers,
+                    timeout,
+                )
+                status = resp.status
+                if status == 200:
+                    break
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+            time.sleep(1)
+        if resp is None or status != 200:
+            hint = f"last_error={last_error}" if last_error else f"HTTP {status}"
+            return "skip", f"transport error after retry (upstream unhealthy?): {hint}"
+        ctype = resp.headers.get("Content-Type", "")
+        enc = resp.headers.get("Content-Encoding")
+        chunks = []
+        while True:
+            piece = resp.read(8192)
+            if not piece:
+                break
+            chunks.append(piece)
+        body = b"".join(chunks).decode("utf-8", errors="replace")
+    except Exception as exc:  # noqa: BLE001
+        return "skip", f"transport error (upstream unhealthy?): {exc}"
+    if status != 200:
+        return "skip", f"HTTP {status}"
+    if "text/event-stream" not in ctype:
+        return "fail", f"SSE content-type wrong: {ctype}"
+    if enc:
+        return "fail", f"SSE must not be compressed, got content-encoding={enc}"
+    if 'upstream_error' in body:
+        return "skip", "router returned upstream_error (provider unhealthy; not a deploy blocker)"
+    data_lines = [line for line in body.split("\n") if line.startswith("data: ")]
+    if not data_lines:
+        return "skip", "no data lines (empty stream)"
+    seen: set = set()
+    types: list[str] = []
+    for line in data_lines:
+        payload = line[len("data: "):]
+        if payload == "[DONE]":
+            types.append("[DONE]")
+            continue
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            return "fail", f"malformed SSE JSON: {exc}: {payload[:120]!r}"
+        etype = event.get("type", "?") if isinstance(event, dict) else "?"
+        key = (etype, event.get("sequence_number") if isinstance(event, dict) else None)
+        if key in seen:
+            return "fail", f"duplicated SSE event {key} (byte corruption)"
+        seen.add(key)
+        types.append(etype)
+    if types.count("response.created") != 1:
+        return "fail", f"response.created count={types.count('response.created')} (expect 1)"
+    terminal = {"response.completed", "response.incomplete", "response.failed", "[DONE]"}
+    if not (set(types) & terminal):
+        return "skip", f"no terminal event; tail={types[-4:]}"
+    return "pass", f"{len(data_lines)} data lines ok"
+
+
+def header_probe(base_url: str) -> list[str]:
+    """响应头语义探针（2026-10-21 事故二回归）。返回失败明细列表。"""
+    failures: list[str] = []
+    base = base_url.rstrip("/")
+    try:
+        with _http(f"{base}/api/state", headers={"Accept-Encoding": "gzip"}) as resp:
+            encoding = resp.headers.get("Content-Encoding")
+            body = resp.read()
+        if encoding != "gzip":
+            failures.append(
+                f"/api/state with AE gzip: content-encoding={encoding} (expect gzip; front-proxy 不得剥头)"
+            )
+        else:
+            try:
+                json.loads(gzip.decompress(body))
+            except Exception as exc:  # noqa: BLE001
+                failures.append(f"/api/state gzip body invalid: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        failures.append(f"/api/state probe: {exc}")
+    try:
+        with _http(f"{base}/api/state") as resp:
+            if resp.headers.get("Content-Encoding"):
+                failures.append("/api/state without AE: unexpected content-encoding")
+    except Exception as exc:  # noqa: BLE001
+        failures.append(f"/api/state plain probe: {exc}")
+    try:
+        with _http(f"{base}/") as resp:
+            cc = resp.headers.get("Cache-Control")
+            ctype = resp.headers.get("Content-Type", "")
+        if "text/html" in ctype and cc != "no-cache":
+            failures.append(f"/ cache-control={cc} (expect no-cache)")
+    except Exception as exc:  # noqa: BLE001
+        failures.append(f"/ probe: {exc}")
+    return failures
+
+
+def precheck_target(slot: str, model: str) -> tuple[list[str], list[str]]:
+    """切流前对新槽直接跑探针（不经过 front-proxy）。返回 (硬失败, 警告)。"""
+    url = SLOTS[slot]["url"]
+    failures = header_probe(url)
+    verdict, detail = sse_probe(url, model)
+    warnings: list[str] = []
+    if verdict == "fail":
+        failures.append(f"SSE probe: {detail}")
+    elif verdict == "skip":
+        warnings.append(f"SSE probe skipped: {detail}")
+    return failures, warnings
+
+
+def precheck_cmd(args: argparse.Namespace) -> int:
+    model = args.model or os.environ.get("LLM_PROVIDER_ROUTER_PROBE_MODEL", "low-model-auto")
+    url = args.url or SLOTS[args.slot]["url"]
+    print(f"precheck {url} (model={model})", flush=True)
+    header_failures = header_probe(url)
+    for failure in header_failures:
+        print(f"HEADER FAIL: {failure}", file=sys.stderr)
+    verdict, detail = sse_probe(url, model)
+    if verdict == "fail":
+        header_failures.append(f"SSE probe: {detail}")
+        print(f"SSE FAIL: {detail}", file=sys.stderr)
+    elif verdict == "skip":
+        print(f"SSE SKIP: {detail}")
+    else:
+        print(f"SSE PASS: {detail}")
+    if header_failures:
+        return 1
+    print("precheck ok")
+    return 0
 
 
 
@@ -237,12 +406,24 @@ def deploy(args: argparse.Namespace) -> int:
         with HeldLock(args.lock_wait, holder=f"deploy(pid:{os.getpid()})") as lock_token:
             # 部署必强制重启目标 slot，确保加载当前二进制（start 对已运行服务是 no-op）
             bring_up_backend(target, args.health_timeout, restart=True)
+            # 切流前探针（2026-10-21 事故后新增）：对新槽直接验证头语义 + SSE 完整性，
+            # 硬失败中止部署（目标槽已验证异常，不得切流）；skip 类仅警告。
+            precheck_failures, precheck_warnings = precheck_target(target, args.probe_model)
+            for warning in precheck_warnings:
+                print(f"PRECHECK SKIP: {warning}", file=sys.stderr)
+            if precheck_failures:
+                for failure in precheck_failures:
+                    print(f"PRECHECK FAIL: {failure}", file=sys.stderr)
+                stop_backend(target)
+                status()
+                return 1
+            print(f"precheck {target} ok")
             # 必须携带自己的 token：proxy 对持锁状态的切流请求校验 token，不带会 409
             switch_via_proxy(target, lock_token)
             print(f"switched active backend to {target} ({SLOTS[target]['url']})")
 
             # 切换后立即用 front-proxy 复检（AGENTS.md）；任一失败即回滚，不得停留在未验证状态
-            ok, failures = verify_after_switch()
+            ok, failures = verify_after_switch(args.probe_model)
             if not ok:
                 for failure in failures:
                     print(f"VERIFY FAIL: {failure}", file=sys.stderr)
@@ -315,7 +496,7 @@ def switch(args: argparse.Namespace) -> int:
         return 0
     result = switch_via_proxy(args.slot, args.lock_token)
     print(f"switched active backend to {args.slot} ({result.get('backend', '')})")
-    ok, failures = verify_after_switch()
+    ok, failures = verify_after_switch(args.probe_model)
     if not ok:
         for failure in failures:
             print(f"VERIFY FAIL: {failure}", file=sys.stderr)
@@ -375,6 +556,7 @@ def main() -> int:
     p_deploy.add_argument("--slot", choices=sorted(SLOTS), help="Target slot. Defaults to inactive slot.")
     p_deploy.add_argument("--health-timeout", type=int, default=30)
     p_deploy.add_argument("--lock-wait", type=int, default=300, help="Seconds to wait when another deploy holds the lock (0=fail fast, default 300).")
+    p_deploy.add_argument("--probe-model", default=None, help="Model for the SSE integrity probe (default $LLM_PROVIDER_ROUTER_PROBE_MODEL or low-model-auto).")
     p_deploy.set_defaults(func=deploy)
 
     p_stage = sub.add_parser("stage", help="Two-phase deploy step 1: restart inactive slot with current binary; acquires and HOLDS the deploy lock across invocations.")
@@ -387,6 +569,7 @@ def main() -> int:
     p_switch.add_argument("--slot", choices=sorted(SLOTS), required=True, help="Target slot.")
     p_switch.add_argument("--lock-token", required=True, help="Token printed by `stage`/`lock-acquire`.")
     p_switch.add_argument("--health-timeout", type=int, default=30)
+    p_switch.add_argument("--probe-model", default=None)
     p_switch.set_defaults(func=switch)
 
     p_lacq = sub.add_parser("lock-acquire", help="Acquire the deploy lock without touching slots; prints token.")
@@ -405,7 +588,15 @@ def main() -> int:
     p_status = sub.add_parser("status", help="Print active slot, services, and health.")
     p_status.set_defaults(func=lambda _args: status())
 
+    p_pre = sub.add_parser("precheck", help="Run header-semantics and SSE-integrity probes against a slot/URL without deploying.")
+    p_pre.add_argument("--slot", choices=sorted(SLOTS))
+    p_pre.add_argument("--url", help="Probe an arbitrary base URL instead of a slot.")
+    p_pre.add_argument("--model", default=None, help="Model for the SSE probe (default $LLM_PROVIDER_ROUTER_PROBE_MODEL or low-model-auto).")
+    p_pre.set_defaults(func=precheck_cmd)
+
     args = parser.parse_args()
+    if getattr(args, "probe_model", None) is None:
+        args.probe_model = os.environ.get("LLM_PROVIDER_ROUTER_PROBE_MODEL", "low-model-auto")
     try:
         result = args.func(args)
         # 子命令返回 int（0/1）时透传退出码；返回 None 视为成功
