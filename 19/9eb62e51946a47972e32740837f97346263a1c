@@ -1,0 +1,27 @@
+AGENTS.md
+  61ca1792b013c04f 10-19,24-25
+tests/e2e_stream.rs
+  61ca1792b013c04f 1-72,74-94,96-135,137-162,164-190,192-259,266-335
+bin/hot-deploy-router.py
+  61ca1792b013c04f 5,135,139-140,161-164,168-330,409-420,426,499,559,572,591-596,598-599
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "199eb62e51946a47972e32740837f97346263a1c",
+  "prompts": {
+    "61ca1792b013c04f": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a15c07-76b1-77f8-aed9-7730d07be2b1",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 567,
+      "total_deletions": 33,
+      "accepted_lines": 531,
+      "overriden_lines": 6
+    }
+  }
+}
