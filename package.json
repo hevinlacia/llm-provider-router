@@ -2,10 +2,10 @@
   "name": "llm-provider-router-workspace",
   "private": true,
   "scripts": {
-    "build": "npm --prefix frontend run build && cargo build --release",
+    "build": "cd frontend && bun run build && cargo build --release",
     "backend": "cargo run -- backend",
     "front-proxy": "cargo run -- front-proxy",
-    "frontend:dev": "npm --prefix frontend run dev",
-    "frontend:build": "npm --prefix frontend run build"
+    "frontend:dev": "cd frontend && bun run dev",
+    "frontend:build": "cd frontend && bun run build"
   }
 }

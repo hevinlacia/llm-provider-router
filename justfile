@@ -13,10 +13,10 @@ build:
 check: fmt lint test build
 
 frontend-install:
-    npm --prefix frontend install
+    cd frontend && bun install
 
 frontend-build:
-    npm --prefix frontend run build
+    cd frontend && bun run build
 
 # —— 供应商 key vault（SOPS age 加密）——
 # 明文 config/api-keys.json 仅本机（gitignored）；加密副本 api-keys.sops.json 提交 git。
@@ -34,4 +34,4 @@ vault-decrypt:
 age_key_file := "~/.config/sops/age/keys.txt"
 
 frontend-dev:
-    npm --prefix frontend run dev
+    cd frontend && bun run dev

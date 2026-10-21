@@ -33,8 +33,8 @@ The front proxy reads `~/.local/state/llm-provider-router/active-backend.json` a
 
 ```bash
 cd /home/hevin/Developer/tools/llm-provider-router
-npm --prefix frontend install
-npm --prefix frontend run build
+cd frontend && bun install
+cd frontend && bun run build
 cargo build --release
 bin/install-service.sh
 ```
@@ -76,13 +76,13 @@ cargo run -- front-proxy
 Run React dashboard in dev mode:
 
 ```bash
-npm --prefix frontend run dev
+cd frontend && bun run dev
 ```
 
 Build everything:
 
 ```bash
-npm run build
+bun run build
 ```
 
 ## API Surface

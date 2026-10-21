@@ -15,8 +15,7 @@ echo "  $USER_UNIT_DIR/llm-provider-router.service"
 echo "  $USER_UNIT_DIR/llm-provider-router-backend@.service"
 
 cd "$PROJECT_DIR"
-npm --prefix frontend install --silent
-npm --prefix frontend run build
+(cd frontend && bun install && bun run build)
 cargo build --release --quiet
 
 systemctl --user daemon-reload

@@ -91,7 +91,7 @@ v1 硬编码中 `deepseek-official` key 是 env-only（`persist=false`，绝不�
 
 ```bash
 cargo fmt && cargo clippy --all-targets && cargo test   # 后端（96 单测）
-cd frontend && npm run build                             # 前端构建
+cd frontend && bun run build                             # 前端构建
 python3 bin/hot-deploy-router.py status                  # 部署后槽健康（AGENTS.md 规则）
 ```
 
