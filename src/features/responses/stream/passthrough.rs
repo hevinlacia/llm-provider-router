@@ -73,7 +73,10 @@ impl PassthroughGuard {
         if self.flushed {
             return FeedAction::Forward { prefix: Vec::new() };
         }
-        // 全量缓冲：冲刷时按序整体交给客户端（含当前 chunk 冲刷行之后的部分）。
+        // 冲刷 prefix 必须只含“当前 chunk 之前”的缓冲字节：当前 chunk 由调用方
+        // 原样整体转发。若 prefix 混入当前 chunk，会造成整 chunk 重复发送，
+        // 行边界错乱导致客户端 SSE JSON 损坏（2026-10-21 事故根因）。
+        let buffered_len = self.buffer.len();
         self.buffer.extend_from_slice(chunk);
         let mut pos = 0;
         while let Some(rel) = chunk[pos..].iter().position(|&b| b == b'\n') {
@@ -85,7 +88,8 @@ impl PassthroughGuard {
                 LineClass::Meta => {}
                 LineClass::Content => {
                     self.flushed = true;
-                    let prefix = std::mem::take(&mut self.buffer);
+                    let mut prefix = std::mem::take(&mut self.buffer);
+                    prefix.truncate(buffered_len);
                     return FeedAction::Forward { prefix };
                 }
                 LineClass::Retry(reason) => return FeedAction::RetryZeroOutput(reason),
@@ -194,13 +198,14 @@ mod tests {
             g.feed(b"data: {\"type\":\"response.created\"}\n\n"),
             FeedAction::Buffered
         ));
-        // 第二段：内容事件 → 冲刷缓冲（含本 chunk）
+        // 第二段：内容事件 → 冲刷；prefix 只含此前缓冲（created），
+        // 内容行本身在当前 chunk 内，由调用方原样转发。
         let action = g.feed(
             b"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"he\"}\n\n",
         );
         let prefix = forward_prefix(&action);
         assert!(prefix.contains("response.created"));
-        assert!(prefix.contains("output_text.delta"));
+        assert!(!prefix.contains("output_text.delta"));
         assert!(g.is_flushed());
         // 提交后：后续 chunk 原样直通
         let action =
@@ -214,13 +219,12 @@ mod tests {
     #[test]
     fn semantic_incomplete_reason_not_retryable() {
         for reason in ["max_output_tokens", "content_filter"] {
-            let mut g = PassthroughGuard::new();
             let body = format!(
                 "data: {{\"type\":\"response.created\"}}\n\ndata: {{\"type\":\"response.incomplete\",\"response\":{{\"incomplete_details\":{{\"reason\":\"{reason}\"}}}}}}\n\n"
             );
-            let action = g.feed(body.as_bytes());
-            let prefix = forward_prefix(&action);
-            assert!(prefix.contains(reason));
+            let (out, retried) = replay_client_stream(&[&body]);
+            assert!(!retried, "{reason} 不应触发重试");
+            assert!(out.contains(reason));
         }
     }
 
@@ -231,13 +235,15 @@ mod tests {
             g.feed(b"data: {\"type\":\"response.created\"}\n\n"),
             FeedAction::Buffered
         ));
-        // completed 触发冲刷：prefix 含 created + completed
+        // completed 触发冲刷：prefix 只含此前缓冲（created），
+        // completed 行在当前 chunk 内由调用方转发。
         let action = g.feed(
             b"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
         );
         let prefix = forward_prefix(&action);
         assert!(prefix.contains("response.created"));
-        assert!(prefix.contains("response.completed"));
+        assert!(!prefix.contains("\"response.completed\""));
+        assert!(g.is_flushed());
         // 后续 [DONE] 直通
         let action = g.feed(b"data: [DONE]\n\n");
         assert!(matches!(action, FeedAction::Forward { prefix } if prefix.is_empty()));
@@ -278,7 +284,63 @@ mod tests {
     fn unparseable_data_line_commits_stream() {
         let mut g = PassthroughGuard::new();
         let action = g.feed(b"data: not-json\n\ndata: {\"type\":\"response.created\"}\n\n");
-        let prefix = forward_prefix(&action);
-        assert!(prefix.contains("not-json"));
+        // 无法识别的 data 行按已提交处理：冲刷且 prefix 为空（首 chunk 无历史缓冲），
+        // 字节由调用方原样转发，不触发重试。
+        assert!(forward_prefix(&action).is_empty());
+        assert!(g.is_flushed());
+    }
+
+    /// 模拟 mod.rs 调用方的转发行为，重建客户端实际收到的字节流。
+    fn replay_client_stream(chunks: &[&str]) -> (String, bool) {
+        let mut g = PassthroughGuard::new();
+        let mut out = Vec::new();
+        let mut retried = false;
+        for c in chunks {
+            match g.feed(c.as_bytes()) {
+                FeedAction::Forward { prefix } => {
+                    out.extend_from_slice(&prefix);
+                    out.extend_from_slice(c.as_bytes());
+                }
+                FeedAction::Buffered => {}
+                FeedAction::RetryZeroOutput(_) => {
+                    retried = true;
+                    break;
+                }
+            }
+        }
+        (String::from_utf8(out).unwrap(), retried)
+    }
+
+    /// 回归（2026-10-21 事故）：冲刷发生在当前 chunk 的完整行上时，
+    /// 该 chunk 不得被重复发送；客户端可见流必须与上游字节流完全一致。
+    #[test]
+    fn flush_on_content_chunk_does_not_duplicate_chunk() {
+        let meta = "event: response.created\ndata: {\"type\":\"response.created\"}\n\n";
+        let delta = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n";
+        let tail = "data: {\"type\":\"response.output_text.don\""; // 行中间截断
+                                                                   // 冲刷发生在第二个 chunk（含内容行 + 行中截断的尾部）
+        let (out, retried) = replay_client_stream(&[meta, &format!("{delta}{tail}")]);
+        assert!(!retried);
+        assert_eq!(out, format!("{meta}{delta}{tail}"));
+    }
+
+    /// 回归：内容行跨 chunk 拼接后冲刷，prefix 只含此前 chunk，当前 chunk 原样转发。
+    #[test]
+    fn flush_after_cross_chunk_line_is_byte_exact() {
+        let c1 = "event: response.created\ndata: {\"type\":\"response.created\"}\n\ndata: {\"type\":\"response.output_te";
+        let c2 = "xt.delta\",\"delta\":\"hi\"}\n\nmore-bytes";
+        let (out, retried) = replay_client_stream(&[c1, c2]);
+        assert!(!retried);
+        assert_eq!(out, format!("{c1}{c2}"));
+    }
+
+    /// 回归：冲刷后直通路径继续字节一致。
+    #[test]
+    fn post_flush_passthrough_is_byte_exact() {
+        let meta = "event: response.created\ndata: {\"type\":\"response.created\"}\n\n";
+        let rest = "data: {\"type\":\"response.output_item.done\"}\n\ndata: [DONE]\n\n";
+        let (out, retried) = replay_client_stream(&[meta, rest]);
+        assert!(!retried);
+        assert_eq!(out, format!("{meta}{rest}"));
     }
 }
