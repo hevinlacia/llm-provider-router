@@ -28,4 +28,5 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "compression-gzip", "set-header"] }
 
 [dev-dependencies]
+flate2 = "1"
 tempfile = "3.14"
