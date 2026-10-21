@@ -30,6 +30,7 @@
 | `normalize.deepseek.applied` | `deepseek-official` 且归一化改写发生 | `before/after` payload_summary |
 | `upstream.failure` | 上游 4xx/5xx（stderr 同步落盘一份） | `provider/model/alias/status/error` |
 | `stream.incomplete_upstream` | 流式上游缺 `finish_reason` 或 `[DONE]`（已做兜底补齐） | `alias/provider/model/status/saw_finish_reason/saw_done/bytes` |
+| `stream.zero_output_incomplete` | 透传流零输出异常终止（如 Ark 容量异常时的 `response.incomplete/network_error`），已换 key/target 静默重试并对该 key 做短差分冻结 | `provider/model/alias/key/reason` |
 
 ## 常用查询
 
