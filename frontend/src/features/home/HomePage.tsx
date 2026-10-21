@@ -53,19 +53,27 @@ export function HomePage() {
     return m;
   }, [tokenPrices]);
 
-  const loadData = useCallback(async () => {
+  // 配置类数据（keys/token-prices）几乎不变：只在挂载与回到前台时拉取，
+  // 不随 8s 轮询重复传输（两者合计 ~2KB/次）。
+  const loadConfig = useCallback(async () => {
     try {
-      const [stateData, todayData, keyData, priceData, sessionsData] = await Promise.all([
+      const [keyData, priceData] = await Promise.all([api.keys(), api.tokenPrices()]);
+      setKeyConfig(keyData);
+      setTokenPrices(priceData);
+    } catch {
+      // 配置拉取失败不影响实时数据展示。
+    }
+  }, []);
+
+  const loadLiveData = useCallback(async () => {
+    try {
+      const [stateData, todayData, sessionsData] = await Promise.all([
         api.state(filters),
         api.usage({ period: 'today' }),
-        api.keys(),
-        api.tokenPrices(),
         api.sessionsActive(),
       ]);
       setState(stateData);
       setToday(todayData);
-      setKeyConfig(keyData);
-      setTokenPrices(priceData);
       setSessions(sessionsData);
       setError('');
     } catch (err) {
@@ -73,11 +81,31 @@ export function HomePage() {
     }
   }, [filters]);
 
+  // 页面在后台时不轮询（标签页不可见时浏览器仍会触发定时器，白白消耗带宽）。
+  const [pageVisible, setPageVisible] = useState(() => document.visibilityState === 'visible');
+
   useEffect(() => {
-    void loadData();
-    const timer = window.setInterval(() => void loadData(), 8000);
+    const onVisibility = () => {
+      const visible = document.visibilityState === 'visible';
+      setPageVisible(visible);
+      if (visible) {
+        void loadConfig();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [loadConfig]);
+
+  useEffect(() => {
+    void loadConfig();
+  }, [loadConfig]);
+
+  useEffect(() => {
+    void loadLiveData();
+    if (!pageVisible) return;
+    const timer = window.setInterval(() => void loadLiveData(), 8000);
     return () => window.clearInterval(timer);
-  }, [loadData]);
+  }, [loadLiveData, pageVisible]);
 
   const usage = state?.usage;
   const total = usage?.total;
@@ -140,12 +168,12 @@ export function HomePage() {
   async function resetUsage() {
     if (!confirm('Reset all recorded usage metrics?')) return;
     await api.resetUsage();
-    await loadData();
+    await loadLiveData();
   }
 
   async function clearFrozen() {
     await api.clearFrozen();
-    await loadData();
+    await loadLiveData();
   }
 
   const frozenRows = Object.entries(state?.frozen ?? {});
@@ -187,7 +215,7 @@ export function HomePage() {
         <div className="field"><label>Start</label><input type="date" value={filters.start} onChange={(event) => setFilters({ ...filters, start: event.target.value })} /></div>
         <div className="field"><label>End</label><input type="date" value={filters.end} onChange={(event) => setFilters({ ...filters, end: event.target.value })} /></div>
         <button className="secondary" onClick={() => setFilters({ period: 'month', start: '', end: '' })}>This Month</button>
-        <button className="secondary" onClick={() => void loadData()}>Refresh</button>
+        <button className="secondary" onClick={() => { void loadConfig(); void loadLiveData(); }}>Refresh</button>
         <button className="ghost" onClick={() => void resetUsage()}>Reset Usage</button>
       </div>
     </div>
