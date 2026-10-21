@@ -398,12 +398,33 @@ fn response_skip_headers() -> HashSet<&'static str> {
         "transfer-encoding",
         "upgrade",
         "content-length",
-        "content-encoding",
         "date",
         "server",
     ]
     .into_iter()
     .collect()
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::*;
+
+    /// 回归：响应 content-encoding 必须原样转发。
+    /// 后端 CompressionLayer 开启 gzip 后，front-proxy 若剥掉该头，
+    /// 客户端会把 gzip body 当明文 JSON 解析，dashboard 全挂（2026-10-21 事故）。
+    #[test]
+    fn response_content_encoding_is_forwarded() {
+        let skip = response_skip_headers();
+        assert!(!skip.contains("content-encoding"));
+        let mut headers = HeaderMap::new();
+        headers.insert("content-encoding", "gzip".parse().unwrap());
+        headers.insert("vary", "accept-encoding".parse().unwrap());
+        headers.insert("content-length", "123".parse().unwrap());
+        let cleaned = clean_response_headers(&headers);
+        assert_eq!(cleaned.get("content-encoding").unwrap(), "gzip");
+        assert_eq!(cleaned.get("vary").unwrap(), "accept-encoding");
+        assert!(cleaned.get("content-length").is_none());
+    }
 }
 
 fn active_backend_path() -> PathBuf {
