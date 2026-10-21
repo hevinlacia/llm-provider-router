@@ -1,6 +1,9 @@
 //! Responses API 流式代理：按供应商配置决定透传或翻译。
 //!
-//! - **透传**（供应商配置了 `responses_base_url`，原生支持 Responses）：上游 SSE 字节原样转发。
+//! - **透传**（供应商配置了 `responses_base_url`，原生支持 Responses）：上游 SSE 原样转发，
+//!   但带零输出守卫——首个内容事件前只缓冲，遇零输出可重试终止
+//!   （如 Ark 容量异常时的 `incomplete/network_error`）则换 key/target 静默重试
+//!   （见 `passthrough.rs`）。
 //! - **翻译**（供应商只有 `base_url`）：把上游 chat completions SSE 翻译成 Responses API SSE 事件。
 //!
 //! 翻译事件序列（对照 openai SDK `ResponseStreamEvent`）：
@@ -29,7 +32,7 @@ use crate::features::responses::translate;
 use crate::features::router::{
     apply_embedded_failure, circuit_breaker_on_exhaustion, extract_stream_error_event,
     handle_connect_failure, handle_embedded_failure, handle_response_failure,
-    note_success_differential, FailureAction,
+    note_success_differential, note_zero_output_incomplete, FailureAction,
 };
 use crate::routes::resp::internal_error;
 use axum::body::{Body, Bytes};
@@ -39,6 +42,9 @@ use axum::response::Response;
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 use std::collections::HashSet;
+
+mod passthrough;
+use passthrough::{FeedAction, PassthroughGuard};
 
 pub(crate) async fn stream_responses_route(
     app: AppState,
@@ -272,12 +278,30 @@ pub(crate) async fn stream_responses_route(
                 let mut bytes_stream = response.bytes_stream();
                 let mut body_text = Vec::new();
                 if is_passthrough {
-                    // 透传：字节原样转发（上游已是 Responses SSE），仅收集 usage
+                    // 透传 + 零输出守卫：首个内容事件前只缓冲不转发；
+                    // 遇到零输出可重试终止（如 Ark 容量异常时的
+                    // incomplete/network_error，实测 ~180s 零产出后中止）时，
+                    // 客户端尚无任何字节，按 transient 失败换 key/target 静默重试，
+                    // 并对该 key 做短差分冻结避免后续请求继续踩同一坏 key。
+                    let mut guard = PassthroughGuard::new();
+                    let mut retry_zero_output: Option<String> = None;
                     while let Some(item) = bytes_stream.next().await {
                         match item {
                             Ok(chunk) => {
                                 body_text.extend_from_slice(&chunk);
-                                yield Ok(chunk);
+                                match guard.feed(&chunk) {
+                                    FeedAction::Forward { prefix } => {
+                                        if !prefix.is_empty() {
+                                            yield Ok(Bytes::from(prefix));
+                                        }
+                                        yield Ok(chunk);
+                                    }
+                                    FeedAction::Buffered => {}
+                                    FeedAction::RetryZeroOutput(reason) => {
+                                        retry_zero_output = Some(reason);
+                                        break;
+                                    }
+                                }
                             }
                             Err(exc) => {
                                 // 中流断开：解除粘性绑定，下次请求重新选 key。
@@ -290,6 +314,25 @@ pub(crate) async fn stream_responses_route(
                                 return;
                             }
                         }
+                    }
+                    if let Some(reason) = retry_zero_output {
+                        note_zero_output_incomplete(
+                            &app,
+                            &alias,
+                            &key,
+                            &reason,
+                            session_id.as_deref(),
+                        );
+                        last_failure_transient = true;
+                        last_error = Some(format!(
+                            "zero-output incomplete from {}/{}: {}",
+                            alias.alias,
+                            key.name,
+                            reason
+                        ));
+                        // 本次尝试未向客户端发出任何字节：不记 usage、不做成功差分，
+                        // 直接进入下一 key/target。
+                        continue;
                     }
                 } else {
                     // 翻译：chat SSE -> Responses 事件

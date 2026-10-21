@@ -231,6 +231,68 @@ pub(crate) fn handle_embedded_failure(
     }
 }
 
+/// 透传流零输出异常终止（如 Ark 的 response.incomplete/network_error）：
+/// 记录最近报错 + 解绑会话粘性 + 对该 key 做短差分冻结（下一请求优先同行健康 key）。
+/// 调用时机：客户端尚未收到任何字节，随即换 key/target 静默重试。
+pub(crate) fn note_zero_output_incomplete(
+    app: &AppState,
+    alias: &ModelAlias,
+    key: &KeyRef,
+    reason: &str,
+    session_id: Option<&str>,
+) {
+    let freeze_seconds = if let Ok(mut state) = app.state.lock() {
+        state.push_recent_error(ErrorLogEntry {
+            ts: crate::state_store::now_seconds(),
+            provider: alias.provider(),
+            key: key.name.clone(),
+            alias: alias.alias.clone(),
+            model: alias.upstream_model(),
+            status: EMBEDDED_ERROR_STATUS,
+            class: ErrorClass::Transient.as_str().to_string(),
+            rule: "zero_output_incomplete".to_string(),
+            message: format!("[stream] zero-output incomplete: {reason}")
+                .chars()
+                .take(300)
+                .collect(),
+        });
+        // 上游异常终止：解除会话粘性绑定，重试/下一请求重新选 key。
+        if let Some(sid) = session_id {
+            state.unbind(&alias.alias, sid);
+        }
+        let seconds = state.tunables().differential_freeze_seconds;
+        let until = crate::state_store::now_seconds() + seconds;
+        let _ = state.freeze(&key_state_id(key), until, "zero_output_incomplete");
+        seconds
+    } else {
+        0.0
+    };
+    eprintln!(
+        "llm-provider-router zero_output_incomplete provider={} model={} key={} reason={} differential_freeze_seconds={}",
+        alias.provider(),
+        alias.upstream_model(),
+        key.name,
+        reason,
+        freeze_seconds
+    );
+    // 持久化到诊断文件（best-effort，失败不影响主链路）。
+    if let Ok(settings) = crate::config::load_settings() {
+        if crate::diag::diag_enabled(&settings) {
+            crate::diag::append(
+                &settings,
+                "stream.zero_output_incomplete",
+                serde_json::json!({
+                    "provider": alias.provider(),
+                    "model": alias.upstream_model(),
+                    "alias": alias.alias,
+                    "key": key.name,
+                    "reason": reason,
+                }),
+            );
+        }
+    }
+}
+
 /// 响应级失败（status >= 400）统一处理。调用方保证只传失败状态。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_response_failure(
