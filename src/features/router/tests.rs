@@ -4,8 +4,8 @@ use crate::config::{KeyRef, ModelAlias};
 use crate::config_v2::{TargetCandidate, V2Strategy};
 use crate::error_rules::{builtin_config, classify, ErrorClass};
 use crate::features::router::failure::{
-    circuit_breaker_on_exhaustion, handle_response_failure, note_success_differential,
-    FailureAction,
+    circuit_breaker_on_exhaustion, handle_response_failure, note_stream_break,
+    note_success_differential, recent_errors_json, FailureAction,
 };
 use crate::features::router::freeze::{key_state_id, parse_quota_reset};
 use crate::features::router::selection::{
@@ -776,7 +776,6 @@ fn inline_key_value_reads_from_store_by_name() {
 }
 
 /// —— 负载均衡策略：日配额耗尽与 priority 降级 ——
-
 fn quota_key(name: &str, weight: i64, quota: Option<u64>) -> KeyRef {
     KeyRef {
         name: name.into(),
@@ -850,4 +849,49 @@ fn drop_exhausted_candidates_skips_only_when_alternative_exists() {
     let all_exhausted = vec![mk(Some(10), "u-1"), mk(Some(10), "u-2")];
     let kept = drop_exhausted_candidates(all_exhausted, &totals);
     assert_eq!(kept.len(), 2, "全耗尽应保留原列表");
+}
+
+#[test]
+fn note_stream_break_records_usage_ring_buffer_and_journal() {
+    let app = AppState::new(test_settings()).unwrap();
+    let key = sub_test_key("break-key", "STREAM_BREAK_TEST_KEY");
+    let alias = ModelAlias::new(
+        "ark/break-model",
+        "openai/break-model",
+        "https://ark.example.com/api/coding/v3",
+        vec![key.clone()],
+        None,
+    );
+
+    // 断流观测：ring buffer 必须有 598 entry、usage 必须出现 598 状态计数。
+    note_stream_break(
+        &app,
+        &alias,
+        &key,
+        "error decoding response body",
+        1234,
+        Some("sess-break"),
+    );
+
+    let mut state = app.state.lock().unwrap();
+    let errors = recent_errors_json(&state);
+    assert_eq!(errors.len(), 1, "断流必须进入最近报错 ring buffer");
+    let entry = &errors[0];
+    assert_eq!(entry["status"].as_u64(), Some(598));
+    assert_eq!(entry["provider"], "ark", "provider 应取 alias 前缀");
+    assert_eq!(entry["key"], "break-key");
+    // upstream_model() 会剥掉 openai/ 前缀（与 handle_response_failure 等 entry 同口径）。
+    assert_eq!(entry["model"], "break-model");
+    assert_eq!(entry["class"], "transient");
+    let message = entry["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("[stream-break]") && message.contains("1234 bytes"),
+        "错误消息应含断流前缀与已收字节数，实际 {message}"
+    );
+
+    let snapshot = state.usage_snapshot("all", None, None).unwrap();
+    assert!(
+        snapshot["by_status"].get("598").is_some(),
+        "usage 快照必须出现 598 状态计数，实际 {snapshot}"
+    );
 }

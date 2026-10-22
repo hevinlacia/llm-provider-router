@@ -31,7 +31,7 @@ use crate::features::responses::store;
 use crate::features::responses::translate;
 use crate::features::router::{
     apply_embedded_failure, circuit_breaker_on_exhaustion, extract_stream_error_event,
-    handle_connect_failure, handle_embedded_failure, handle_response_failure,
+    handle_connect_failure, handle_embedded_failure, handle_response_failure, note_stream_break,
     note_success_differential, note_zero_output_incomplete, FailureAction,
 };
 use crate::routes::resp::internal_error;
@@ -304,12 +304,16 @@ pub(crate) async fn stream_responses_route(
                                 }
                             }
                             Err(exc) => {
-                                // 中流断开：解除粘性绑定，下次请求重新选 key。
-                                if let Some(sid) = session_id.as_deref() {
-                                    if let Ok(mut state) = app.state.lock() {
-                                        state.unbind(&alias.alias, sid);
-                                    }
-                                }
+                                // 中流断开：补观测（usage/598 + errors 页 + journal/diag，可定位坏上游），
+                                // 并解除粘性绑定，下次请求重新选 key。
+                                note_stream_break(
+                                    &app,
+                                    &alias,
+                                    &key,
+                                    &exc.to_string(),
+                                    body_text.len(),
+                                    session_id.as_deref(),
+                                );
                                 yield Ok(Bytes::from(sse_error_event(&alias.alias, tried.len(), &exc.to_string())));
                                 return;
                             }
@@ -380,12 +384,16 @@ pub(crate) async fn stream_responses_route(
                                 }
                             }
                             Err(exc) => {
-                                // 中流断开：解除粘性绑定，下次请求重新选 key。
-                                if let Some(sid) = session_id.as_deref() {
-                                    if let Ok(mut state) = app.state.lock() {
-                                        state.unbind(&alias.alias, sid);
-                                    }
-                                }
+                                // 中流断开：补观测（usage/598 + errors 页 + journal/diag，可定位坏上游），
+                                // 并解除粘性绑定，下次请求重新选 key。
+                                note_stream_break(
+                                    &app,
+                                    &alias,
+                                    &key,
+                                    &exc.to_string(),
+                                    body_text.len(),
+                                    session_id.as_deref(),
+                                );
                                 yield Ok(Bytes::from(sse_error_event(&alias.alias, tried.len(), &exc.to_string())));
                                 return;
                             }
