@@ -20,7 +20,8 @@ use crate::features::chat::select::{
 };
 use crate::features::router::{
     circuit_breaker_on_exhaustion, handle_connect_failure, handle_embedded_failure,
-    handle_response_failure, note_success_differential, FailureAction, NoAvailableKeyError,
+    handle_response_failure, note_stream_break, note_success_differential, FailureAction,
+    NoAvailableKeyError,
 };
 use axum::body::{Body, Bytes};
 use axum::extract::State;
@@ -479,6 +480,16 @@ async fn stream_anthropic_passthrough(
                             yield Ok(chunk);
                         }
                         Err(exc) => {
+                            // 中流断开：补观测（usage/598 + errors 页 + journal/diag，可定位坏上游），
+                            // 并解除粘性绑定，下次请求重新选 key。
+                            note_stream_break(
+                                &app,
+                                &alias,
+                                &key,
+                                &exc.to_string(),
+                                body_text.len(),
+                                session_id.as_deref(),
+                            );
                             yield Ok(Bytes::from(anthropic_sse_error(&exc.to_string())));
                             return;
                         }

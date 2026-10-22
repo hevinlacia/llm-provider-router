@@ -29,6 +29,9 @@ pub(crate) const RECENT_ERRORS_CAP: usize = 200;
 pub(crate) const CONNECT_ERROR_STATUS: u16 = 599;
 /// 流内错误的展示状态码：上游返回 HTTP 200 但 SSE 流/响应体里携带错误事件。
 pub(crate) const EMBEDDED_ERROR_STATUS: u16 = 200;
+/// 上游流中断（HTTP 200 已建立、body 传输中途断开）的合成记账状态码。
+/// 与 599（连接失败，请求未建立）区分；dashboard/errors 页按此识别断流。
+pub(crate) const STREAM_BREAK_STATUS: u16 = 598;
 
 /// 单条最近报错记录（内存 ring buffer，重启丢失）。
 #[derive(Clone, Debug)]
@@ -445,6 +448,55 @@ fn freeze_rate_limited(
 
 /// 请求内差分冻结：某 key 失败（transient，未冻结）后同行 key 成功 → 冻结失败 key。
 /// 无需依赖报错文案，供应商改文案后依然自动把坏 key 排除出可用池。
+/// 上游流中断观测记录：HTTP 200 已提交、SSE body 传输中途断开（reqwest
+/// `bytes_stream` 返回 Err，Display 统一为 "error decoding response body"，
+/// 实为连接重置/TLS 截断等传输层错误）。流已提交无法换 key 重试，但此前
+/// 完全不记 usage/错误日志——dashboard 与 /api/errors/recent 均无痕迹，
+/// 间歇性断流排障无证据。此处补齐：用量记账（598 状态计数）、ring buffer
+/// （errors 页，按 provider/key 定位坏上游）、journal+diag（upstream.failure
+/// 事件持久化）。
+pub(crate) fn note_stream_break(
+    app: &AppState,
+    alias: &ModelAlias,
+    key: &KeyRef,
+    exc_text: &str,
+    bytes_received: usize,
+    session_id: Option<&str>,
+) {
+    let message = format!("[stream-break] {bytes_received} bytes received: {exc_text}");
+    let mut state = match app.state.lock() {
+        Ok(state) => state,
+        Err(_) => return,
+    };
+    // 用量记账：中断流 token 记 0，但请求数/598 状态计数在 dashboard 可见。
+    let _ = state.record_usage(
+        &alias.alias,
+        &usage_key_name(key),
+        STREAM_BREAK_STATUS,
+        None,
+        session_id,
+    );
+    // 中流断开：解除粘性绑定，下次请求重新选 key。
+    if let Some(sid) = session_id {
+        state.unbind(&alias.alias, sid);
+    }
+    state.push_recent_error(ErrorLogEntry {
+        ts: crate::state_store::now_seconds(),
+        provider: alias.provider(),
+        key: key.name.clone(),
+        alias: alias.alias.clone(),
+        model: alias.upstream_model(),
+        status: STREAM_BREAK_STATUS,
+        class: ErrorClass::Transient.as_str().to_string(),
+        rule: String::new(),
+        message: message.chars().take(300).collect(),
+    });
+    drop(state);
+    // journal（stderr）+ diag 文件持久化：status=598 可通过 log_upstream_failure
+    // 的 >=400 门。
+    log_upstream_failure(alias, STREAM_BREAK_STATUS, &message);
+}
+
 pub(crate) fn note_success_differential(app: &AppState, ambiguous: &[KeyRef]) {
     if ambiguous.is_empty() {
         return;
