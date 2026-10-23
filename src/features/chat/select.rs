@@ -4,6 +4,7 @@
 
 use crate::app::AppState;
 use crate::config::{KeyRef, ModelAlias};
+use crate::features::router::freeze::key_state_id;
 use crate::features::router::{NoAvailableKeyError, RouterState};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -85,6 +86,8 @@ pub(crate) fn clear_unsupported_if_ok(
     }
     if let Ok(mut state) = app.state.lock() {
         state.clear_key_model_unsupported(&key.provider, &key.name, &alias.upstream_model());
+        // 成功跑通：连接失败连败计数归零，下次连接失败重新从 base 冻结时长起步。
+        state.clear_connect_streak(&key_state_id(key));
     }
 }
 

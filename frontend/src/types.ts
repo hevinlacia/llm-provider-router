@@ -313,6 +313,8 @@ export type Tunables = {
   invalid_freeze_seconds?: number | null;
   differential_freeze_seconds?: number | null;
   transient_exhausted_freeze_seconds?: number | null;
+  /** 连接层失败（599）短熔断时长（秒），0 = 关闭；连败时指数退避 */
+  connect_error_freeze_seconds?: number | null;
   transient_attempts_per_key?: number | null;
   transient_retry_interval_ms?: number | null;
 };

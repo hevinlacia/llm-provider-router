@@ -391,7 +391,10 @@ pub(crate) fn handle_response_failure(
     }
 }
 
-/// 连接层失败（无响应/超时）：视作 transient，不冻结。
+/// 连接层失败（无响应/超时）：除原有 transient 语义外，按 tunables 给 key
+/// 短 TTL 冻结（connect_error_freeze_seconds，连败指数退避）。冻结后
+/// select_key_excluding 直接跳过该 key：粘性哈希到死 key 的 session 在
+/// 选取阶段就落桶到备用候选，不再对死主机反复建连（2026-10 风暴治理）。
 pub(crate) fn handle_connect_failure(
     app: &AppState,
     alias: &ModelAlias,
@@ -410,6 +413,19 @@ pub(crate) fn handle_connect_failure(
         );
         if let Some(sid) = session_id {
             state.unbind(&alias.alias, sid);
+        }
+        // 短熔断：freeze 只延长不缩短，不会覆盖更长的配额/差分冻结。
+        let base = state.tunables().connect_error_freeze_seconds;
+        if base > 0.0 {
+            let key_id = key_state_id(key);
+            let ttl = state.note_connect_failure_streak(&key_id, base);
+            if ttl > 0.0 {
+                let _ = state.freeze(
+                    &key_id,
+                    crate::state_store::now_seconds() + ttl,
+                    "connect_error",
+                );
+            }
         }
         state.push_recent_error(ErrorLogEntry {
             ts: crate::state_store::now_seconds(),

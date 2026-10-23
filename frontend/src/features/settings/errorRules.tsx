@@ -83,6 +83,7 @@ export function ErrorRulesPanel({ config, onSaved, onError, v2 }: {
       <label>失效冻结时长 (s)<input className="number-input" type="number" min="0" value={current.tunables.invalid_freeze_seconds ?? ''} onChange={(e) => setTunables({ invalid_freeze_seconds: Number(e.target.value) || 0 })} /></label>
       <label>差分冻结时长 (s)<input className="number-input" type="number" min="0" value={current.tunables.differential_freeze_seconds ?? ''} onChange={(e) => setTunables({ differential_freeze_seconds: Number(e.target.value) || 0 })} /></label>
       <label>全池熔断时长 (s)<input className="number-input" type="number" min="0" value={current.tunables.transient_exhausted_freeze_seconds ?? ''} onChange={(e) => setTunables({ transient_exhausted_freeze_seconds: Number(e.target.value) || 0 })} /></label>
+      <label>连接错误熔断时长 (s)<input className="number-input" type="number" min="0" value={current.tunables.connect_error_freeze_seconds ?? ''} onChange={(e) => setTunables({ connect_error_freeze_seconds: Number(e.target.value) || 0 })} /></label>
       <label>每 key 尝试次数<input className="number-input" type="number" min="1" value={current.tunables.transient_attempts_per_key ?? 1} onChange={(e) => setTunables({ transient_attempts_per_key: Number(e.target.value) || 1 })} /></label>
       <label>重试间隔 (ms)<input className="number-input" type="number" min="0" value={current.tunables.transient_retry_interval_ms ?? 1000} onChange={(e) => setTunables({ transient_retry_interval_ms: Number(e.target.value) || 0 })} /></label>
     </div>
