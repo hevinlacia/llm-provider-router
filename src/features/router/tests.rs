@@ -3,9 +3,10 @@ use crate::config::Settings;
 use crate::config::{KeyRef, ModelAlias};
 use crate::config_v2::{TargetCandidate, V2Strategy};
 use crate::error_rules::{builtin_config, classify, ErrorClass};
+use crate::features::chat::select::clear_unsupported_if_ok;
 use crate::features::router::failure::{
-    circuit_breaker_on_exhaustion, handle_response_failure, note_stream_break,
-    note_success_differential, recent_errors_json, FailureAction,
+    circuit_breaker_on_exhaustion, handle_connect_failure, handle_response_failure,
+    note_stream_break, note_success_differential, recent_errors_json, FailureAction,
 };
 use crate::features::router::freeze::{key_state_id, parse_quota_reset};
 use crate::features::router::selection::{
@@ -894,4 +895,163 @@ fn note_stream_break_records_usage_ring_buffer_and_journal() {
         snapshot["by_status"].get("598").is_some(),
         "usage 快照必须出现 598 状态计数，实际 {snapshot}"
     );
+}
+
+fn connect_test_key() -> KeyRef {
+    KeyRef {
+        name: "jt".into(),
+        env_var: "ZP_JT".into(),
+        weight: 1,
+        provider: "zp".into(),
+        billing_type: "subscription".into(),
+        persist: true,
+        daily_token_quota: None,
+    }
+}
+
+fn connect_test_alias(key: &KeyRef) -> ModelAlias {
+    ModelAlias::new(
+        "glm-auto",
+        "openai/glm-x",
+        "http://zp.test",
+        vec![key.clone()],
+        None,
+    )
+}
+
+#[test]
+fn connect_failure_freezes_key_short_ttl_with_backoff_and_reset() {
+    let app = AppState::new(test_settings()).unwrap();
+    let key = connect_test_key();
+    let alias = connect_test_alias(&key);
+
+    // 第一次连接失败：默认 base 30s 短熔断，reason=connect_error。
+    match handle_connect_failure(&app, &alias, &key, "connection refused", Some("s1")) {
+        FailureAction::NextKeyTransient(_) => {}
+        other => panic!("期望 NextKeyTransient，实际 {other:?}"),
+    }
+    let frozen = {
+        let mut state = app.state.lock().unwrap();
+        state.snapshot().unwrap()["frozen"]["zp/jt"].clone()
+    };
+    assert_eq!(frozen["reason"], "connect_error");
+    let first = frozen["seconds_remaining"].as_i64().unwrap();
+    assert!(first > 0 && first <= 30, "首次冻结应≈30s，实际 {first}");
+
+    // 立即再次失败：连败退避翻倍（≈60s），计数为 2。
+    let _ = handle_connect_failure(&app, &alias, &key, "connection refused", Some("s1"));
+    let second = {
+        let mut state = app.state.lock().unwrap();
+        let remaining = state.snapshot().unwrap()["frozen"]["zp/jt"]["seconds_remaining"]
+            .as_i64()
+            .unwrap();
+        assert!(
+            remaining > first && remaining <= 60,
+            "连败第二次应≈60s，实际 {remaining}"
+        );
+        state.connect_streak_count("zp/jt")
+    };
+    assert_eq!(second, 2, "连败计数应为 2");
+
+    // 成功跑通：连败计数清零；下次失败重新从 base 起步。
+    // （已存在的未过期冻结窗口按设计不缩短，freeze 只延长不缩短。）
+    clear_unsupported_if_ok(&app, &key, &alias, 200);
+    {
+        let state = app.state.lock().unwrap();
+        assert_eq!(state.connect_streak_count("zp/jt"), 0, "成功后计数应清零");
+    }
+    let _ = handle_connect_failure(&app, &alias, &key, "connection refused", Some("s1"));
+    {
+        let state = app.state.lock().unwrap();
+        assert_eq!(
+            state.connect_streak_count("zp/jt"),
+            1,
+            "重置后的失败应从 1 重新计数"
+        );
+    }
+}
+
+#[test]
+fn connect_failure_does_not_shorten_longer_freeze() {
+    let app = AppState::new(test_settings()).unwrap();
+    let key = connect_test_key();
+    let alias = connect_test_alias(&key);
+    {
+        let mut state = app.state.lock().unwrap();
+        state
+            .freeze("zp/jt", now_seconds() + 10_000.0, "monthly_quota")
+            .unwrap();
+    }
+    let _ = handle_connect_failure(&app, &alias, &key, "connection refused", None);
+    let mut state = app.state.lock().unwrap();
+    let frozen = state.snapshot().unwrap()["frozen"]["zp/jt"].clone();
+    assert_eq!(frozen["reason"], "monthly_quota");
+    assert!(
+        frozen["seconds_remaining"].as_i64().unwrap() > 9_000,
+        "长冻结不得被短熔断覆盖"
+    );
+}
+
+#[test]
+fn connect_failure_does_not_freeze_when_tunable_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let rules_path = dir.path().join("error-rules.json");
+    fs::write(
+        &rules_path,
+        r#"{"tunables": {"connect_error_freeze_seconds": 0}}"#,
+    )
+    .unwrap();
+    let mut settings = test_settings();
+    settings.error_rules_path = rules_path.display().to_string();
+    let app = AppState::new(settings).unwrap();
+    let key = connect_test_key();
+    let alias = connect_test_alias(&key);
+    let _ = handle_connect_failure(&app, &alias, &key, "connection refused", None);
+    let mut state = app.state.lock().unwrap();
+    let snap = state.snapshot().unwrap();
+    assert!(
+        snap["frozen"].get("zp/jt").is_none(),
+        "tunable=0 时不应冻结，实际 {}",
+        snap["frozen"]
+    );
+}
+
+#[test]
+fn connect_streak_resets_after_gap_longer_than_freeze_window() {
+    let mut state = RouterState::new(test_settings()).unwrap();
+    let now = now_seconds();
+    // 上一轮连败 3 次、ttl 240s，但已过去 2000s（> 240×4）：视为新一轮，从 1 计。
+    state.force_connect_streak("zp/jt", 3, now - 2000.0, 240.0);
+    assert_eq!(state.note_connect_failure_streak("zp/jt", 30.0), 30.0);
+    // 紧接着再失败：继续退避到 60。
+    assert_eq!(state.note_connect_failure_streak("zp/jt", 30.0), 60.0);
+}
+
+#[test]
+fn connect_streak_backoff_caps_at_32x() {
+    let mut state = RouterState::new(test_settings()).unwrap();
+    for _ in 0..10 {
+        state.note_connect_failure_streak("k", 30.0);
+    }
+    assert_eq!(
+        state.note_connect_failure_streak("k", 30.0),
+        30.0 * 32.0,
+        "退避封顶 base×32"
+    );
+}
+
+#[test]
+fn frozen_single_key_candidate_yields_no_available_for_fast_fallback() {
+    let mut state = RouterState::new(test_settings()).unwrap();
+    let key = connect_test_key();
+    let alias = connect_test_alias(&key);
+    state
+        .freeze("zp/jt", now_seconds() + 60.0, "connect_error")
+        .unwrap();
+    // key 被短熔断冻结后，该候选在选取阶段直接无可用 key，
+    // 调用方据此快速落到下一候选（粘性哈希到死 key 的 session 快速落桶）。
+    let err = state
+        .select_key_excluding(&alias, Some("sess-x"), &HashSet::new())
+        .unwrap_err();
+    assert!(err.retry_after > 0);
 }

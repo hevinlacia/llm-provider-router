@@ -94,6 +94,10 @@ pub struct Tunables {
     /// 其他类全池耗尽后的熔断时长（秒）；0 = 不熔断。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transient_exhausted_freeze_seconds: Option<f64>,
+    /// 连接层失败（599：拒连/DNS/建连超时）短熔断时长（秒）；0 = 不冻结（旧行为）。
+    /// 连败时指数退避：ttl = base × 2^(n-1)，上限 base × 32。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_error_freeze_seconds: Option<f64>,
     /// 其他类每把 key 的总尝试次数（1 = 不重试直接切）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transient_attempts_per_key: Option<u32>,
@@ -108,6 +112,7 @@ pub struct ResolvedTunables {
     pub invalid_freeze_seconds: f64,
     pub differential_freeze_seconds: f64,
     pub transient_exhausted_freeze_seconds: f64,
+    pub connect_error_freeze_seconds: f64,
     pub transient_attempts_per_key: u32,
     pub transient_retry_interval_ms: u64,
 }
@@ -118,6 +123,7 @@ impl Default for ResolvedTunables {
             invalid_freeze_seconds: 86_400.0,
             differential_freeze_seconds: 600.0,
             transient_exhausted_freeze_seconds: 300.0,
+            connect_error_freeze_seconds: 30.0,
             transient_attempts_per_key: 1,
             transient_retry_interval_ms: 1_000,
         }
@@ -136,6 +142,9 @@ impl Tunables {
             transient_exhausted_freeze_seconds: self
                 .transient_exhausted_freeze_seconds
                 .unwrap_or(base.transient_exhausted_freeze_seconds),
+            connect_error_freeze_seconds: self
+                .connect_error_freeze_seconds
+                .unwrap_or(base.connect_error_freeze_seconds),
             transient_attempts_per_key: self
                 .transient_attempts_per_key
                 .unwrap_or(base.transient_attempts_per_key),
@@ -549,5 +558,18 @@ mod tests {
         };
         assert!(any.matches(500, "carries beta signal"));
         assert!(!any.matches(500, "carries gamma signal"));
+    }
+
+    #[test]
+    fn connect_error_freeze_default_30s_and_zero_disables() {
+        assert_eq!(
+            ResolvedTunables::default().connect_error_freeze_seconds,
+            30.0
+        );
+        let tunables = Tunables {
+            connect_error_freeze_seconds: Some(0.0),
+            ..Default::default()
+        };
+        assert_eq!(tunables.resolve(86_400.0).connect_error_freeze_seconds, 0.0);
     }
 }

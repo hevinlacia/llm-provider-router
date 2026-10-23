@@ -15,6 +15,7 @@ It preserves the old API/config contracts so existing OpenCode/headroom-proxy cl
 - Provider-side affinity: when forwarding to a native Responses upstream, the router injects `prompt_cache_key=<resolved session id>` if the client didn't send one (headers / metadata / fingerprint fallback all qualify), so the provider also routes the same conversation to the same cache node. Client-provided values are never overwritten; disable with `LLM_PROVIDER_ROUTER_INJECT_PROMPT_CACHE_KEY=0`.
 - Sliding TTL: active session bindings refresh for 1 hour by default; a non-retryable upstream rejection or mid-stream disconnect unbinds the session so it re-rolls instead of staying pinned to a bad key.
 - Quota freeze: provider quota/auth errors freeze the selected key until reset/fallback time.
+- Connect-error circuit breaker: connection-layer failures (refused/DNS/connect timeout, internal 599) freeze the key for a short TTL (default 30s, tunable via `connect_error_freeze_seconds`, 0 disables) with exponential backoff on consecutive failures (×2, capped at ×32, reset on success), so sessions hashed to a dead upstream re-bucket to healthy targets at selection time instead of hammering it.
 - Failover: `*-auto` aliases retry across healthy keys and configured model-route fallbacks.
 - Streaming: SSE chat completion streams are proxied without buffering the full response.
 - Usage metrics: request/error/token counts persist to SQLite by model, key, status, day, and month.

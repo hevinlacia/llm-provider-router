@@ -407,7 +407,9 @@ async fn stream_anthropic_passthrough(
                             break;
                         }
                         Err(exc) => {
-                            let retryable = exc.is_connect() || exc.is_timeout() || exc.is_request();
+                            // 连接层失败（拒连/DNS/建连超时）对同一死主机立即二连发无意义，
+                        // 直接交给 handle_connect_failure 冻结 + failover；超时类保留一次重试。
+                        let retryable = (exc.is_timeout() || exc.is_request()) && !exc.is_connect();
                             if attempt == 0 && retryable {
                                 continue;
                             }
@@ -634,7 +636,9 @@ async fn call_anthropic_passthrough(
                     break;
                 }
                 Err(exc) => {
-                    let retryable = exc.is_connect() || exc.is_timeout() || exc.is_request();
+                    // 连接层失败（拒连/DNS/建连超时）对同一死主机立即二连发无意义，
+                    // 直接交给 handle_connect_failure 冻结 + failover；超时类保留一次重试。
+                    let retryable = (exc.is_timeout() || exc.is_request()) && !exc.is_connect();
                     if attempt == 0 && retryable {
                         continue;
                     }

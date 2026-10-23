@@ -40,6 +40,15 @@ pub struct SessionBinding {
     pub expires_at: f64,
 }
 
+/// 连接失败连败计数（内存态，重启归零）：驱动 599 短熔断的指数退避。
+/// `last_ttl` 记上一轮冻结时长，间隔超过其 4 倍视为新的一轮故障重新计数。
+#[derive(Clone, Debug)]
+pub struct ConnectStreak {
+    pub count: u32,
+    pub last_at: f64,
+    pub last_ttl: f64,
+}
+
 #[derive(Debug)]
 pub struct NoAvailableKeyError {
     pub retry_after: u64,
@@ -77,6 +86,8 @@ pub struct RouterState {
     error_rules: ErrorRulesConfig,
     /// 最近上游报错 ring buffer（内存，重启丢失），供 /api/errors/recent 与 dashboard 展示。
     recent_errors: RecentErrors,
+    /// 连接失败连败计数（内存，重启丢失），键为 key_state_id。
+    connect_streaks: HashMap<String, ConnectStreak>,
 }
 
 impl RouterState {
@@ -202,6 +213,7 @@ impl RouterState {
             v2_load_error: None,
             error_rules,
             recent_errors: VecDeque::new(),
+            connect_streaks: HashMap::new(),
         };
         Ok(state)
     }
@@ -306,6 +318,66 @@ impl RouterState {
     pub fn clear_frozen(&mut self) -> anyhow::Result<()> {
         self.frozen.clear();
         self.state_store.clear_frozen()
+    }
+
+    /// 连接失败连败计数 + 按次数指数退避的冻结时长：
+    /// ttl = base × 2^(n-1)，上限 base × 32（n 为连续失败次数）。
+    /// 间隔超过上轮 ttl 的 4 倍视为新的一轮故障，重新从 1 计数。
+    /// base <= 0 时返回 0（熔断关闭），不动计数。
+    pub fn note_connect_failure_streak(&mut self, key_id: &str, base_seconds: f64) -> f64 {
+        if base_seconds <= 0.0 {
+            return 0.0;
+        }
+        let now = now_seconds();
+        let streak = self.connect_streaks.get(key_id);
+        let count = match streak {
+            Some(item) if now - item.last_at < item.last_ttl * 4.0 => item.count.saturating_add(1),
+            _ => 1,
+        };
+        let exp = (count - 1).min(5) as f64;
+        let ttl = (base_seconds * 2.0_f64.powf(exp)).min(base_seconds * 32.0);
+        self.connect_streaks.insert(
+            key_id.to_string(),
+            ConnectStreak {
+                count,
+                last_at: now,
+                last_ttl: ttl,
+            },
+        );
+        ttl
+    }
+
+    /// 某 key 成功跑通后清除连败计数（下次连接失败重新从 base 起步）。
+    pub fn clear_connect_streak(&mut self, key_id: &str) {
+        self.connect_streaks.remove(key_id);
+    }
+
+    /// 测试钩子：读取当前连败计数（不存在则 0）。
+    #[cfg(test)]
+    pub(crate) fn connect_streak_count(&self, key_id: &str) -> u32 {
+        self.connect_streaks
+            .get(key_id)
+            .map(|item| item.count)
+            .unwrap_or(0)
+    }
+
+    /// 测试钩子：伪造连败计数（模拟时间流逝后的残留状态）。
+    #[cfg(test)]
+    pub(crate) fn force_connect_streak(
+        &mut self,
+        key_id: &str,
+        count: u32,
+        last_at: f64,
+        last_ttl: f64,
+    ) {
+        self.connect_streaks.insert(
+            key_id.to_string(),
+            ConnectStreak {
+                count,
+                last_at,
+                last_ttl,
+            },
+        );
     }
 
     pub fn bind(&mut self, alias: &str, session_id: &str, key_name: &str) -> anyhow::Result<()> {
