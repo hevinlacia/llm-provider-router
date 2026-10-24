@@ -22,12 +22,23 @@ impl AppState {
         let timeout = std::time::Duration::from_secs_f64(settings.request_timeout_seconds);
         // opencode-go (zen/go) 上游用 Cloudflare 拦截非浏览器 UA（error 1010），
         // 全局使用浏览器 UA 以兼容该上游；OpenAI 兼容 API 不校验 UA，无副作用。
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .timeout(timeout)
             .pool_idle_timeout(Duration::from_secs(30))
             .tcp_keepalive(Duration::from_secs(30))
-            .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-            .build()?;
+            .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36");
+        // 上游域名三级解析兑底（自定义 DNS → 静态 IP → 系统）：
+        // OpenClash 启动/重启窗口期路由器 DNS 断供时，供应商域名仍可解析（2026-10-24 事故）。
+        if let Some(resolver) =
+            crate::dns_override::resolver_from_config_file(&settings.dns_config_path)
+        {
+            eprintln!(
+                "[dns-override] 已启用上游解析兑底（config: {}）",
+                settings.dns_config_path
+            );
+            builder = builder.dns_resolver(Arc::new(resolver));
+        }
+        let client = builder.build()?;
         let state = Arc::new(Mutex::new(RouterState::new(settings.clone())?));
         let search_pool = Arc::new(Mutex::new(SearchPool::new(&settings.search_providers_path)));
         Ok(Self {

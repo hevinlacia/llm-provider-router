@@ -3,6 +3,7 @@ mod config;
 mod config_v2;
 mod deploy_lock;
 mod diag;
+mod dns_override;
 mod error_rules;
 mod features;
 mod front_proxy;
