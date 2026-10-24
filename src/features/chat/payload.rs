@@ -51,6 +51,7 @@ pub(crate) fn prepare_upstream_payload(payload: &Value, alias: &ModelAlias) -> V
             search_providers_path: "".into(),
             provider_models_path: "".into(),
             error_rules_path: "config/error-rules.json".into(),
+            dns_config_path: "".into(),
             auth_invalid_freeze_seconds: 0.0,
             subscription_invalid_freeze_seconds: 0.0,
             diag_dir: crate::config::DEFAULT_DIAG_DIR.to_string(),

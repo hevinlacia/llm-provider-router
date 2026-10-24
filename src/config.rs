@@ -8,6 +8,7 @@ pub const DEFAULT_API_KEYS_PATH: &str = "config/api-keys.json";
 pub const DEFAULT_TOKEN_PRICE_CONFIG_PATH: &str = "config/token-prices.json";
 pub const DEFAULT_MODEL_ALIAS_CONFIG_PATH: &str = "config/custom-model-aliases.json";
 pub const DEFAULT_SEARCH_PROVIDERS_PATH: &str = "config/search-providers.json";
+pub const DEFAULT_DNS_CONFIG_PATH: &str = "config/dns-overrides.json";
 pub const DEFAULT_USAGE_DB_PATH: &str = "~/.local/state/llm-provider-router/usage.sqlite3";
 pub const DEFAULT_STATE_DB_PATH: &str = "~/.local/state/llm-provider-router/state.sqlite3";
 pub const DEFAULT_DIAG_DIR: &str = "~/.local/state/llm-provider-router/logs";
@@ -214,6 +215,8 @@ pub struct Settings {
     pub provider_models_path: String,
     /// 报错分类规则配置（模板 + tunables + 供应商绑定）。缺失时用内置预设。
     pub error_rules_path: String,
+    /// 上游域名解析三级兑底配置（自定义 DNS → 静态 IP → 系统）。缺失时功能关闭。
+    pub dns_config_path: String,
     // 已退役（2026-10）：失效类冻结时长改由 error-rules tunables
     // invalid_freeze_seconds 控制（默认回落 subscription_invalid_freeze_seconds）。
     // 字段保留用于 env 兼容。
@@ -288,6 +291,10 @@ pub fn load_settings() -> anyhow::Result<Settings> {
         error_rules_path: env_or(
             "LLM_PROVIDER_ROUTER_ERROR_RULES_PATH",
             crate::error_rules::ERROR_RULES_PATH,
+        ),
+        dns_config_path: env_or(
+            "LLM_PROVIDER_ROUTER_DNS_CONFIG_PATH",
+            DEFAULT_DNS_CONFIG_PATH,
         ),
         auth_invalid_freeze_seconds: env_or(
             "LLM_PROVIDER_ROUTER_AUTH_INVALID_FREEZE_SECONDS",

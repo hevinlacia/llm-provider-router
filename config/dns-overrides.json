@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "nameservers": ["223.5.5.5", "119.29.29.29"],
+  "query_timeout_ms": 1500,
+  "cache_ttl_seconds": 60,
+  "static": {
+    "ark.cn-beijing.volces.com": ["14.103.169.114"]
+  }
+}

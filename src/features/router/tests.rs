@@ -38,6 +38,7 @@ fn test_settings() -> Settings {
         search_providers_path: ":memory:".to_string(),
         provider_models_path: ":memory:".to_string(),
         error_rules_path: ":memory:/nonexistent/error-rules.json".to_string(),
+        dns_config_path: "".into(),
         auth_invalid_freeze_seconds: 86400.0,
         subscription_invalid_freeze_seconds: 86400.0,
         // router_state 测试覆盖旧逻辑；v2 行为由 config_v2 模块测试覆盖。
