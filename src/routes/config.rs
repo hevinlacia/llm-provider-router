@@ -5,7 +5,7 @@ use crate::app::AppState;
 use crate::search::SearchProvidersFile;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -267,4 +267,75 @@ pub(crate) async fn api_config_search_providers_update(
         },
         Err(_) => internal_error("search pool lock poisoned"),
     }
+}
+
+/// 上游解析兜底配置：读取当前文件（缺失时返回关闭态骨架）。
+pub(crate) async fn api_config_dns_overrides(State(app): State<AppState>) -> Response {
+    let path = app.settings.dns_config_path.clone();
+    let value = match std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+    {
+        Some(value) => value,
+        None => json!({
+            "enabled": false,
+            "nameservers": [],
+            "query_timeout_ms": 1500,
+            "cache_ttl_seconds": 60,
+            "static": {}
+        }),
+    };
+    Json(merge_ok(value)).into_response()
+}
+
+/// 上游解析兜底配置更新：校验 + 写盘 + 热生效（运行中槽位无需重启）。
+pub(crate) async fn api_config_dns_overrides_update(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let cfg: crate::dns_override::DnsOverrideFile = match serde_json::from_value(payload) {
+        Ok(cfg) => cfg,
+        Err(e) => return bad_request(&format!("配置格式错误: {e}")),
+    };
+    let mut apply_error: Option<String> = None;
+    if cfg.enabled {
+        if let Err(e) = crate::dns_override::validate(&cfg) {
+            return bad_request(&e);
+        }
+        match &app.dns_override {
+            Some(resolver) => {
+                if let Err(e) = resolver.update_config(&cfg) {
+                    apply_error = Some(e);
+                }
+            }
+            None => {
+                apply_error = Some(
+                    "启动时兜底未启用（槽位内客户端未挂载解析器），已写盘；重启 backend 槽位后生效"
+                        .into(),
+                );
+            }
+        }
+    }
+    let body = json!({
+        "enabled": cfg.enabled,
+        "nameservers": cfg.nameservers,
+        "query_timeout_ms": cfg.query_timeout_ms,
+        "cache_ttl_seconds": cfg.cache_ttl_seconds,
+        "static": cfg.static_map,
+    });
+    let raw = match serde_json::to_string_pretty(&body) {
+        Ok(raw) => raw,
+        Err(e) => return internal_error(&format!("序列化失败: {e}")),
+    };
+    if let Err(e) = std::fs::write(&app.settings.dns_config_path, raw + "\n") {
+        return internal_error(&format!("写盘失败 {}: {e}", app.settings.dns_config_path));
+    }
+    let mut value = json!({ "ok": true, "persisted": true, "applied": apply_error.is_none() });
+    if let Some(err) = apply_error {
+        value
+            .as_object_mut()
+            .expect("object")
+            .insert("message".into(), Value::String(err));
+    }
+    Json(merge_ok(value)).into_response()
 }
