@@ -133,6 +133,10 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
             get(config::api_config_token_prices).put(config::api_config_token_prices_update),
         )
         .route(
+            "/api/config/dns-overrides",
+            get(config::api_config_dns_overrides).put(config::api_config_dns_overrides_update),
+        )
+        .route(
             "/api/config/thinking-maps",
             get(config::api_config_thinking_maps).put(config::api_config_thinking_maps_update),
         )

@@ -343,3 +343,16 @@ export type RecentErrorsResponse = {
   ok: boolean;
   errors?: RecentErrorEntry[];
 };
+
+// —— 上游解析兜底（/api/config/dns-overrides）——
+
+export type DnsOverridesConfig = {
+  ok: boolean;
+  applied?: boolean;
+  message?: string;
+  enabled: boolean;
+  nameservers: string[];
+  query_timeout_ms: number;
+  cache_ttl_seconds: number;
+  static: Record<string, string[]>;
+};

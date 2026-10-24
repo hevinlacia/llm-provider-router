@@ -1,4 +1,4 @@
-import type { ActiveSessionsResponse, ErrorRulesConfig, FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderModelsResponse, RecentErrorsResponse, RouterCapabilities, SearchProvidersConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, V2UnsupportedEntry } from './types';
+import type { ActiveSessionsResponse, ErrorRulesConfig, FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderModelsResponse, RecentErrorsResponse, RouterCapabilities, SearchProvidersConfig, DnsOverridesConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, V2UnsupportedEntry } from './types';
 
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
@@ -186,6 +186,16 @@ export const api = {
   },
   searchProviders() {
     return request<SearchProvidersConfig>('/api/config/search-providers');
+  },
+  dnsOverrides() {
+    return request<DnsOverridesConfig>('/api/config/dns-overrides');
+  },
+  saveDnsOverrides(config: Omit<DnsOverridesConfig, 'ok' | 'applied' | 'message'>) {
+    return request<DnsOverridesConfig>('/api/config/dns-overrides', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
   },
   saveSearchProviders(providers: Record<string, { base_url?: string | null; keys: Record<string, { env_var: string; weight: number; enabled: boolean }> }>) {
     return request<SearchProvidersConfig>('/api/config/search-providers', {

@@ -10,13 +10,13 @@
 //! 零新增依赖；不覆盖 CNAME 链路（对供应商 API 域名足够，A 记录直接可用）。
 
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DnsOverrideFile {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -62,39 +62,95 @@ impl DnsOverrideFile {
     }
 }
 
+/// 写盘前结构校验：DNS 服务器地址、静态 IP、超时合法性。
+pub fn validate(cfg: &DnsOverrideFile) -> Result<(), String> {
+    for s in &cfg.nameservers {
+        let owned = if s.contains(':') {
+            s.to_string()
+        } else {
+            format!("{s}:53")
+        };
+        owned
+            .parse::<SocketAddr>()
+            .map_err(|_| format!("非法 DNS 服务器地址: {s}"))?;
+    }
+    for (host, ips) in &cfg.static_map {
+        if host.trim().is_empty() {
+            return Err("静态映射域名为空".into());
+        }
+        for ip in ips {
+            ip.parse::<IpAddr>()
+                .map_err(|_| format!("静态映射 {host} 含非法 IP: {ip}"))?;
+        }
+    }
+    if cfg.query_timeout_ms == 0 {
+        return Err("query_timeout_ms 必须大于 0".into());
+    }
+    if cfg.cache_ttl_seconds > 3600 {
+        return Err("cache_ttl_seconds 过大（上限 3600）".into());
+    }
+    Ok(())
+}
+
+fn parse_resolver_config(cfg: &DnsOverrideFile) -> Option<ResolverConfig> {
+    let nameservers: Vec<SocketAddr> = cfg
+        .nameservers
+        .iter()
+        .filter_map(|s| {
+            let owned = if s.contains(':') {
+                s.to_string()
+            } else {
+                format!("{s}:53")
+            };
+            owned.parse().ok()
+        })
+        .collect();
+    let mut static_map: HashMap<String, Vec<IpAddr>> = HashMap::new();
+    for (host, ips) in &cfg.static_map {
+        let parsed: Vec<IpAddr> = ips.iter().filter_map(|ip| ip.parse().ok()).collect();
+        if !parsed.is_empty() {
+            static_map.insert(host.trim_end_matches('.').to_ascii_lowercase(), parsed);
+        }
+    }
+    if nameservers.is_empty() && static_map.is_empty() {
+        return None;
+    }
+    Some(ResolverConfig {
+        nameservers,
+        static_map: Arc::new(static_map),
+        query_timeout: Duration::from_millis(cfg.query_timeout_ms),
+    })
+}
+
 /// 从配置文件直接构建解析器（含启动日志）；功能关闭/配置无效时返回 None。
 pub fn resolver_from_config_file(path: &str) -> Option<DnsOverrideResolver> {
     let cfg = DnsOverrideFile::load(path)?;
-    let resolver = DnsOverrideResolver::from_config(&cfg)?;
-    eprintln!(
-        "[dns-override] 已启用：L1 自定义 DNS {:?}；L2 静态映射 {} 条；查询超时 {:?}",
-        cfg.nameservers,
-        cfg.static_map.len(),
-        resolver.query_timeout
-    );
-    Some(resolver)
+    DnsOverrideResolver::from_config(&cfg).inspect(|_| {
+        eprintln!(
+            "[dns-override] 已启用：L1 自定义 DNS {:?}；L2 静态映射 {} 条；查询超时 {:?}",
+            cfg.nameservers,
+            cfg.static_map.len(),
+            Duration::from_millis(cfg.query_timeout_ms)
+        );
+    })
 }
 
 type StaticMap = Arc<HashMap<String, Vec<IpAddr>>>;
+type CacheMap = Arc<Mutex<HashMap<String, (Instant, Vec<IpAddr>)>>>;
 
-pub struct DnsOverrideResolver {
+/// 解析器可热更配置快照（dashboard 保存后整体替换）。
+#[derive(Clone)]
+struct ResolverConfig {
     nameservers: Vec<SocketAddr>,
     static_map: StaticMap,
     query_timeout: Duration,
-    cache_ttl: Duration,
-    cache: Mutex<HashMap<String, (Instant, Vec<IpAddr>)>>,
 }
 
-impl Clone for DnsOverrideResolver {
-    fn clone(&self) -> Self {
-        Self {
-            nameservers: self.nameservers.clone(),
-            static_map: Arc::clone(&self.static_map),
-            query_timeout: self.query_timeout,
-            cache_ttl: self.cache_ttl,
-            cache: Mutex::new(HashMap::new()),
-        }
-    }
+#[derive(Clone)]
+pub struct DnsOverrideResolver {
+    config: Arc<RwLock<ResolverConfig>>,
+    cache_ttl: Duration,
+    cache: CacheMap,
 }
 
 impl DnsOverrideResolver {
@@ -103,35 +159,21 @@ impl DnsOverrideResolver {
         if !cfg.enabled {
             return None;
         }
-        let nameservers: Vec<SocketAddr> = cfg
-            .nameservers
-            .iter()
-            .filter_map(|s| {
-                let owned = if s.contains(':') {
-                    s.to_string()
-                } else {
-                    format!("{s}:53")
-                };
-                owned.parse().ok()
-            })
-            .collect();
-        let mut static_map: HashMap<String, Vec<IpAddr>> = HashMap::new();
-        for (host, ips) in &cfg.static_map {
-            let parsed: Vec<IpAddr> = ips.iter().filter_map(|ip| ip.parse().ok()).collect();
-            if !parsed.is_empty() {
-                static_map.insert(host.trim_end_matches('.').to_ascii_lowercase(), parsed);
-            }
-        }
-        if nameservers.is_empty() && static_map.is_empty() {
-            return None;
-        }
+        let config = parse_resolver_config(cfg)?;
         Some(Self {
-            nameservers,
-            static_map: Arc::new(static_map),
-            query_timeout: Duration::from_millis(cfg.query_timeout_ms),
+            config: Arc::new(RwLock::new(config)),
             cache_ttl: Duration::from_secs(cfg.cache_ttl_seconds),
-            cache: Mutex::new(HashMap::new()),
+            cache: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    /// dashboard 保存后热更新：整体替换配置快照并清空旧缓存（旧 IP 可能已失效）。
+    pub fn update_config(&self, cfg: &DnsOverrideFile) -> Result<(), String> {
+        let config =
+            parse_resolver_config(cfg).ok_or("至少需要一台 DNS 服务器或一条静态 IP 映射")?;
+        *self.config.write().expect("dns config lock") = config;
+        self.cache.lock().unwrap().clear();
+        Ok(())
     }
 
     /// 三级解析链。任一级命中即返回；全部失败才报错（reqwest 侧按连接失败走既有重试/熔断）。
@@ -146,11 +188,12 @@ impl DnsOverrideResolver {
                 return Ok(addrs.clone());
             }
         }
+        let cfg = self.config.read().expect("dns config lock").clone();
 
         // L1：自定义 DNS 服务器
-        if !self.nameservers.is_empty() {
-            for server in &self.nameservers {
-                match self.query_server(*server, &host).await {
+        if !cfg.nameservers.is_empty() {
+            for server in &cfg.nameservers {
+                match self.query_server(*server, &host, cfg.query_timeout).await {
                     Ok(addrs) if !addrs.is_empty() => {
                         self.cache_store(&host, &addrs);
                         return Ok(addrs);
@@ -164,7 +207,7 @@ impl DnsOverrideResolver {
         }
 
         // L2：静态映射
-        if let Some(addrs) = self.static_map.get(&host) {
+        if let Some(addrs) = cfg.static_map.get(&host) {
             self.cache_store(&host, addrs);
             return Ok(addrs.clone());
         }
@@ -181,7 +224,7 @@ impl DnsOverrideResolver {
                 let _ = tx.send(r);
             }
         });
-        match rx.recv_timeout(self.query_timeout * 4) {
+        match rx.recv_timeout(cfg.query_timeout * 4) {
             Ok(Ok(addrs)) if !addrs.is_empty() => {
                 self.cache_store(&host, &addrs);
                 Ok(addrs)
@@ -199,10 +242,15 @@ impl DnsOverrideResolver {
     }
 
     /// 对单个服务器并发发 A + AAAA 查询，合并去重；单类型失败不拖垮另一类型。
-    async fn query_server(&self, server: SocketAddr, host: &str) -> Result<Vec<IpAddr>, String> {
+    async fn query_server(
+        &self,
+        server: SocketAddr,
+        host: &str,
+        query_timeout: Duration,
+    ) -> Result<Vec<IpAddr>, String> {
         let (a, aaaa) = tokio::join!(
-            self.query_single(server, host, RecordType::A),
-            self.query_single(server, host, RecordType::AAAA)
+            self.query_single(server, host, RecordType::A, query_timeout),
+            self.query_single(server, host, RecordType::AAAA, query_timeout)
         );
         let mut out: Vec<IpAddr> = Vec::new();
         let mut first_err: Option<String> = None;
@@ -224,6 +272,7 @@ impl DnsOverrideResolver {
         server: SocketAddr,
         host: &str,
         rtype: RecordType,
+        query_timeout: Duration,
     ) -> Result<Vec<IpAddr>, String> {
         let packet = build_query(host, rtype)?;
         let bind_addr: SocketAddr = if server.is_ipv4() {
@@ -240,9 +289,9 @@ impl DnsOverrideResolver {
         sock.send(&packet).await.map_err(|e| format!("send: {e}"))?;
 
         let mut buf = vec![0u8; 4096];
-        let n = tokio::time::timeout(self.query_timeout, sock.recv(&mut buf))
+        let n = tokio::time::timeout(query_timeout, sock.recv(&mut buf))
             .await
-            .map_err(|_| format!("timeout after {:?}", self.query_timeout))?
+            .map_err(|_| format!("timeout after {query_timeout:?}"))?
             .map_err(|e| format!("recv: {e}"))?;
         parse_answer_addrs(&buf[..n], rtype)
     }
@@ -256,7 +305,7 @@ impl Resolve for DnsOverrideResolver {
             let addrs = this
                 .resolve_chain(&host)
                 .await
-                .map_err(|e| std::io::Error::other(e))?;
+                .map_err(std::io::Error::other)?;
             // 端口 0：reqwest 会按 URL scheme 覆盖为常规端口（与内置 GaiResolver 一致）。
             let addrs: Addrs = Box::new(addrs.into_iter().map(|ip| SocketAddr::new(ip, 0)));
             Ok(addrs)
