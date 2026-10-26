@@ -261,6 +261,11 @@ async fn all_keys_429_ends_with_error_event_not_empty_stream() {
         diag_max_bytes: 10 * 1024 * 1024,
         diag_max_files: 0,
         diag_sample_every: 1,
+        delta_cache_enabled: true,
+        delta_cache_max_sessions: 256,
+        delta_cache_max_total_bytes: 512 * 1024 * 1024,
+        delta_cache_session_max_bytes: 16 * 1024 * 1024,
+        delta_cache_ttl_seconds: 3 * 3600,
         env_file_path: None,
     };
     let app_state = AppState::new(settings).unwrap();
@@ -391,6 +396,11 @@ async fn upstream_truncated_stream_emits_response_incomplete() {
         diag_max_bytes: 10 * 1024 * 1024,
         diag_max_files: 0,
         diag_sample_every: 1,
+        delta_cache_enabled: true,
+        delta_cache_max_sessions: 256,
+        delta_cache_max_total_bytes: 512 * 1024 * 1024,
+        delta_cache_session_max_bytes: 16 * 1024 * 1024,
+        delta_cache_ttl_seconds: 3 * 3600,
         env_file_path: None,
     };
     let app_state = AppState::new(settings).unwrap();
@@ -532,6 +542,11 @@ async fn subscription_invalid_400_falls_back_to_next_key() {
         diag_max_bytes: 10 * 1024 * 1024,
         diag_max_files: 0,
         diag_sample_every: 1,
+        delta_cache_enabled: true,
+        delta_cache_max_sessions: 256,
+        delta_cache_max_total_bytes: 512 * 1024 * 1024,
+        delta_cache_session_max_bytes: 16 * 1024 * 1024,
+        delta_cache_ttl_seconds: 3 * 3600,
         env_file_path: None,
     };
     let app_state = AppState::new(settings).unwrap();
@@ -627,6 +642,11 @@ fn embedded_error_settings() -> crate::config::Settings {
         diag_max_bytes: 10 * 1024 * 1024,
         diag_max_files: 0,
         diag_sample_every: 1,
+        delta_cache_enabled: true,
+        delta_cache_max_sessions: 256,
+        delta_cache_max_total_bytes: 512 * 1024 * 1024,
+        delta_cache_session_max_bytes: 16 * 1024 * 1024,
+        delta_cache_ttl_seconds: 3 * 3600,
         env_file_path: None,
     }
 }

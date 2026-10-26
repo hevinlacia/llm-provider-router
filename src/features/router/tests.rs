@@ -46,6 +46,11 @@ fn test_settings() -> Settings {
         diag_max_bytes: 10 * 1024 * 1024,
         diag_max_files: 0,
         diag_sample_every: 1,
+        delta_cache_enabled: true,
+        delta_cache_max_sessions: 256,
+        delta_cache_max_total_bytes: 512 * 1024 * 1024,
+        delta_cache_session_max_bytes: 16 * 1024 * 1024,
+        delta_cache_ttl_seconds: 3 * 3600,
         env_file_path: None,
     }
 }

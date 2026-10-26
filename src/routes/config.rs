@@ -339,3 +339,27 @@ pub(crate) async fn api_config_dns_overrides_update(
     }
     Json(merge_ok(value)).into_response()
 }
+
+/// Delta 上下文缓存（pi ↔ router 增量传输）：开关 + 计数器 + 水位快照。
+pub(crate) async fn api_config_delta_cache(State(_app): State<AppState>) -> Response {
+    json_status(
+        StatusCode::OK,
+        merge_ok(crate::features::responses::delta::snapshot()),
+    )
+}
+
+/// Delta 上下文缓存开关热切换：`{"enabled": true|false}`。
+/// 关闭即清空缓存，增量请求一律 miss 回全量；重新开启后各会话首轮全量重新协商。
+pub(crate) async fn api_config_delta_cache_update(
+    State(_app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let Some(enabled) = payload.get("enabled").and_then(Value::as_bool) else {
+        return bad_request("enabled must be a boolean");
+    };
+    crate::features::responses::delta::set_enabled(enabled);
+    json_status(
+        StatusCode::OK,
+        merge_ok(crate::features::responses::delta::snapshot()),
+    )
+}

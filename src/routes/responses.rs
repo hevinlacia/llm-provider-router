@@ -14,7 +14,7 @@ use crate::features::chat::select::{
     clear_unsupported_if_ok, extract_usage, record_usage, select_key_locked,
     upstream_key_value_locked, usage_key_name,
 };
-use crate::features::responses::{store, translate};
+use crate::features::responses::{delta, store, translate};
 use crate::features::router::{
     circuit_breaker_on_exhaustion, handle_connect_failure, handle_embedded_failure,
     handle_response_failure, note_success_differential, FailureAction, NoAvailableKeyError,
@@ -43,7 +43,7 @@ pub(crate) struct InputItemsQuery {
 pub(crate) async fn responses(
     State(app): State<AppState>,
     headers: HeaderMap,
-    Json(payload): Json<Value>,
+    Json(mut payload): Json<Value>,
 ) -> Response {
     if crate::diag::diag_enabled(&app.settings) {
         crate::diag::append(
@@ -58,6 +58,63 @@ pub(crate) async fn responses(
     if let Some(response) = validate_auth(&app.settings, &headers) {
         return response;
     }
+
+    // ---- Delta 上下文增量传输分流（auth 之后、管线之前；管线只处理完整 payload）----
+    // 协议与正确性闭环见 features/responses/delta.rs 模块文档：
+    // - 全量 + `X-Delta-Capable` 头 → 注册缓存，响应头下发 ready/token/base_hash；
+    // - body 带 `x_delta` → 校验后重组完整 payload 再走管线；成功后 advance + 新 hash；
+    // - 任何 miss → 429 + miss 头，客户端回全量（pi 对 429 自动重试，重试即全量）。
+    // - 开关（/api/config/delta-cache）关闭时：不注册、不重组，请求按全量照常处理。
+    let mut delta_headers: Vec<(&'static str, HeaderValue)> = Vec::new();
+    if delta::is_delta_request(&payload) {
+        match delta::apply_delta(&mut payload, &app.settings) {
+            Ok(advance) => {
+                delta_headers.push(("x-delta-cache", HeaderValue::from_static("advance")));
+                if let Ok(v) = HeaderValue::from_str(&advance.new_hash) {
+                    delta_headers.push(("x-delta-base-hash", v));
+                }
+            }
+            Err(miss) => {
+                if crate::diag::diag_enabled(&app.settings) {
+                    let reason = match &miss {
+                        delta::DeltaMiss::Rejected(r) => r,
+                        delta::DeltaMiss::Token => "token",
+                        delta::DeltaMiss::Hash => "hash",
+                    };
+                    crate::diag::append(
+                        &app.settings,
+                        "request.delta_miss",
+                        serde_json::json!({ "reason": reason }),
+                    );
+                }
+                return delta::miss_response();
+            }
+        }
+    } else if headers.contains_key("x-delta-capable") {
+        if let Some((token, hash)) = delta::register_full(&payload, &app.settings) {
+            delta_headers.push(("x-delta-cache", HeaderValue::from_static("ready")));
+            if let Ok(v) = HeaderValue::from_str(&token) {
+                delta_headers.push(("x-delta-token", v));
+            }
+            if let Ok(v) = HeaderValue::from_str(&hash) {
+                delta_headers.push(("x-delta-base-hash", v));
+            }
+        }
+    }
+
+    let mut response = responses_inner(&app, &headers, payload).await;
+    {
+        let response_headers = response.headers_mut();
+        for (name, value) in delta_headers {
+            response_headers.insert(name, value);
+        }
+    }
+    response
+}
+
+/// `/v1/responses` 主管线（delta 解包之后）：模型路由 / 透传 / 翻译 / 流式分发。
+/// 参数为引用以便外层统一注入 delta 响应头；流式分发需要 owned AppState，内部 clone。
+async fn responses_inner(app: &AppState, headers: &HeaderMap, payload: Value) -> Response {
     let Some(model_name) = payload.get("model").and_then(Value::as_str) else {
         return error_response(
             "model must be a string",
@@ -65,7 +122,7 @@ pub(crate) async fn responses(
             StatusCode::BAD_REQUEST,
         );
     };
-    let session_id = extract_session_id(&payload, &headers);
+    let session_id = extract_session_id(&payload, headers);
     let route_aliases = match app.state.lock() {
         Ok(mut state) => state.route_aliases(model_name, session_id.as_deref()),
         Err(_) => return internal_error("router state lock poisoned"),
@@ -104,7 +161,7 @@ pub(crate) async fn responses(
 
     if stream {
         crate::features::responses::stream::stream_responses_route(
-            app,
+            app.clone(),
             route_aliases,
             session_id,
             payload,
@@ -116,7 +173,7 @@ pub(crate) async fn responses(
         for base_alias in route_aliases {
             let alias = base_alias.clone();
             let result = responses_alias_dispatch(
-                &app,
+                app,
                 alias,
                 session_id.clone(),
                 &payload,

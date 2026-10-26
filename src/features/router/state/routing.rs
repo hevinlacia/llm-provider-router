@@ -50,7 +50,18 @@ impl RouterState {
             if let Some(model) = customs.get(model_name) {
                 out.push(model.clone());
             }
+            // 测试钩子：handler 级集成测试直接注册的路由别名（生产构建不编译）
+            #[cfg(test)]
+            if let Some(alias) = self.test_aliases.get(model_name) {
+                out.push(alias.clone());
+            }
             out
         }
+    }
+
+    /// 测试钩子：注册路由别名供 handler 级集成测试使用（生产构建不编译）。
+    #[cfg(test)]
+    pub(crate) fn install_test_alias(&mut self, alias: ModelAlias) {
+        self.test_aliases.insert(alias.alias.clone(), alias);
     }
 }

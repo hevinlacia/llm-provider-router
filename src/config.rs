@@ -234,6 +234,17 @@ pub struct Settings {
     pub diag_max_files: usize,
     /// 诊断采样率：每 N 个请求记录 1 个请求级事件（1=全量，默认 1）。
     pub diag_sample_every: u64,
+    /// Delta 上下文缓存的启动默认开关（运行期可用 /api/config/delta-cache 热切换，
+    /// 重启回本值）。关闭后 /v1/responses 不注册/不重组增量请求。
+    pub delta_cache_enabled: bool,
+    /// Delta 缓存最大会话数（LRU 驱逐）。
+    pub delta_cache_max_sessions: usize,
+    /// Delta 缓存总字节数上限（LRU 驱逐）。
+    pub delta_cache_max_total_bytes: u64,
+    /// 单会话 Delta 缓存字节数上限：超限不缓存，该会话退化为全量（不影响其他会话）。
+    pub delta_cache_session_max_bytes: u64,
+    /// Delta 缓存空闲 TTL（秒）。比 key 粘性 TTL 长：缓存命中省的是真实公网上行流量。
+    pub delta_cache_ttl_seconds: u64,
 }
 
 pub fn load_settings() -> anyhow::Result<Settings> {
@@ -319,6 +330,27 @@ pub fn load_settings() -> anyhow::Result<Settings> {
         )
         .parse()
         .unwrap_or(1),
+        delta_cache_enabled: env_or("LLM_PROVIDER_ROUTER_DELTA_CACHE", "true")
+            .parse::<bool>()
+            .unwrap_or(true),
+        delta_cache_max_sessions: env_or("LLM_PROVIDER_ROUTER_DELTA_CACHE_MAX_SESSIONS", "256")
+            .parse()
+            .unwrap_or(256),
+        delta_cache_max_total_bytes: env_or(
+            "LLM_PROVIDER_ROUTER_DELTA_CACHE_MAX_TOTAL_BYTES",
+            "536870912",
+        )
+        .parse()
+        .unwrap_or(512 * 1024 * 1024),
+        delta_cache_session_max_bytes: env_or(
+            "LLM_PROVIDER_ROUTER_DELTA_CACHE_SESSION_MAX_BYTES",
+            "16777216",
+        )
+        .parse()
+        .unwrap_or(16 * 1024 * 1024),
+        delta_cache_ttl_seconds: env_or("LLM_PROVIDER_ROUTER_DELTA_CACHE_TTL_SECONDS", "10800")
+            .parse()
+            .unwrap_or(3 * 3600),
     })
 }
 
@@ -344,6 +376,15 @@ pub fn env_or(name: &str, default: &str) -> String {
         .ok()
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| default.to_string())
+}
+
+/// 测试辅助：默认配置 + 隔离路径（单元测试用，不触真实状态文件）。
+#[cfg(test)]
+pub fn load_settings_for_tests() -> Settings {
+    let mut settings = load_settings().expect("load settings for tests");
+    settings.state_db_path = ":memory:".to_string();
+    settings.usage_db_path = ":memory:".to_string();
+    settings
 }
 
 pub mod v2;

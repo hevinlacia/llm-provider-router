@@ -88,6 +88,9 @@ pub struct RouterState {
     recent_errors: RecentErrors,
     /// 连接失败连败计数（内存，重启丢失），键为 key_state_id。
     connect_streaks: HashMap<String, ConnectStreak>,
+    /// 测试钩子：handler 级集成测试直接注册的路由别名（生产构建不编译）。
+    #[cfg(test)]
+    test_aliases: HashMap<String, ModelAlias>,
 }
 
 impl RouterState {
@@ -214,6 +217,8 @@ impl RouterState {
             error_rules,
             recent_errors: VecDeque::new(),
             connect_streaks: HashMap::new(),
+            #[cfg(test)]
+            test_aliases: HashMap::new(),
         };
         Ok(state)
     }

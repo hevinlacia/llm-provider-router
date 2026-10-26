@@ -84,6 +84,8 @@ fn default_series_group_by() -> String {
 
 pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     let app_state = AppState::new(settings.clone())?;
+    // Delta 上下文缓存开关：env 默认值启动应用，运行期经 /api/config/delta-cache 热切换。
+    crate::features::responses::delta::set_enabled(settings.delta_cache_enabled);
     // v2 配置热加载：文件变更自动重载，手工编辑 config/*.json 无需 reload-env/重启。
     crate::hot_reload::spawn_watcher(app_state.clone());
     let app = Router::new()
@@ -160,6 +162,10 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         .route(
             "/api/config/error-rules",
             get(config::api_config_error_rules).put(config::api_config_error_rules_update),
+        )
+        .route(
+            "/api/config/delta-cache",
+            get(config::api_config_delta_cache).put(config::api_config_delta_cache_update),
         )
         .route("/v1/search", post(search::search_completions))
         .route("/v1/models", get(models::models))
