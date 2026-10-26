@@ -1,5 +1,8 @@
 import type { ActiveSessionsResponse, ErrorRulesConfig, FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderModelsResponse, RecentErrorsResponse, RouterCapabilities, SearchProvidersConfig, DnsOverridesConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, V2UnsupportedEntry } from './types';
 
+/** 部署基路径（vite base 注入，'/' 归一为 ''）：fetch 与手写路径路由统一拼前缀。 */
+export const appBase = import.meta.env.BASE_URL === '/' ? '' : import.meta.env.BASE_URL.replace(/\/+$/, '');
+
 function queryFromFilters(filters: FilterState): string {
   const params = new URLSearchParams();
   if (filters.period) params.set('period', filters.period);
@@ -10,7 +13,7 @@ function queryFromFilters(filters: FilterState): string {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
+  const response = await fetch(`${appBase}${url}`, init);
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `${response.status} ${response.statusText}`);

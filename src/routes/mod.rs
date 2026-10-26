@@ -194,6 +194,17 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
                 ))
                 .service(ServeDir::new("frontend/dist/assets")),
         )
+        // /llm-router 前缀的同源资源：443 反代按子路径部署后 index.html 引用带前缀资源，
+        // 直连 :8789 / 公网 root 入口同样能拿到文件，UI 不因入口不同而白屏。
+        .nest_service(
+            "/llm-router/assets",
+            ServiceBuilder::new()
+                .layer(SetResponseHeaderLayer::overriding(
+                    CACHE_CONTROL,
+                    HeaderValue::from_static("public, max-age=31536000, immutable"),
+                ))
+                .service(ServeDir::new("frontend/dist/assets")),
+        )
         .fallback(get(usage::dashboard))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(
