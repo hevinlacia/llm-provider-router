@@ -4,6 +4,7 @@ import { ErrorsPage } from './features/errors/ErrorsPage';
 import { HomePage } from './features/home/HomePage';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { TokenUnitProvider } from './lib/tokenUnit';
+import { appBase } from './api';
 import './styles.css';
 
 type Page = 'home' | 'analytics' | 'errors' | 'settings';
@@ -43,17 +44,18 @@ function PanelIcon({ open }: { open: boolean }) {
 }
 
 function pathToPage(pathname: string): Page {
-  if (pathname.startsWith('/analytics')) return 'analytics';
-  if (pathname.startsWith('/errors')) return 'errors';
-  if (pathname === '/settings' || pathname.startsWith('/settings/')) return 'settings';
+  const p = appBase && pathname.startsWith(appBase) ? pathname.slice(appBase.length) || '/' : pathname;
+  if (p.startsWith('/analytics')) return 'analytics';
+  if (p.startsWith('/errors')) return 'errors';
+  if (p === '/settings' || p.startsWith('/settings/')) return 'settings';
   return 'home';
 }
 
 function pageToPath(page: Page): string {
-  if (page === 'analytics') return '/analytics';
-  if (page === 'errors') return '/errors';
-  if (page === 'settings') return '/settings';
-  return '/';
+  if (page === 'analytics') return `${appBase}/analytics`;
+  if (page === 'errors') return `${appBase}/errors`;
+  if (page === 'settings') return `${appBase}/settings`;
+  return `${appBase}/`;
 }
 
 export default function App() {

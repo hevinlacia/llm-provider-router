@@ -84,6 +84,8 @@ fn default_series_group_by() -> String {
 
 pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     let app_state = AppState::new(settings.clone())?;
+    // Delta 上下文缓存开关：env 默认值启动应用，运行期经 /api/config/delta-cache 热切换。
+    crate::features::responses::delta::set_enabled(settings.delta_cache_enabled);
     // v2 配置热加载：文件变更自动重载，手工编辑 config/*.json 无需 reload-env/重启。
     crate::hot_reload::spawn_watcher(app_state.clone());
     let app = Router::new()
@@ -161,6 +163,10 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
             "/api/config/error-rules",
             get(config::api_config_error_rules).put(config::api_config_error_rules_update),
         )
+        .route(
+            "/api/config/delta-cache",
+            get(config::api_config_delta_cache).put(config::api_config_delta_cache_update),
+        )
         .route("/v1/search", post(search::search_completions))
         .route("/v1/models", get(models::models))
         .route("/api/router/capabilities", get(models::router_capabilities))
@@ -187,6 +193,17 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
             "/assets",
             // 静态资源文件名带内容 hash：可永久缓存。部署新版本后 hash 变化，
             // 自然失效；index.html 用 no-cache 每次回源验证，保证拿到新引用。
+            ServiceBuilder::new()
+                .layer(SetResponseHeaderLayer::overriding(
+                    CACHE_CONTROL,
+                    HeaderValue::from_static("public, max-age=31536000, immutable"),
+                ))
+                .service(ServeDir::new("frontend/dist/assets")),
+        )
+        // /llm-router 前缀的同源资源：443 反代按子路径部署后 index.html 引用带前缀资源，
+        // 直连 :8789 / 公网 root 入口同样能拿到文件，UI 不因入口不同而白屏。
+        .nest_service(
+            "/llm-router/assets",
             ServiceBuilder::new()
                 .layer(SetResponseHeaderLayer::overriding(
                     CACHE_CONTROL,

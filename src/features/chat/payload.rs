@@ -58,6 +58,11 @@ pub(crate) fn prepare_upstream_payload(payload: &Value, alias: &ModelAlias) -> V
             diag_max_bytes: 10 * 1024 * 1024,
             diag_max_files: 50,
             diag_sample_every: 1,
+            delta_cache_enabled: true,
+            delta_cache_max_sessions: 256,
+            delta_cache_max_total_bytes: 512 * 1024 * 1024,
+            delta_cache_session_max_bytes: 16 * 1024 * 1024,
+            delta_cache_ttl_seconds: 3 * 3600,
             env_file_path: None,
         });
     // 收集期：记录原始 payload 的关键字段（不含消息正文/密钥），便于事后定位是协议兼容还是模型能力问题。

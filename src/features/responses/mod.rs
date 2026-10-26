@@ -7,6 +7,7 @@
 //! - `stream.rs`：流式 SSE 翻译状态机
 //! - `store.rs`：previous_response_id 内存多轮环
 
+pub mod delta;
 pub mod store;
 pub mod stream;
 pub mod translate;
