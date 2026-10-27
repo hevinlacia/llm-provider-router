@@ -26,6 +26,7 @@ Personal tool project under `~/Developer/tools/`.
 - **部署互斥锁(2026-10-08 事故:两会话同时部署互相覆盖槽位状态)**:任何部署/切流操作必须持有部署锁 —— `python3 bin/hot-deploy-router.py stage/switch/deploy`(内部自动持锁)或 `python3 bin/deploy_lock.py acquire/release`。锁为 `flock` 文件锁(`~/.local/state/llm-provider-router/deploy.lock`,进程死亡自动释放),acquire 产出 token;锁被持有期间 front-proxy 的 `POST /_proxy/active/{slot}` 只放行携带匹配 `X-Deploy-Lock` 头的请求,否则 409。拿不到锁 = 有其他部署在进行,等待或放弃,绝不并行部署。锁状态:`lock-status` 或 `GET /_proxy/deploy-lock`。
 - **先验证,后切换**:部署时先在非活跃 slot(blue/green)拉起新版本,确认 `python3 bin/hot-deploy-router.py status` 显示该 slot `health=ok` 后才允许切换 `active_slot`。
 - **切槽自动搬运 delta 缓存(2026-10-27 事故后内置)**:`deploy`/`switch` 在切流前把旧槽 delta 会话缓存 dump→load 给新槽(`/internal/delta-cache/*`,仅本机脚本直连槽端口,front-proxy 封锁该前缀),delta 会话切槽无感。搬运失败仅警告不阻塞——缓存只是优化,客户端扩展(pendingDelta 自愈)保证任何缓存丢失都退化为全量重建,不罢工。
+- **前端 dist 是上线资产(2026-10-27 白屏事故)**:更新 dashboard 必须 `cd frontend && VITE_BASE=/llm-router/ pnpm build` 并与二进制同批替换 dist。漏掉 VITE_BASE 产出根路径形态,公网 edge 子路径入口(`/llm-router/*`)资源引用落不到 router,直接白屏。
 - **切换后立即复检**:切换完成后必须立刻用 front-proxy 入口验证——`/health` 健康、`/api/config/token-prices`、`/api/config/v2/physical-models`、`/api/router/capabilities` 等核心 API 返回正常 JSON(而非 dashboard HTML fallback)。
 - **失败即回滚**:切换后任一检查失败,立即切回原 slot 恢复服务,再排查新版本问题;不得让服务停留在未验证/异常状态。
 - **禁止裸替换**:不得直接停旧进程/覆盖可执行文件后立即启动新版本来替换;始终走 hot-deploy 的 blue/green 验证流程。

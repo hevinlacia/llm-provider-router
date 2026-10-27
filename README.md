@@ -61,6 +61,14 @@ bin/hot-deploy-router.py deploy
 bin/hot-deploy-router.py status
 ```
 
+Dashboard 前端（`frontend/dist`）与二进制同批替换时，**必须带 `VITE_BASE=/llm-router/` 构建**（公网 edge 子路径入口 `https://edge.tail260d93.ts.net/llm-router/` 依赖带前缀的资源引用与 fetch；漏掉会导致子路径入口白屏，2026-10-27 踩中）：
+
+```bash
+cd frontend && VITE_BASE=/llm-router/ pnpm build && cd ..
+```
+
+后端 `/llm-router/assets` 同源路由保证直连 `:8789` 也能拿到带前缀资源；API 仅在子路径入口可用（直连 dashboard 走 root 形态另议）。
+
 ## Development
 
 Run backend directly:
