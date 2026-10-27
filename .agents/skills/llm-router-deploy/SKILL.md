@@ -17,6 +17,8 @@ allowed-tools: ["bash", "read"]
 1. **删除/变更客户端协议端点 = 破坏性变更**：先跑「阶段 0 客户端审计」，确认无客户端使用才允许删。`/health` ok 不代表协议可用——它只证明进程活着。
 2. **部署全程必须持锁（2026-10-08 事故：两会话同时部署互相覆盖槽位状态）**：整个 stage→probe→switch 流程必须持有部署互斥锁（`flock` 文件锁 + token）；拿不到锁 = 有其他部署在进行 → 等待或放弃，**绝不并行部署**。front-proxy 对持锁期间的切流请求校验 `X-Deploy-Lock: <token>`，不匹配返回 409。
 3. **两段式强制**：新版本必须先 stage 到非活跃槽、探针全过，才允许 switch 切流。禁止部署完立即切流。
+4. **两段式竞态（2026-10-27 踩中）**：非活跃槽被拉起后，front-proxy 的 idle 时钟**不随重启重置**（沿用继承值），stage 后停留超过一个检查周期（30s）目标槽就会被 idle 管理器误杀。两段式必须 stage→probe→switch 一气呵成（分钟级内完成），或直接用 one-shot `deploy`。
+5. **delta 缓存自动搬运（2026-10-27 切槽事故后内置）**：`deploy`/`switch` 切流前自动把旧槽 delta 会话缓存 dump→load 给新槽（`/internal/delta-cache/*`，仅本机脚本直连槽端口，front-proxy 已封锁该前缀，公网不可达）。搬运 best-effort：失败仅警告不阻塞切流——缓存只是优化，客户端扩展（pendingDelta 自愈）保证任何缓存丢失退化为全量重建，不罢工。**前提**：pi 会话已加载含 pendingDelta 的 delta-context 扩展（2026-10-27 之前的版本遇 miss 会卡死，切槽前确认已更新）。
 4. **探针必须直连槽端口**（绕过 front-proxy），用 POST 打客户端真实使用的每个协议端点——GET 打管理 API 探不出协议破坏。
 5. **回滚路径全程可用**：回滚 = `switch --slot {previous_slot} --lock-token <T>`（或持锁前的紧急路径：先 `lock-release --force` 再切）；旧槽保持运行，禁止手动停。
 
@@ -32,6 +34,18 @@ grep -rn "127.0.0.1:8789\|localhost:8789" ~/.config/opencode ~/.hermes ~/.pi --i
 ```
 
 结论写进部署记录：**哪些端点有真实客户端** → 这些端点在阶段 2 是硬性 PASS 项（405/缺失 = FAIL）。若要删除某端点，必须先完成客户端迁移并复查本步骤。
+
+## 前端 dist 部署（2026-10-27 白屏教训）
+
+dashboard 的 `frontend/dist` 也是上线资产，**必须用 `VITE_BASE=/llm-router/` 构建**：
+
+```bash
+cd frontend && VITE_BASE=/llm-router/ pnpm build   # 资源引用与 fetch 带前缀（edge 子路径入口）
+```
+
+- 漏掉 VITE_BASE 构建出的根路径形态会导致 **edge 子路径入口白屏**（index.html 引用 /assets/* 落到 hub 而非 router）——2026-10-27 部署流量统计时踩中。
+- dist 更新与二进制同批替换（`frontend/dist` 原子换目录即可，资源文件名带 hash 天然幂等）。
+- 后端 `/llm-router/assets` 同源路由保证直连 :8789 也能拿到带前缀资源。
 
 ## 阶段 1：stage（只部署到非活跃槽，不动流量）
 
@@ -62,6 +76,8 @@ python3 <本skill目录>/scripts/probe_slot.py --port {inactive-port} --model {�
 任一 FAIL → 禁止进入阶段 3；修复代码重走阶段 1-2。
 
 ## 阶段 3：switch（切流）+ 复检
+
+> 切流时脚本自动执行 delta 缓存 handoff（旧槽 dump → 新槽 load），成功输出 `delta handoff: N/M sessions moved`；失败仅警告。**注意 stage 后立刻 switch**（见铁律 4 竞态）。
 
 ```bash
 python3 bin/hot-deploy-router.py switch --slot {staged_slot} --lock-token {T}   # 校验锁→切流→front-proxy 复检，FAIL 自动回滚
