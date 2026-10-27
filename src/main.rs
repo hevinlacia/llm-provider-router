@@ -15,6 +15,7 @@ mod search_chrome;
 mod shutdown;
 mod slot_manager;
 mod state_store;
+mod traffic;
 mod usage_store;
 
 use anyhow::Context;

@@ -5,8 +5,10 @@
 //! 协议语义见 `src/features/responses/delta.rs` 模块文档。
 //!
 //! 注：mock 上游是独立 python 子进程（不用进程内 axum task）——mock 与测试 runtime
-//! 完全隔离，避免 tokio 调度互相干扰；SSE 响应无 content-length，测试不读流式 body
-//! （字节完整性回归归 `e2e_stream.rs`），payload 重组正确性用 mock 侧记录断言。
+//! 完全隔离，避免 tokio 调度互相干扰；SSE 流式响应的**上游分发是惰性的**
+//! （stream_responses_route 把上游请求放在 body stream 里，只有消费 body 才触发），
+//! 所以每个流式请求都用 `.bytes().await` 读到流尾再断言 mock.seen()；
+//! payload 重组正确性用 mock 侧记录断言，SSE 字节完整性回归归 `e2e_stream.rs`。
 
 use serde_json::{json, Value};
 use std::path::Path;
@@ -297,7 +299,8 @@ async fn delta_full_then_advance_then_miss_through_proxy() {
         .unwrap()
         .to_string();
     assert!(!token.is_empty() && !hash1.is_empty());
-    drop(resp); // SSE 流式响应无 content-length，不读 body（字节回归归 e2e_stream.rs）
+    // 消费 SSE 流到流尾：惰性分发的上游请求只有 body 被轮询才会真正发出。
+    let _ = resp.bytes().await.unwrap();
     let seen = env.mock.seen();
     assert_eq!(seen.len(), 1, "upstream saw the full request");
     assert_eq!(seen[0]["input"].as_array().unwrap().len(), 1);
@@ -324,7 +327,7 @@ async fn delta_full_then_advance_then_miss_through_proxy() {
         .unwrap()
         .to_string();
     assert_ne!(hash1, hash2, "advance must rotate base hash");
-    drop(resp);
+    let _ = resp.bytes().await.unwrap();
     let seen = env.mock.seen();
     assert_eq!(seen.len(), 2, "upstream saw the delta request");
     assert_eq!(
@@ -351,7 +354,8 @@ async fn delta_full_then_advance_then_miss_through_proxy() {
     let resp = env.client.post(&url).json(&bad).send().await.unwrap();
     assert_eq!(resp.status(), 429);
     assert_eq!(resp.headers()["x-delta-cache"], "miss");
-    drop(resp);
+    // miss 是同步 JSON 错误响应（非惰性流），不触发上游；读掉 body 无害且统一。
+    let _ = resp.bytes().await.unwrap();
     assert_eq!(env.mock.seen().len(), 2, "miss must not hit upstream");
 
     // 4) 开关 API：快照含 enabled + 计数器
@@ -387,7 +391,7 @@ async fn delta_full_then_advance_then_miss_through_proxy() {
         .unwrap();
     assert_eq!(resp.status(), 429, "disabled: delta must miss");
     assert_eq!(resp.headers()["x-delta-cache"], "miss");
-    drop(resp);
+    let _ = resp.bytes().await.unwrap();
     let resp = env
         .client
         .post(&url)
@@ -401,7 +405,7 @@ async fn delta_full_then_advance_then_miss_through_proxy() {
         resp.headers().get("x-delta-cache").is_none(),
         "disabled: no ready header"
     );
-    drop(resp);
+    let _ = resp.bytes().await.unwrap();
 
     // 6) 重新开启：全量重新协商回到 ready
     env.client
@@ -424,4 +428,5 @@ async fn delta_full_then_advance_then_miss_through_proxy() {
         "ready",
         "re-enable: full re-negotiates"
     );
+    let _ = resp.bytes().await.unwrap();
 }

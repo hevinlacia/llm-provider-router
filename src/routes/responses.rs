@@ -30,6 +30,7 @@ use std::collections::HashSet;
 use super::resp::{inject_router_headers, validate_auth, CallError};
 use super::resp::{internal_error, json_status, status_code};
 use super::session_fingerprint::extract_session_id;
+use super::traffic_layer::{self, TrafficSession};
 
 /// input_items 端点 query 参数。
 #[derive(Debug, Deserialize)]
@@ -102,19 +103,39 @@ pub(crate) async fn responses(
         }
     }
 
-    let mut response = responses_inner(&app, &headers, payload).await;
+    // ---- 客户端流量统计（上行）---- delta 分流之后提取 session（此时才是完整
+    // payload）；Content-Length 即真实 wire 字节（delta 请求 = 增量包大小）。
+    // 下行字节由 traffic_down_middleware 按响应 extensions 里的归属计。
+    let session_id = extract_session_id(&payload, &headers);
+    app.traffic.record_up(
+        session_id.as_deref(),
+        traffic_layer::request_up_bytes(&headers, &payload),
+    );
+
+    let mut response = responses_inner(&app, &headers, payload, session_id.clone()).await;
     {
         let response_headers = response.headers_mut();
         for (name, value) in delta_headers {
             response_headers.insert(name, value);
         }
     }
+    if session_id.is_some() {
+        response
+            .extensions_mut()
+            .insert(TrafficSession(session_id));
+    }
     response
 }
 
 /// `/v1/responses` 主管线（delta 解包之后）：模型路由 / 透传 / 翻译 / 流式分发。
 /// 参数为引用以便外层统一注入 delta 响应头；流式分发需要 owned AppState，内部 clone。
-async fn responses_inner(app: &AppState, headers: &HeaderMap, payload: Value) -> Response {
+/// session_id 由外层提取后传入（同一 payload 只算一次指纹，也供流量统计复用）。
+async fn responses_inner(
+    app: &AppState,
+    _headers: &HeaderMap,
+    payload: Value,
+    session_id: Option<String>,
+) -> Response {
     let Some(model_name) = payload.get("model").and_then(Value::as_str) else {
         return error_response(
             "model must be a string",
@@ -122,7 +143,6 @@ async fn responses_inner(app: &AppState, headers: &HeaderMap, payload: Value) ->
             StatusCode::BAD_REQUEST,
         );
     };
-    let session_id = extract_session_id(&payload, headers);
     let route_aliases = match app.state.lock() {
         Ok(mut state) => state.route_aliases(model_name, session_id.as_deref()),
         Err(_) => return internal_error("router state lock poisoned"),

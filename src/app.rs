@@ -7,6 +7,7 @@ use crate::config::Settings;
 use crate::dns_override::resolver_from_config_file;
 use crate::features::router::RouterState;
 use crate::search::SearchPool;
+use crate::traffic::Traffic;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -18,6 +19,9 @@ pub struct AppState {
     pub(crate) search_pool: Arc<Mutex<SearchPool>>,
     /// 上游解析兜底句柄：dashboard 保存配置后热更新解析器（None = 功能关闭）。
     pub(crate) dns_override: Option<Arc<crate::dns_override::DnsOverrideResolver>>,
+    /// 客户端流量统计（session 级 + 全局，纯内存秒桶）：/v1 handler 记上行，
+    /// 响应体中间件逐 chunk 记下行；dashboard 经 /api/sessions/active 读快照。
+    pub(crate) traffic: Arc<Traffic>,
 }
 
 impl AppState {
@@ -49,6 +53,7 @@ impl AppState {
             client,
             search_pool,
             dns_override,
+            traffic: Arc::new(Traffic::new()),
         })
     }
 }

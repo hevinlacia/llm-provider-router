@@ -42,11 +42,28 @@ export type ActiveSessionRow = {
   models?: string[];
 };
 
+// 客户端流量统计（session 级 + 全局，后端 src/traffic.rs 秒桶滑动窗口）。
+export type TrafficRates = {
+  up: { '1s': number; '5s': number; '60s': number };
+  down: { '1s': number; '5s': number; '60s': number };
+};
+
+export type TrafficEntry = {
+  total_up: number;
+  total_down: number;
+  rates: TrafficRates;
+};
+
 export type ActiveSessionsResponse = {
   window_seconds: number;
   active_threshold_seconds: number;
   sessions: ActiveSessionRow[];
   unidentified: (Omit<ActiveSessionRow, 'session_id'>) | null;
+  traffic?: {
+    window_seconds: number;
+    global: TrafficEntry;
+    sessions: Record<string, TrafficEntry>;
+  };
 };
 
 export type StateResponse = {
