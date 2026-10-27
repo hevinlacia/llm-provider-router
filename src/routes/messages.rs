@@ -36,6 +36,7 @@ use super::resp::{inject_router_headers, CallError};
 use super::resp::{internal_error, json_status, status_code};
 use super::responses::{responses_alias_dispatch, translate_request};
 use super::session_fingerprint::extract_session_id;
+use super::traffic_layer::{self, TrafficSession};
 
 /// 非流式响应体读取上限（64MB，与路由层 body limit 一致）。
 const BODY_LIMIT: usize = 64 * 1024 * 1024;
@@ -127,11 +128,23 @@ pub(crate) async fn messages(
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    if stream {
-        stream_messages_route(app, route_aliases, session_id, payload, &model_name).await
+    // ---- 客户端流量统计 ---- 上行记一次（Content-Length = wire 字节）；下行由
+    // traffic_down_middleware 按响应 extensions 里的 session 归属计。
+    app.traffic.record_up(
+        session_id.as_deref(),
+        traffic_layer::request_up_bytes(&headers, &payload),
+    );
+    let mut response = if stream {
+        stream_messages_route(app, route_aliases, session_id.clone(), payload, &model_name).await
     } else {
-        messages_non_stream(app, route_aliases, session_id, payload, &model_name).await
+        messages_non_stream(app, route_aliases, session_id.clone(), payload, &model_name).await
+    };
+    if session_id.is_some() {
+        response
+            .extensions_mut()
+            .insert(TrafficSession(session_id));
     }
+    response
 }
 
 /// 非流式：逐 alias 分发（透传 / 经 Responses 机制翻译），首个成功响应直接返回。

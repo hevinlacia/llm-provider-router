@@ -7,6 +7,7 @@ use axum::http::header::CACHE_CONTROL;
 use axum::http::HeaderValue;
 use axum::response::Response;
 use serde_json::json;
+use std::sync::Arc;
 
 use super::resp::{merge_ok, with_state_json};
 use super::{UsageQuery, UsageSeriesQuery};
@@ -75,7 +76,14 @@ pub(crate) async fn api_usage_series(
 }
 
 pub(crate) async fn api_sessions_active(State(app): State<AppState>) -> Response {
-    with_state_json(&app, |state| state.active_sessions())
+    let traffic = Arc::clone(&app.traffic);
+    with_state_json(&app, move |state| {
+        let mut payload = state.active_sessions()?;
+        // 客户端流量统计（session 级 + 全局，纯内存秒桶）：与 usage session
+        // 共用 session_id 口径（prompt_cache_key/指纹），前端按 id 关联展示。
+        payload["traffic"] = traffic.snapshot();
+        Ok(payload)
+    })
 }
 
 pub(crate) async fn api_usage_reset(State(app): State<AppState>) -> Response {

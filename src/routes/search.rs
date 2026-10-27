@@ -13,6 +13,7 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use super::resp::{bad_request, internal_error, json_status, validate_auth};
+use super::traffic_layer;
 
 fn has_results(payload: &Value) -> bool {
     payload
@@ -29,6 +30,9 @@ pub(crate) async fn search_completions(
     if let Some(response) = validate_auth(&app.settings, &headers) {
         return response;
     }
+    // 搜索无 session 概念：上行只进全局统计（下行由 traffic_down_middleware 记全局）。
+    app.traffic
+        .record_up(None, traffic_layer::request_up_bytes(&headers, &payload));
     let req: UnifiedSearchRequest = match serde_json::from_value(payload) {
         Ok(req) => req,
         Err(err) => return bad_request(&format!("invalid search request: {err}")),

@@ -21,6 +21,27 @@ export function formatCompact(n: number): string {
   return number.format(n);
 }
 
+// ---- 字节/流量展示（客户端流量统计面板）----
+
+export function formatBytes(n: number | undefined): string {
+  const v = (n ?? 0) || 0;
+  if (!isFinite(v) || v < 1024) return `${Math.round(v)} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let x = v / 1024;
+  let i = 0;
+  while (x >= 1024 && i < units.length - 1) {
+    x /= 1024;
+    i += 1;
+  }
+  return `${x >= 100 ? x.toFixed(0) : x.toFixed(1)} ${units[i]}`;
+}
+
+export function formatBytesRate(bps: number | undefined): string {
+  const v = (bps ?? 0) || 0;
+  if (!isFinite(v) || v <= 0) return '0 B/s';
+  return `${formatBytes(v)}/s`;
+}
+
 // ---- Token 展示单位（默认“万”；全局状态见 lib/tokenUnit.tsx）----
 export type TokenUnit = 'wan' | 'yi' | 'm' | 'raw';
 

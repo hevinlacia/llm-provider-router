@@ -10,6 +10,7 @@
 //! - `search.rs`：统一搜索入口（/v1/search）
 //! - `resp.rs`：共享响应/鉴权/调用错误工具
 //! - `session_fingerprint.rs`：会话标识提取与指纹兜底
+//! - `traffic_layer.rs`：/v1 客户端流量统计（下行中间件 + 上行推导）
 //!
 //! 历史说明：`/v1/chat/completions`（OpenAI chat 协议）已于 2026-10 下线删除，
 //! 客户端走 `/v1/messages`（Anthropic）或 `/v1/responses`；对仅支持 chat
@@ -24,6 +25,7 @@ pub(crate) mod resp;
 pub(crate) mod responses;
 pub(crate) mod search;
 pub(crate) mod session_fingerprint;
+pub(crate) mod traffic_layer;
 pub(crate) mod usage;
 
 use crate::app::AppState;
@@ -222,6 +224,10 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
             CompressionLayer::new()
                 .compress_when(DefaultPredicate::new().and(NotForContentType::SSE)),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            traffic_layer::traffic_down_middleware,
+        ))
         .with_state(app_state);
 
     let addr: SocketAddr = format!("{}:{}", settings.host, settings.port).parse()?;

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../api';
 import { BarRow, CostTable, KpiCard, TokenTable, UsageTable } from '../../components/tables';
-import { costPer1k, formatMoney, formatPercent, number, providerOf, formatTokens } from '../../lib/format';
+import { costPer1k, formatMoney, formatPercent, number, providerOf, formatTokens, formatBytes, formatBytesRate } from '../../lib/format';
 import { TokenUnitSelect, useTokenUnit } from '../../lib/tokenUnit';
-import type { ActiveSessionRow, ActiveSessionsResponse, Bucket, FilterState, KeyConfig, StateResponse, TokenPriceConfig, UsageSnapshot } from '../../types';
+import type { ActiveSessionRow, ActiveSessionsResponse, Bucket, FilterState, KeyConfig, StateResponse, TokenPriceConfig, TrafficEntry, UsageSnapshot } from '../../types';
 
 function timeAgo(ts: number, now: number): string {
   const seconds = Math.max(0, Math.round(now - ts));
@@ -29,6 +29,19 @@ function sessionRate(row: Pick<ActiveSessionRow, 'output_tokens'>, unit: ReturnT
 
 function shortSessionId(id: string): string {
   return id.length > 12 ? `${id.slice(0, 10)}…` : id;
+}
+
+// 客户端流量列：主显 1s 瞬时速率，tooltip 带 5s/60s 均值与累计字节。
+function trafficCell(t: TrafficEntry | undefined, dir: 'up' | 'down'): string {
+  if (!t) return '—';
+  return formatBytesRate(t.rates[dir]['1s']);
+}
+
+function trafficTitle(t: TrafficEntry | undefined, dir: 'up' | 'down'): string {
+  if (!t) return '无 session 归属（只计全局）';
+  const r = t.rates[dir];
+  const total = dir === 'up' ? t.total_up : t.total_down;
+  return `1s ${formatBytesRate(r['1s'])} · 5s ${formatBytesRate(r['5s'])} · 60s ${formatBytesRate(r['60s'])}\n累计 ${formatBytes(total)}`;
 }
 
 export function HomePage() {
@@ -234,13 +247,18 @@ export function HomePage() {
         <h2>活跃会话</h2>
         <span className="muted">{sessionsSummary}</span>
       </div>
-      <p className="muted small">近 1 小时有交互的 session · 速率为窗口内输出 tokens/min（60s 实时，空闲时回退 5 分钟均值 ~）</p>
+      <p className="muted small">
+        近 1 小时有交互的 session · 速率为窗口内输出 tokens/min（60s 实时，空闲时回退 5 分钟均值 ~）
+        {sessions?.traffic && (
+          <> · 全局流量 ↑ {formatBytes(sessions.traffic.global.total_up)}（{formatBytesRate(sessions.traffic.global.rates.up['1s'])}） · ↓ {formatBytes(sessions.traffic.global.total_down)}（{formatBytesRate(sessions.traffic.global.rates.down['1s'])}）</>
+        )}
+      </p>
       {sessionList.length || unidentifiedRow ? (
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Session</th><th>状态</th><th>最后活跃</th><th>请求</th><th>错误</th><th>输出 (1h)</th><th>输出速率</th><th>模型</th><th>Key</th>
+                <th>Session</th><th>状态</th><th>最后活跃</th><th>请求</th><th>错误</th><th>输出 (1h)</th><th>输出速率</th><th>上行</th><th>下行</th><th>模型</th><th>Key</th>
               </tr>
             </thead>
             <tbody>
@@ -253,6 +271,8 @@ export function HomePage() {
                   <td>{number.format(row.errors)}</td>
                   <td>{formatTokens(row.output_tokens['1h'], unit)}</td>
                   <td>{sessionRate(row, unit)}</td>
+                  <td title={trafficTitle(sessions?.traffic?.sessions[row.session_id], 'up')}>{trafficCell(sessions?.traffic?.sessions[row.session_id], 'up')}</td>
+                  <td title={trafficTitle(sessions?.traffic?.sessions[row.session_id], 'down')}>{trafficCell(sessions?.traffic?.sessions[row.session_id], 'down')}</td>
                   <td className="sess-models">{(row.models ?? []).join(', ') || '—'}</td>
                   <td className="sess-models">{row.key_name ?? '—'}</td>
                 </tr>
@@ -266,6 +286,8 @@ export function HomePage() {
                   <td>{number.format(unidentifiedRow.errors)}</td>
                   <td>{formatTokens(unidentifiedRow.output_tokens['1h'], unit)}</td>
                   <td>{sessionRate(unidentifiedRow, unit)}</td>
+                  <td className="muted" title="无 session 归属">—</td>
+                  <td className="muted" title="无 session 归属">—</td>
                   <td className="sess-models">—</td>
                   <td className="sess-models">—</td>
                 </tr>
