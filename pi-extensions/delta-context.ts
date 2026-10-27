@@ -11,12 +11,17 @@
  * 2. 后续增量：payload 替换为 delta 包（去 input/instructions，加 x_delta:
  *    {token, base_hash, append}）→ router 校验重组后响应 X-Delta-Cache: advance
  *    + 新 base_hash（缓存已前进，即使上游失败同轮重试仍走增量）；
- * 3. 任何 miss：429 + X-Delta-Cache: miss → 本扩展回 full 模式，pi 对 429 自动
- *    重试，重试时 before_provider_request 重新触发即发全量，当轮自愈。
+ * 3. 任何不一致退化为全量，绝不静默发错上下文。
  *
- * 正确性：前缀一致性由本扩展对「上次成功发送的 input」做 deep-equal 判断，
- * hash 只在 router 端计算（避免跨语言 JSON 规范化耦合）；任何不一致退化为全量，
- * 绝不静默发错上下文。
+ * ⚠️ 429 自愈（pendingDelta 悬空检测，2026-10-27 事故修复）：pi-ai 的 HTTP 重试
+ * 闭包不含 onPayload，且 4xx 抛异常时 onResponse 不会执行——「收到 miss 头回全量」
+ * 在真实链路上从未生效过（切槽 15 次 miss 0 次重注册的根因）。因此不能依赖 miss
+ * 头：改为发出 delta 包时置 pendingDelta=true，收到 advance/miss 才清除；下一笔
+ * 请求发现残留 → 判定上笔已死（429 耗尽/网络断/切槽缓存清零）→ resetState 回
+ * 全量。pi 的 auto-retry 每轮重新执行 onPayload，所以第 2 轮重试即自愈。
+ *
+ * 非 router 防御：2xx 响应但无 x-delta-cache 头（切到其他供应商，或 router 端
+ * 未注册）→ resetState 停回全量，避免 delta 包发往不认识的服务器丢上下文。
  *
  * 并发模型：subagent 是独立 pi 进程（模块级状态天然隔离）；同进程 /new /resume
  * /fork 为串行切换且必触发 session_start，此处重置状态即可。
@@ -37,6 +42,9 @@ type DeltaState = {
   lastInstructions: unknown;
   /** 上次成功发送（或已注册）的完整 input 数组；delta 前缀判断基准。 */
   lastInput: unknown[] | null;
+  /** 已发出但未被 advance/miss 确认的 delta 包：残留说明上笔已死（429 耗尽等），
+   *  下一笔请求必须回全量（router 缓存可能已不存在，如切槽/重启/淘汰）。 */
+  pendingDelta: boolean;
 };
 
 const state: DeltaState = {
@@ -45,6 +53,7 @@ const state: DeltaState = {
   baseHash: "",
   lastInstructions: null,
   lastInput: null,
+  pendingDelta: false,
 };
 
 function resetState() {
@@ -53,6 +62,7 @@ function resetState() {
   state.baseHash = "";
   state.lastInstructions = null;
   state.lastInput = null;
+  state.pendingDelta = false;
 }
 
 function headerValue(headers: Record<string, string | undefined>, name: string): string | undefined {
@@ -110,6 +120,10 @@ export default async function (pi: ExtensionAPI) {
   pi.on("before_provider_request", (event) => {
     const payload = event.payload as unknown;
     if (!isResponsesPayload(payload)) return undefined;
+    // 悬空检测：上一笔 delta 包从未被 advance/miss 确认（429 耗尽、网络断、
+    // 切槽缓存清零等）→ token 已不可信，resetState 回全量。pi 的 auto-retry
+    // 每轮重新触发本 hook，因此重试第 2 轮即自愈，无需用户干预。
+    if (state.pendingDelta) resetState();
     const appendTail = deltaEligible(payload);
     if (appendTail) {
       const append = (payload.input as unknown[]).slice(state.lastInput!.length);
@@ -122,8 +136,10 @@ export default async function (pi: ExtensionAPI) {
         base_hash: state.baseHash,
         append,
       };
-      // 缓存前进先于上游转发（router 重组成功即落盘），同轮重试前缀判断基准直接前进
+      // 缓存前进先于上游转发（router 重组成功即落盘），同轮重试前缀判断基准直接前进。
+      // pendingDelta 置位：若这笔请求得不到 advance/miss 确认，下一笔请求回全量。
       state.lastInput = payload.input as unknown[];
+      state.pendingDelta = true;
       return deltaPkg;
     }
     // 全量：router 在 handler 入口注册缓存（与上游成败无关），立即落地基准
@@ -135,7 +151,6 @@ export default async function (pi: ExtensionAPI) {
   pi.on("after_provider_response", (event) => {
     const h = event.headers as Record<string, string | undefined>;
     const cache = headerValue(h, "x-delta-cache");
-    if (!cache) return;
     if (cache === "ready") {
       const token = headerValue(h, "x-delta-token");
       const hash = headerValue(h, "x-delta-base-hash");
@@ -143,12 +158,21 @@ export default async function (pi: ExtensionAPI) {
         state.mode = "delta";
         state.token = token;
         state.baseHash = hash;
+        state.pendingDelta = false;
       }
     } else if (cache === "advance") {
       const hash = headerValue(h, "x-delta-base-hash");
       if (hash) state.baseHash = hash;
+      state.pendingDelta = false;
     } else if (cache === "miss") {
-      // 回全量；pi 对 429 自动重试，重试时 before_provider_request 重新触发即发全量
+      // router 明确拒绝：token/hash 失效，回全量重新协商（此分支主要覆盖
+      // HTTP 层重试内自愈成功的场景；429 耗尽时本 hook 不触发，由上面的
+      // pendingDelta 悬空检测兑底）。
+      resetState();
+    } else if (state.mode === "delta") {
+      // 2xx 但无任何 delta 头：对面不是 router（用户切换了供应商），或 router
+      // 端未启用/未注册。立即停用 delta，避免后续请求被改写成 delta 包导致
+      // 上下文丢失。
       resetState();
     }
   });
