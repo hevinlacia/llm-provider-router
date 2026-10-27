@@ -328,6 +328,98 @@ pub(crate) fn is_delta_request(payload: &Value) -> bool {
     payload.get("x_delta").is_some()
 }
 
+// ---- 切槽 handoff（2026-10-27 事故后新增）----
+//
+// delta 缓存是每槽进程内存态：不搬则切槽后所有 delta 会话首轮 429
+// （客户端扩展有 pendingDelta 自愈，但要付一轮全量重传；auto-retry 关闭时
+// 用户可见报错）。dump/load 只在部署脚本切槽瞬间直连槽端口调用一次，
+// 热路径零影响；/internal/* 被 front-proxy 封锁，公网不可达。
+
+/// 导出全部会话（GET /internal/delta-cache/dump）。
+/// Instant 不可跨进程序列化，导出 idle_ms（接收端统一视为刚活跃，TTL 从导入重算）。
+pub(crate) fn dump() -> Value {
+    let inner = lock();
+    let now = Instant::now();
+    let sessions: Vec<Value> = inner
+        .sessions
+        .iter()
+        .map(|(token, e)| {
+            json!({
+                "token": token,
+                "instructions": e.instructions,
+                "items": e.items,
+                "base_hash": e.base_hash,
+                "bytes": e.bytes,
+                "idle_ms": now.duration_since(e.last_access).as_millis() as u64,
+            })
+        })
+        .collect();
+    let count = sessions.len();
+    json!({
+        "count": count,
+        "total_bytes": inner.total_bytes,
+        "sessions": sessions,
+    })
+}
+
+/// 导入会话（POST /internal/delta-cache/load，body = dump() 输出）。
+/// 防护：逐条重算 base_hash 校验完整性（传输损坏跳过）；超单会话限额跳过；
+/// 同 token 覆盖；导入后 evict_lru 收敛到总额限。返回导入条数。
+pub(crate) fn load(payload: &Value, settings: &Settings) -> usize {
+    if settings_cleared(settings) {
+        return 0;
+    }
+    let Some(list) = payload.get("sessions").and_then(Value::as_array) else {
+        return 0;
+    };
+    let ttl = Duration::from_secs(settings.delta_cache_ttl_seconds);
+    let now = Instant::now();
+    let mut imported = 0usize;
+    {
+        let mut inner = lock();
+        remove_expired(&mut inner, ttl);
+        for entry in list {
+            let (Some(token), Some(instructions), Some(items), Some(base_hash)) = (
+                entry.get("token").and_then(Value::as_str),
+                entry.get("instructions"),
+                entry.get("items").and_then(Value::as_array),
+                entry.get("base_hash").and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            if token.is_empty() || base_hash.is_empty() {
+                continue;
+            }
+            let bytes = entry_bytes(instructions, items);
+            if bytes > settings.delta_cache_session_max_bytes {
+                continue; // 超单会话限额：跳过（该会话导入后也会被客户端全量重建）
+            }
+            // 传输完整性：base_hash 必须与内容重算值一致，损坏条目直接丢弃
+            if compute_base_hash(instructions, items) != base_hash {
+                continue;
+            }
+            let old_bytes = inner
+                .sessions
+                .insert(
+                    token.to_string(),
+                    SessionEntry {
+                        instructions: instructions.clone(),
+                        items: items.clone(),
+                        base_hash: base_hash.to_string(),
+                        bytes,
+                        last_access: now,
+                    },
+                )
+                .map(|e| e.bytes)
+                .unwrap_or(0);
+            inner.total_bytes = inner.total_bytes + bytes - old_bytes;
+            imported += 1;
+        }
+        evict_lru(&mut inner, settings); // 收敛到 max_sessions / max_total_bytes
+    }
+    imported
+}
+
 /// `429 + X-Delta-Cache: miss`：客户端回退全量（pi 对 429 自动重试，重试时已回全量模式）。
 pub(crate) fn miss_response() -> axum::response::Response {
     use axum::http::{header, HeaderValue, StatusCode};
@@ -730,5 +822,103 @@ mod tests {
         assert_eq!(p2["tools"].as_array().unwrap().len(), 2);
         assert_eq!(p2["instructions"], json!("sys"), "instructions restored");
         assert_eq!(p2["input"].as_array().unwrap().len(), 2);
+    }
+    // ---- 切槽 handoff：dump/load ----
+
+    /// dump → load roundtrip：接收端用原 token+hash 请求，advance 且前缀完整。
+    #[test]
+    fn handoff_dump_load_roundtrip() {
+        let _g = test_guard();
+        let s = settings();
+        let p1 = payload(
+            "sys",
+            &[
+                json!({"type": "message", "role": "user", "content": "q1"}),
+                json!({"type": "message", "role": "assistant", "content": "a1"}),
+            ],
+        );
+        let (token, hash) = register_full(&p1, &s).expect("register on source");
+
+        let dumped = dump();
+        assert_eq!(dumped["count"], 1);
+
+        clear(); // 模拟接收端空缓存（切到新槽）
+        let imported = load(&dumped, &s);
+        assert_eq!(imported, 1, "roundtrip import count");
+
+        // 用源端的 token + base_hash 直接走增量：必须 advance（这就是切槽无感的判定）
+        let mut p2 = json!({
+            "model": "deepseek-flash-latest-auto",
+            "stream": true,
+            "x_delta": {"v": 1, "token": token, "base_hash": hash, "append": [
+                {"role": "user", "content": "q2"}
+            ]}
+        });
+        let adv = apply_delta(&mut p2, &s).expect("delta after handoff must hit");
+        assert_ne!(adv.new_hash, hash);
+        assert_eq!(p2["input"].as_array().unwrap().len(), 3, "prefix restored + append");
+        assert_eq!(p2["instructions"], json!("sys"));
+    }
+
+    /// 损坏条目防护：base_hash 与内容不符的条目被跳过，不污染接收端缓存。
+    #[test]
+    fn handoff_load_rejects_corrupted_entries() {
+        let _g = test_guard();
+        let s = settings();
+        let dumped = json!({
+            "count": 2,
+            "sessions": [
+                {"token": "good-token", "instructions": "sys",
+                 "items": [{"role": "user", "content": "hi"}],
+                 "base_hash": sha_hex("sys", &[json!({"role": "user", "content": "hi"})]),
+                 "bytes": 100, "idle_ms": 0},
+                {"token": "bad-token", "instructions": "sys",
+                 "items": [{"role": "user", "content": "tampered"}],
+                 "base_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+                 "bytes": 100, "idle_ms": 0},
+            ]
+        });
+        clear();
+        let imported = load(&dumped, &s);
+        assert_eq!(imported, 1, "corrupted entry skipped");
+
+        // good-token 可用；bad-token 不存在（miss_token）
+        let mut p_good = json!({
+            "model": "m", "stream": true,
+            "x_delta": {"v": 1, "token": "good-token",
+                        "base_hash": sha_hex("sys", &[json!({"role": "user", "content": "hi"})]),
+                        "append": [{"role": "assistant", "content": "ok"}]}
+        });
+        assert!(apply_delta(&mut p_good, &s).is_ok(), "good entry usable");
+        let mut p_bad = json!({
+            "model": "m", "stream": true,
+            "x_delta": {"v": 1, "token": "bad-token", "base_hash": "whatever", "append": []}
+        });
+        assert!(matches!(apply_delta(&mut p_bad, &s), Err(DeltaMiss::Token)));
+    }
+
+    /// 超单会话限额的条目跳过；last_access 重置（导入即视为刚活跃，TTL 从导入重算）。
+    #[test]
+    fn handoff_load_enforces_limits_and_fresh_ttl() {
+        let _g = test_guard();
+        let mut s = settings();
+        s.delta_cache_session_max_bytes = 64; // 很小的限额
+        let big = json!({
+            "count": 1,
+            "sessions": [
+                {"token": "big", "instructions": "sys",
+                 "items": [{"role": "user", "content": "x".repeat(500)}],
+                 "base_hash": sha_hex("sys", &[json!({"role": "user", "content": "x".repeat(500)})]),
+                 "bytes": 500, "idle_ms": 0}
+            ]
+        });
+        clear();
+        assert_eq!(load(&big, &s), 0, "oversize entry skipped");
+        assert_eq!(lock().sessions.len(), 0);
+    }
+
+    /// sha_hex 测试辅助：与 compute_base_hash 同口径（公开给断言用）。
+    fn sha_hex(instructions: &str, items: &[Value]) -> String {
+        compute_base_hash(&json!(instructions), items)
     }
 }

@@ -363,3 +363,24 @@ pub(crate) async fn api_config_delta_cache_update(
         merge_ok(crate::features::responses::delta::snapshot()),
     )
 }
+
+/// 切槽 handoff 导出：仅部署脚本本机直连槽端口调用（front-proxy 封锁 /internal/*）。
+pub(crate) async fn api_internal_delta_dump() -> Response {
+    json_status(
+        StatusCode::OK,
+        merge_ok(crate::features::responses::delta::dump()),
+    )
+}
+
+/// 切槽 handoff 导入：body 为另一槽 dump() 输出；逐条校验 hash 完整性，
+/// 超限额跳过，导入后 evict_lru 收敛。返回导入条数。
+pub(crate) async fn api_internal_delta_load(
+    State(app): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Response {
+    let imported = crate::features::responses::delta::load(&payload, &app.settings);
+    json_status(
+        StatusCode::OK,
+        merge_ok(json!({ "imported": imported })),
+    )
+}

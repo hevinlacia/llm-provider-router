@@ -165,6 +165,15 @@ async fn proxy(
         .path_and_query()
         .map(|value| value.as_str())
         .unwrap_or(uri.path());
+    // 内部端点（切槽 handoff 的 dump/load 等）只允许部署脚本本机直连槽端口，
+    // 不得经代理从公网/代理链路够到（响应体会带会话上下文）。
+    if path_and_query.starts_with("/internal/") {
+        return (
+            StatusCode::FORBIDDEN,
+            "internal endpoints are only reachable on slot ports directly",
+        )
+            .into_response();
+    }
     let mut errors = Vec::new();
     for backend in ordered_backends() {
         // 每次请求路由到某槽都刷新其最后流量时间（含 active 槽自身），供 idle 下线决策

@@ -169,6 +169,16 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
             "/api/config/delta-cache",
             get(config::api_config_delta_cache).put(config::api_config_delta_cache_update),
         )
+        // 切槽 handoff 内部端点：仅部署脚本本机直连槽端口调用（front-proxy 封锁
+        // /internal/* 转发，公网/代理不可达）；与 /api 管理面同安全域（环回 + LAN）。
+        .route(
+            "/internal/delta-cache/dump",
+            get(config::api_internal_delta_dump),
+        )
+        .route(
+            "/internal/delta-cache/load",
+            post(config::api_internal_delta_load),
+        )
         .route("/v1/search", post(search::search_completions))
         .route("/v1/models", get(models::models))
         .route("/api/router/capabilities", get(models::router_capabilities))

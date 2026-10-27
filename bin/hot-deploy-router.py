@@ -386,6 +386,45 @@ def switch_via_proxy(slot: str, token: str | None) -> dict:
         ) from None
 
 
+def handoff_delta_cache(old_slot: str | None, new_slot: str, timeout: float = 8.0) -> None:
+    """切槽前把旧槽 delta 上下文缓存搬给新槽（best-effort，失败仅警告不阻塞切流）。
+
+    delta 缓存是每槽进程内存态：不搬则切槽后所有 delta 会话首轮 429（2026-10-27
+    事故）；客户端扩展有 pendingDelta 自愈，但那要付一轮全量重传 + 重试延迟。
+    dump/load 直连槽端口（/internal/* 被 front-proxy 封锁，公网/代理不可达）。
+    任何失败都不阻塞切流：客户端自愈兑底，缓存只是优化不是依赖。
+    """
+    if not old_slot or old_slot not in SLOTS or new_slot not in SLOTS:
+        return
+    try:
+        with urllib.request.urlopen(
+            f"{SLOTS[old_slot]['url']}/internal/delta-cache/dump", timeout=timeout
+        ) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        print(f"delta handoff: dump from {old_slot} failed (skip, clients self-heal): {exc}", file=sys.stderr)
+        return
+    count = payload.get("count", 0)
+    if not count:
+        print("delta handoff: source cache empty, nothing to move")
+        return
+    req = urllib.request.Request(
+        f"{SLOTS[new_slot]['url']}/internal/delta-cache/load",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        print(
+            f"delta handoff: {result.get('imported', '?')}/{count} sessions "
+            f"moved {old_slot} -> {new_slot}"
+        )
+    except Exception as exc:
+        print(f"delta handoff: load into {new_slot} failed (skip, clients self-heal): {exc}", file=sys.stderr)
+
+
 def deploy(args: argparse.Namespace) -> int:
     ensure_proxy_running()
     current = read_active_slot()
@@ -418,6 +457,9 @@ def deploy(args: argparse.Namespace) -> int:
                 status()
                 return 1
             print(f"precheck {target} ok")
+            # 切槽前搬运 delta 缓存（best-effort）：旧槽会话 token 在新槽依然有效，
+            # delta 会话切槽无感；失败仅警告，客户端 pendingDelta 自愈兑底。
+            handoff_delta_cache(old, target)
             # 必须携带自己的 token：proxy 对持锁状态的切流请求校验 token，不带会 409
             switch_via_proxy(target, lock_token)
             print(f"switched active backend to {target} ({SLOTS[target]['url']})")
@@ -494,6 +536,8 @@ def switch(args: argparse.Namespace) -> int:
     if args.slot == current:
         print(f"slot {args.slot} is already active; nothing to do")
         return 0
+    # 两段式同样搬运 delta 缓存（旧槽=current）：best-effort，同 deploy()。
+    handoff_delta_cache(current, args.slot)
     result = switch_via_proxy(args.slot, args.lock_token)
     print(f"switched active backend to {args.slot} ({result.get('backend', '')})")
     ok, failures = verify_after_switch(args.probe_model)
