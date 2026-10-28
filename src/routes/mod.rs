@@ -3,6 +3,7 @@
 //! 子模块：
 //! - `usage.rs`：health / dashboard / 用量快照
 //! - `models.rs`：模型列表 + 动态上下文协商
+//! - `endpoints.rs`：客户端访问端点候选表（三通道地址，配合 router_url.py 解析器）
 //! - `config.rs`：v1/通用配置 handler（权重、别名、价格、keys、搜索供应商）
 //! - `config_v2.rs`：v2 分层配置管理 handler（供应商/逻辑模型/虚拟模型/物理模型）
 //! - `messages.rs`：Anthropic Messages 入口（/v1/messages）
@@ -18,6 +19,7 @@
 
 pub(crate) mod config;
 pub(crate) mod config_v2;
+pub(crate) mod endpoints;
 pub(crate) mod errors;
 pub(crate) mod messages;
 pub(crate) mod models;
@@ -182,6 +184,10 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         .route("/v1/search", post(search::search_completions))
         .route("/v1/models", get(models::models))
         .route("/api/router/capabilities", get(models::router_capabilities))
+        .route(
+            "/api/router/endpoints",
+            get(endpoints::api_router_endpoints).put(endpoints::api_router_endpoints_update),
+        )
         .route("/v1/messages", post(messages::messages))
         .route("/v1/responses", post(responses::responses))
         .route(
