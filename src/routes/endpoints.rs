@@ -63,8 +63,8 @@ pub(crate) fn default_endpoints_table() -> RouterEndpointsTable {
         endpoints: vec![
             RouterEndpointEntry {
                 name: "lan".into(),
-                url: "http://edge.lan:8789".into(),
-                note: "内网域名（immortalwrt .lan → edge 容器，真 LAN 不走 subnet）".into(),
+                url: "http://edge.lan/llm-router".into(),
+                note: "内网域名 80 端口路径式（immortalwrt .lan → edge 容器，真 LAN 不走 subnet）".into(),
             },
             RouterEndpointEntry {
                 name: "tailscale".into(),
@@ -254,8 +254,8 @@ mod tests {
         // 优先级：内网域名 > tailscale 域名 > 公网 > subnet 中转（最低）
         assert_eq!(names, vec!["lan", "tailscale", "public", "subnet"]);
         assert_eq!(
-            table.endpoints[0].url, "http://edge.lan:8789",
-            "LAN 走内网 .lan 域名（真 LAN，不走 subnet）"
+            table.endpoints[0].url, "http://edge.lan/llm-router",
+            "LAN 走内网 .lan 域名 80 端口路径式（真 LAN，不走 subnet）"
         );
         assert_eq!(
             table.endpoints[1].url,
