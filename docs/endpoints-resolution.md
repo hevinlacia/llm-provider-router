@@ -26,10 +26,10 @@ router（SSOT 候选表）        GET/PUT /api/router/endpoints → <state_dir>/
 
 | 顺序 | name | url | 说明 |
 |---|---|---|---|
-| 1 | `lan` | `http://edge.lan:8789` | 内网域名（immortalwrt `.lan` → edge 容器）。真 LAN 直连，**不走 subnet** |
+| 1 | `lan` | `http://edge.lan/llm-router` | 内网域名 80 端口路径式（immortalwrt `.lan` → edge 容器）。真 LAN 直连，**不走 subnet** |
 | 2 | `tailscale` | `https://edge.tail260d93.ts.net/llm-router` | Tailscale 域名（HTTPS，Caddy `strip_prefix` 子路径） |
 | 3 | `public` | 空（停用占位） | 公网兜底；需先修 `.245` 上 `caddy-cert-renew`（`llmrouter.hevinlacia.top` 证书） |
-| 4 | `subnet` | `http://192.168.6.249:8789` | **最低优先级**：经 Tailscale subnet 中转访问 edge 内网 IP |
+| 4 | `subnet` | `http://192.168.6.249/llm-router` | **最低优先级**：经 Tailscale subnet 中转访问 edge 内网 IP（80 路径式） |
 
 `url` 空 = 该候选停用。候选 url 即 **base**（可含子路径），客户端自行拼 `/v1`、`/api/router/*`、`/health`。
 
@@ -37,6 +37,8 @@ router（SSOT 候选表）        GET/PUT /api/router/endpoints → <state_dir>/
 
 1. **不写服务容器地址**（`192.168.6.245:8789`）：客户端一律走 edge 容器入口。直连服务容器会绕过
    入口层（子路径前缀、压缩、守卫、SSE flush 策略都在 edge）。`subnet` 候选同样指向 edge 的内网 IP。
+2. **LAN/subnet 都走 80 端口路径式**（`/llm-router` 前缀，与 tailscale 入口同风格）：edge caddy 新增
+   内网站点 `bind 192.168.6.249`（`http://edge.lan`、`http://192.168.6.249`），不再暴露自定义端口 8789。
 2. **LAN 用域名不用 IP**：内网由 immortalwrt 提供 `.lan` 域名。从 tailnet 机器访问 `192.168.6.x`
    实际经 immortalwrt 广播的 `192.168.6.0/24` subnet 路由中转，**不是真 LAN**，必须与内网域名分开
    成两条候选，且 subnet 排最后。
