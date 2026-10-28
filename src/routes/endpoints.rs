@@ -78,8 +78,8 @@ pub(crate) fn default_endpoints_table() -> RouterEndpointsTable {
             },
             RouterEndpointEntry {
                 name: "subnet".into(),
-                url: "http://192.168.6.249:8789".into(),
-                note: "subnet 中转兜底（经 Tailscale 访问 edge 内网 IP，最低优先级）".into(),
+                url: "http://192.168.6.249/llm-router".into(),
+                note: "subnet 中转兜底（经 Tailscale 访问 edge 内网 IP 80 路径式，最低优先级）".into(),
             },
         ],
         updated_at: None,
@@ -263,8 +263,8 @@ mod tests {
         );
         assert!(table.endpoints[2].url.is_empty(), "public 默认停用占位");
         assert_eq!(
-            table.endpoints[3].url, "http://192.168.6.249:8789",
-            "subnet 兜底指向 edge 内网 IP 且排最后"
+            table.endpoints[3].url, "http://192.168.6.249/llm-router",
+            "subnet 兜底指向 edge 内网 IP（80 路径式）且排最后"
         );
         // 硬约束：候选表不得直连服务容器
         assert!(
