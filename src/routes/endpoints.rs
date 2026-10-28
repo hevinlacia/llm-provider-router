@@ -10,10 +10,17 @@
 //! - 数据文件：`<state_dir>/router-endpoints.json`（state 目录，与 state.sqlite3 同级，
 //!   平台配置不进 git；文件缺失时 GET 回落内置默认表，PUT 即恢复）。
 //! - `url` 为空 = 该候选停用（保留占位，如公网未启用）。
-//! - 内置默认表：lan / tailscale 两条实测可用 + public 空占位。
+//! - 内置默认表：内网域名 → tailscale 域名 → 公网 → subnet 中转（最低），见
+//!   `default_endpoints_table` 的逐条说明。
 //!
 //! 注意 tailscale 候选带**子路径前缀** `/llm-router`（Caddy `uri strip_prefix` 后转
 //! 内网后端），解析器拿到 base 后照常拼 `/v1`、`/api/router/*`、`/health`。
+//!
+//! 候选表两条硬约束（2026-10-28 修正）：
+//! 1. **不写服务容器地址**（`192.168.6.245:8789`）：客户端一律走 edge 容器入口，由 edge
+//!    统一转发——直连服务容器绕过入口层（子路径/压缩/守卫/flush 策略都在 edge）。
+//! 2. **LAN 用域名而非内网 IP**：内网由 immortalwrt 提供 `.lan` 域名；且从 tailnet 机器
+//!    访问 `192.168.6.x` 实际走 subnet 中转（≠ 真 LAN），必须单独作为最低优先级候选。
 
 use std::path::{Path, PathBuf};
 
@@ -43,24 +50,36 @@ pub(crate) struct RouterEndpointsTable {
     pub(crate) updated_at: Option<String>,
 }
 
-/// 内置默认表：三通道形态（内网 / Tailscale / 公网占位）。
+/// 内置默认表：四通道，数组顺序即优先级（2026-10-28 按网络实际形态定）：
+///
+/// 1. `lan`     内网域名（immortalwrt `.lan` → edge 容器）——真 LAN 路径，不走 subnet 中转
+/// 2. `tailscale` Tailscale 域名（HTTPS + Caddy 子路径）
+/// 3. `public`  公网兜底（当前停用占位：证书续期未修好）
+/// 4. `subnet`  Tailscale subnet 中转兜底（经 immortalwrt 广播 192.168.6.0/24 访问 edge
+///    内网 IP）——**最低优先级**：它看起来像 LAN，实际绕了 subnet 路由，只在真 LAN 域名
+///    解析不到且 tailscale 域名不可用时才该命中
 pub(crate) fn default_endpoints_table() -> RouterEndpointsTable {
     RouterEndpointsTable {
         endpoints: vec![
             RouterEndpointEntry {
                 name: "lan".into(),
-                url: "http://192.168.6.245:8789".into(),
-                note: "内网直连（同 LAN 时最快）".into(),
+                url: "http://edge.lan:8789".into(),
+                note: "内网域名（immortalwrt .lan → edge 容器，真 LAN 不走 subnet）".into(),
             },
             RouterEndpointEntry {
                 name: "tailscale".into(),
                 url: "https://edge.tail260d93.ts.net/llm-router".into(),
-                note: "Tailscale（Caddy 子路径入口，strip_prefix 转内网后端）".into(),
+                note: "Tailscale 域名（HTTPS，Caddy strip_prefix 子路径）".into(),
             },
             RouterEndpointEntry {
                 name: "public".into(),
                 url: String::new(),
                 note: "公网兜底（未启用：需 TLS + 鉴权，启用时填 URL）".into(),
+            },
+            RouterEndpointEntry {
+                name: "subnet".into(),
+                url: "http://192.168.6.249:8789".into(),
+                note: "subnet 中转兜底（经 Tailscale 访问 edge 内网 IP，最低优先级）".into(),
             },
         ],
         updated_at: None,
@@ -229,19 +248,32 @@ mod tests {
     }
 
     #[test]
-    fn default_table_has_three_channel_shape() {
+    fn default_table_has_four_channel_priority_order() {
         let table = default_endpoints_table();
         let names: Vec<&str> = table.endpoints.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, vec!["lan", "tailscale", "public"]);
-        // lan / tailscale 实测可用；public 为停用占位（url 空）
-        assert!(table.endpoints[0]
-            .url
-            .starts_with("http://192.168.6.245:8789"));
+        // 优先级：内网域名 > tailscale 域名 > 公网 > subnet 中转（最低）
+        assert_eq!(names, vec!["lan", "tailscale", "public", "subnet"]);
+        assert_eq!(
+            table.endpoints[0].url, "http://edge.lan:8789",
+            "LAN 走内网 .lan 域名（真 LAN，不走 subnet）"
+        );
         assert_eq!(
             table.endpoints[1].url,
             "https://edge.tail260d93.ts.net/llm-router"
         );
-        assert!(table.endpoints[2].url.is_empty(), "public 默认停用");
+        assert!(table.endpoints[2].url.is_empty(), "public 默认停用占位");
+        assert_eq!(
+            table.endpoints[3].url, "http://192.168.6.249:8789",
+            "subnet 兜底指向 edge 内网 IP 且排最后"
+        );
+        // 硬约束：候选表不得直连服务容器
+        assert!(
+            table
+                .endpoints
+                .iter()
+                .all(|e| !e.url.contains("192.168.6.245")),
+            "候选表不得直连服务容器"
+        );
         assert!(validate_table(&table).is_ok());
     }
 
@@ -251,7 +283,7 @@ mod tests {
         let path = dir.join("router-endpoints.json");
         let (table, source) = load_table(&path);
         assert_eq!(source, "default");
-        assert_eq!(table.endpoints.len(), 3);
+        assert_eq!(table.endpoints.len(), 4);
 
         std::fs::write(&path, "{not-json").unwrap();
         let (_, source) = load_table(&path);
