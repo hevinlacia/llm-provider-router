@@ -1,0 +1,23 @@
+src/routes/endpoints.rs
+  7e8641d87d86eb88 1-203,208-260,262-329
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "40a575981a06c660927708625afb0d8634c8dc2d",
+  "prompts": {
+    "7e8641d87d86eb88": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a18109-26c4-76bf-9966-735935a91346",
+        "model": "medium-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 323,
+      "total_deletions": 0,
+      "accepted_lines": 324,
+      "overriden_lines": 4
+    }
+  }
+}
