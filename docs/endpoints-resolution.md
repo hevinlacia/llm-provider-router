@@ -22,15 +22,32 @@ router（SSOT 候选表）        GET/PUT /api/router/endpoints → <state_dir>/
 4. 探活 bootstrap → 拉权威候选表 → 按本机 `priority` / 表序探活
 5. 全不可达 → 过期缓存（degraded）→ 内置默认（`--strict` 时 exit 1）
 
-## 候选表（内置默认）
+## 候选表（内置默认，顺序即优先级）
 
-| name | url | 说明 |
-|---|---|---|
-| `lan` | `http://192.168.6.245:8789` | 内网直连，同 LAN 时最快 |
-| `tailscale` | `https://edge.tail260d93.ts.net/llm-router` | Caddy `strip_prefix /llm-router` → 内网后端（带子路径前缀） |
-| `public` | 空（停用占位） | 公网兜底；启用前需先修 `llmrouter.hevinlacia.top` 证书（caddy-cert-renew 失败中） |
+| 顺序 | name | url | 说明 |
+|---|---|---|---|
+| 1 | `lan` | `http://edge.lan:8789` | 内网域名（immortalwrt `.lan` → edge 容器）。真 LAN 直连，**不走 subnet** |
+| 2 | `tailscale` | `https://edge.tail260d93.ts.net/llm-router` | Tailscale 域名（HTTPS，Caddy `strip_prefix` 子路径） |
+| 3 | `public` | 空（停用占位） | 公网兜底；需先修 `.245` 上 `caddy-cert-renew`（`llmrouter.hevinlacia.top` 证书） |
+| 4 | `subnet` | `http://192.168.6.249:8789` | **最低优先级**：经 Tailscale subnet 中转访问 edge 内网 IP |
 
 `url` 空 = 该候选停用。候选 url 即 **base**（可含子路径），客户端自行拼 `/v1`、`/api/router/*`、`/health`。
+
+### 两条硬约束
+
+1. **不写服务容器地址**（`192.168.6.245:8789`）：客户端一律走 edge 容器入口。直连服务容器会绕过
+   入口层（子路径前缀、压缩、守卫、SSE flush 策略都在 edge）。`subnet` 候选同样指向 edge 的内网 IP。
+2. **LAN 用域名不用 IP**：内网由 immortalwrt 提供 `.lan` 域名。从 tailnet 机器访问 `192.168.6.x`
+   实际经 immortalwrt 广播的 `192.168.6.0/24` subnet 路由中转，**不是真 LAN**，必须与内网域名分开
+   成两条候选，且 subnet 排最后。
+
+### 已知限制（2026-10-28 实测）
+
+`subnet` 通道目前对 edge **不可达**：edge 的 tailscale 防火墙规则
+`ts-input: -s 100.64.0.0/10 ! -i tailscale0 -j DROP` 会丢弃「从 eth0 进来但源是 tailnet 地址」的
+subnet 转发包（`nc 192.168.6.249:22`/`:8789` 均超时；而 `192.168.6.245:8789` 可达）。因此该候选
+在当前边缘配置下探活失败即跳过，属预期降级。要让这条通道真正可用，需在 edge 放行
+`iifname eth0 saddr 100.64.0.0/10 tcp dport 8789 accept`（安全相关，需用户决策）。
 
 ## 运维
 
