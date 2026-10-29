@@ -71,5 +71,8 @@ mkdir -p ~/.config/llm-router && printf 'priority = ["tailscale","lan"]\n' > ~/.
 
 router 真身：LXC `llm-router`（`192.168.6.245`），`/opt/llm-provider-router`，user 级 systemd
 （`llm-provider-router.service` + `llm-provider-router-backend@{blue,green}.service`）。
-更新流程：本机 `cargo build --release` → scp 二进制到 `/opt/llm-provider-router/llm-provider-router.new`
+更新流程：本机 `cargo build --release` → **配置漂移检查 `python3 bin/config-drift-check.py --host root@192.168.6.245`
+（2026-10-29 zp 限额事故：error-rules.json 未随二进制上机导致限额不切 key；退出码 1 = 有漂移，
+`--diff` 确认方向后 `--sync` 推送，dashboard 改过的配置以远端为准；装了 just 的机器可用 `just config-drift`）**
+→ scp 二进制到 `/opt/llm-provider-router/llm-provider-router.new`
 → 远端 `mv` + `python3 bin/hot-deploy-router.py deploy`（blue/green，含 precheck 与自动回滚）。
