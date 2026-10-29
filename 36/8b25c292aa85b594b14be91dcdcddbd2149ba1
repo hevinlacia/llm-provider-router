@@ -1,0 +1,29 @@
+docs/endpoints-resolution.md
+  dbc256dbc30b8e22 74-77
+AGENTS.md
+  dbc256dbc30b8e22 24
+justfile
+  dbc256dbc30b8e22 36-42
+bin/config-drift-check.py
+  dbc256dbc30b8e22 1-291
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "368b25c292aa85b594b14be91dcdcddbd2149ba1",
+  "prompts": {
+    "dbc256dbc30b8e22": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a186dd-90d8-7572-adf5-96e28ddb2f34",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 332,
+      "total_deletions": 30,
+      "accepted_lines": 303,
+      "overriden_lines": 0
+    }
+  }
+}
