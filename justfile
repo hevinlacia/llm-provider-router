@@ -33,5 +33,12 @@ vault-decrypt:
 
 age_key_file := "~/.config/sops/age/keys.txt"
 
+# —— 部署辅助 ——
+# config 漂移检查：比对本仓 config/*.json 与部署实例，防「二进制新、配置旧」
+# （2026-10-29 zp 限额事故：error-rules.json 未随二进制上机，限额不切 key）。
+# 部署前跑（退出码 1 = 有漂移）；加 sync=true 推送本地版本（远端先备份）。
+config-drift host="root@192.168.6.245" sync="":
+    python3 bin/config-drift-check.py --host {{host}} {{if sync != ""}}--sync{{endif}}
+
 frontend-dev:
     cd frontend && bun run dev
