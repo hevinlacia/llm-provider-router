@@ -316,7 +316,13 @@ pub(crate) async fn stream_responses_route(
                                     body_text.len(),
                                     session_id.as_deref(),
                                 );
-                                yield Ok(Bytes::from(sse_error_event(&alias.alias, tried.len(), &exc.to_string())));
+                                yield Ok(Bytes::from(sse_stream_break_event(
+                                    &alias.alias,
+                                    &alias.provider(),
+                                    &key.name,
+                                    body_text.len(),
+                                    &exc.to_string(),
+                                )));
                                 return;
                             }
                         }
@@ -396,7 +402,13 @@ pub(crate) async fn stream_responses_route(
                                     body_text.len(),
                                     session_id.as_deref(),
                                 );
-                                yield Ok(Bytes::from(sse_error_event(&alias.alias, tried.len(), &exc.to_string())));
+                                yield Ok(Bytes::from(sse_stream_break_event(
+                                    &alias.alias,
+                                    &alias.provider(),
+                                    &key.name,
+                                    body_text.len(),
+                                    &exc.to_string(),
+                                )));
                                 return;
                             }
                         }
@@ -1122,6 +1134,22 @@ fn sse_error_message(message: &str) -> String {
 
 fn sse_error_event(alias: &str, tried: usize, exc: &str) -> String {
     let message = format!("all {tried} upstream keys failed for {alias}: {exc}");
+    sse_error_message(&message)
+}
+
+/// 中流断开（HTTP 200 已提交、SSE body 传输中途连接断开）的客户端错误事件。
+/// 刻意不复用 "all N upstream keys failed"：那表示 key 耗尽可重试；
+/// 这里是流已部分送达后无法换 key 重试，文案需可区分（REQ-189）。
+fn sse_stream_break_event(
+    alias: &str,
+    provider: &str,
+    key: &str,
+    bytes: usize,
+    exc: &str,
+) -> String {
+    let message = format!(
+        "upstream stream broke mid-response after {bytes} bytes ({provider}/{key} for {alias}): {exc}"
+    );
     sse_error_message(&message)
 }
 

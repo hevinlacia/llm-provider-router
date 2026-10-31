@@ -140,9 +140,7 @@ pub(crate) async fn messages(
         messages_non_stream(app, route_aliases, session_id.clone(), payload, &model_name).await
     };
     if session_id.is_some() {
-        response
-            .extensions_mut()
-            .insert(TrafficSession(session_id));
+        response.extensions_mut().insert(TrafficSession(session_id));
     }
     response
 }
@@ -505,7 +503,17 @@ async fn stream_anthropic_passthrough(
                                 body_text.len(),
                                 session_id.as_deref(),
                             );
-                            yield Ok(Bytes::from(anthropic_sse_error(&exc.to_string())));
+                            // 中流断开文案与 key 耗尽（all N upstream keys failed）可区分：
+                            // 流已部分送达无法换 key 重试，需带 provider/key/字节数定位（REQ-189）。
+                            let message = format!(
+                                "upstream stream broke mid-response after {} bytes ({}/{} for {}): {}",
+                                body_text.len(),
+                                alias.provider(),
+                                key.name,
+                                alias.alias,
+                                exc
+                            );
+                            yield Ok(Bytes::from(anthropic_sse_error(&message)));
                             return;
                         }
                     }
