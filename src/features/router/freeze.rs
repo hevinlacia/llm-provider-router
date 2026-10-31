@@ -24,7 +24,7 @@ pub fn parse_retry_after(value: Option<&str>) -> Option<f64> {
     })
 }
 
-/// 解析月度/5小时配额重置时刻；未解析到时用调用方给的兜底时长。
+/// 解析月度/周度/5小时配额重置时刻；未解析到时用调用方给的兜底时长。
 pub fn parse_quota_reset(
     text: &str,
     monthly_fallback_seconds: f64,
@@ -39,27 +39,30 @@ pub fn parse_quota_reset(
         || lowered.contains("5小时使用上限");
     let monthly = lowered.contains("you have exceeded the monthly usage quota")
         || (lowered.contains("使用上限") && !five_hour);
-    if !monthly && !five_hour {
+    // ark/GLM 周配额（2026-10-31 实测第三代文案）："You have exceeded the
+    // weekly usage quota. It will reset at 2026-11-02 00:00:00 +0800 CST."
+    // 周窗口量级接近月度：时间戳解析失败时按 monthly 兜底时长冻结。
+    let weekly = lowered.contains("you have exceeded the weekly usage quota");
+    if !monthly && !five_hour && !weekly {
         return None;
     }
-    if let Some(reset_at) = parse_reset_timestamp(text) {
-        return Some((
-            reset_at,
-            if monthly {
-                "monthly_quota"
-            } else {
-                "five_hour_quota"
-            },
-        ));
-    }
-    if monthly {
-        Some((now_seconds() + monthly_fallback_seconds, "monthly_quota"))
+    let reason = if weekly {
+        "weekly_quota"
+    } else if monthly {
+        "monthly_quota"
     } else {
-        Some((
-            now_seconds() + five_hour_fallback_seconds,
-            "five_hour_quota",
-        ))
+        "five_hour_quota"
+    };
+    if let Some(reset_at) = parse_reset_timestamp(text) {
+        return Some((reset_at, reason));
     }
+    // 三类模板互斥；weekly/monthly 走长窗口兜底，5 小时走短窗口兜底。
+    let fallback = if five_hour {
+        five_hour_fallback_seconds
+    } else {
+        monthly_fallback_seconds
+    };
+    Some((now_seconds() + fallback, reason))
 }
 
 fn parse_reset_timestamp(text: &str) -> Option<f64> {
@@ -167,5 +170,26 @@ mod tests {
         // 时间戳存在但无配额文案时不算恢复时刻
         let text = "request failed at 2026-10-14 19:14:36 后可继续使用";
         assert!(parse_quota_reset(text, MONTHLY_FALLBACK, FIVE_HOUR_FALLBACK).is_none());
+    }
+
+    #[test]
+    fn ark_weekly_message_parses_reset_at() {
+        // 2026-10-31 实测第三代文案：ark/GLM 周配额，带 "It will reset at"。
+        let text = "You have exceeded the weekly usage quota. It will reset at 2026-11-02 00:00:00 +0800 CST. We recommend upgrading your plan for more quota, or waiting for the reset. Request id: 0217934552434589c467886153d5c7930328e02fcfdb87b564db9";
+        let (until, reason) =
+            parse_quota_reset(text, MONTHLY_FALLBACK, FIVE_HOUR_FALLBACK).unwrap();
+        assert_eq!(reason, "weekly_quota");
+        let expected = chrono::DateTime::parse_from_rfc3339("2026-11-02T00:00:00+08:00").unwrap();
+        assert_eq!(until, expected.timestamp() as f64);
+    }
+
+    #[test]
+    fn ark_weekly_without_timestamp_uses_monthly_fallback() {
+        let text = "You have exceeded the weekly usage quota.";
+        let before = now_seconds();
+        let (until, reason) =
+            parse_quota_reset(text, MONTHLY_FALLBACK, FIVE_HOUR_FALLBACK).unwrap();
+        assert_eq!(reason, "weekly_quota");
+        assert!((until - (before + MONTHLY_FALLBACK)).abs() < 5.0);
     }
 }
