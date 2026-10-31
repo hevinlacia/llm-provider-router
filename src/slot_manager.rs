@@ -219,7 +219,11 @@ impl SlotManager {
     }
 
     /// 单轮检查（可测）。遍历所有槽：探测健康 → 决策 → 执行动作。
+    /// 部署锁持有期间（hot-deploy restart→precheck→切流窗口）跳过 idle 下线（REQ-190）：
+    /// precheck 直连槽端口绕过 `touch()`，目标槽流量时钟不刷新，常规决策必然 Stop。
     pub async fn check_once(&self, active: &str) {
+        let deploy_locked =
+            !matches!(crate::deploy_lock::probe_lock(), crate::deploy_lock::LockState::Free);
         for spec in self.specs.iter() {
             let healthy = self.probe(spec).await;
             let action = {
@@ -247,6 +251,7 @@ impl SlotManager {
                     self.inflight.get(&spec.slot),
                     last_action,
                     ACTION_COOLDOWN_SECS,
+                    deploy_locked,
                 );
                 if action != Action::None {
                     inner.last_action.insert(spec.slot.clone(), (action, now));
@@ -323,6 +328,9 @@ fn now_secs() -> u64 {
 /// - **非活跃槽**：health 正常、在途请求为 0、`idle_shutdown_secs>0` 且连续无流量超过阈值
 ///   → `Stop`（带冷却）；在途请求 >0 说明还有存量流没跑完，下线会切断连接，本轮跳过；
 ///   health 异常（已下线/启动中）→ 无动作（不重复 stop、不主动拉起非活跃槽）。
+/// - **部署锁持有期间**（`deploy_locked`）非活跃槽一律不下线：hot-deploy 的
+///   precheck 直连槽端口、不经 proxy `touch`，目标槽流量时钟不刷新，
+///   此时 Stop 会误杀刚拉起、正处 precheck 窗口的目标槽（REQ-190）。
 #[allow(clippy::too_many_arguments)]
 pub fn decide(
     slot: &str,
@@ -335,6 +343,7 @@ pub fn decide(
     inflight: u64,
     last_action: (Action, u64),
     cooldown_secs: u64,
+    deploy_locked: bool,
 ) -> Action {
     let cooled = now.saturating_sub(last_action.1) >= cooldown_secs;
     if slot == active {
@@ -360,6 +369,10 @@ pub fn decide(
     }
     let idle_secs = now.saturating_sub(last_traffic);
     if idle_secs >= idle_shutdown_secs && cooled {
+        if deploy_locked {
+            // 部署窗口（restart→precheck→切流）内暂停 idle 下线，等锁释放后再正常决策。
+            return Action::None;
+        }
         Action::Stop
     } else {
         Action::None
@@ -383,7 +396,8 @@ mod tests {
                 true,
                 0,
                 (Action::None, 0),
-                15
+                15,
+                false
             ),
             Action::None
         );
@@ -402,7 +416,8 @@ mod tests {
                 true,
                 0,
                 (Action::None, 0),
-                15
+                15,
+                false
             ),
             Action::Start
         );
@@ -421,7 +436,8 @@ mod tests {
                 false,
                 0,
                 (Action::None, 0),
-                15
+                15,
+                false
             ),
             Action::None
         );
@@ -441,7 +457,8 @@ mod tests {
                 true,
                 0,
                 (Action::None, 0),
-                15
+                15,
+                false
             ),
             Action::Stop
         );
@@ -460,7 +477,8 @@ mod tests {
                 true,
                 0,
                 (Action::None, 0),
-                15
+                15,
+                false
             ),
             Action::None
         );
@@ -480,7 +498,8 @@ mod tests {
                 true,
                 0,
                 (Action::Stop, 1495),
-                15
+                15,
+                false
             ),
             Action::None
         );
@@ -499,7 +518,8 @@ mod tests {
                 true,
                 0,
                 (Action::None, 0),
-                15
+                15,
+                false
             ),
             Action::None
         );
@@ -518,7 +538,8 @@ mod tests {
                 true,
                 0,
                 (Action::None, 0),
-                15
+                15,
+                false
             ),
             Action::None
         );
@@ -538,8 +559,26 @@ mod tests {
                 true,
                 0,
                 (Action::None, 0),
-                15
+                15,
+                false
             ),
+            Action::Stop
+        );
+    }
+
+    #[test]
+    fn deploy_lock_held_blocks_idle_stop() {
+        // REQ-190：部署锁持有期间，同参数下原本会 Stop 的槽必须保持不动，
+        // 防止 precheck 窗口误杀刚拉起的目标槽。
+        let args = (
+            "green", "blue", true, 500u64, 1500u64, 900u64, true, 0u64, (Action::None, 0), 15u64,
+        );
+        assert_eq!(
+            decide(args.0, args.1, args.2, args.3, args.4, args.5, args.6, args.7, args.8, args.9, true),
+            Action::None
+        );
+        assert_eq!(
+            decide(args.0, args.1, args.2, args.3, args.4, args.5, args.6, args.7, args.8, args.9, false),
             Action::Stop
         );
     }
@@ -558,7 +597,8 @@ mod tests {
                 true,
                 0,
                 (Action::None, 0),
-                15
+                15,
+                false
             ),
             Action::Start
         );
@@ -578,7 +618,8 @@ mod tests {
                 true,
                 2,
                 (Action::None, 0),
-                15
+                15,
+                false
             ),
             Action::None
         );
