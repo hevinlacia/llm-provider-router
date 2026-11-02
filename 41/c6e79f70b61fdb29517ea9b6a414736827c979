@@ -1,0 +1,35 @@
+src/features/chat/payload.rs
+  38ed82ebf16a0866 44
+src/config.rs
+  38ed82ebf16a0866 203-206,273
+src/features/router/tests.rs
+  38ed82ebf16a0866 879,896-897,907-941
+src/features/router/failure.rs
+  38ed82ebf16a0866 468-474,480,484-487
+src/routes/messages.rs
+  38ed82ebf16a0866 503,508-510,512,517-518
+src/features/responses/stream/mod.rs
+  38ed82ebf16a0866 316,326,404,414,1153,1155,1157
+src/app.rs
+  38ed82ebf16a0866 29-34,38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "41c6e79f70b61fdb29517ea9b6a414736827c979",
+  "prompts": {
+    "38ed82ebf16a0866": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a19a5f-63e5-709b-b208-4e52c53c9d51",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 77,
+      "total_deletions": 19,
+      "accepted_lines": 77,
+      "overriden_lines": 0
+    }
+  }
+}
