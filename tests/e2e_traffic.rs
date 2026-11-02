@@ -99,7 +99,7 @@ async fn setup_env() -> TestEnv {
             "LLM_PROVIDER_ROUTER_STATE_DB_PATH",
             state_dir.join("state.db"),
         )
-        .env("LLM_PROVIDER_ROUTER_REQUEST_TIMEOUT_SECONDS", "30")
+        .env("LLM_PROVIDER_ROUTER_READ_TIMEOUT_SECONDS", "30")
         .env("E2E_TRAFFIC_MOCK_KEY", "dummy-key")
         .stdout(Stdio::from(
             std::fs::File::create(log_dir.join("backend-out.log")).unwrap(),
@@ -175,10 +175,7 @@ async fn traffic_up_down_and_session_attribution() {
     let _ = resp.bytes().await.unwrap();
     let traffic_after = sessions_traffic(&env).await;
     let after_down = traffic_after["global"]["total_down"].as_u64().unwrap();
-    assert_eq!(
-        before_down, after_down,
-        "/api/* 响应不应计入客户端流量统计"
-    );
+    assert_eq!(before_down, after_down, "/api/* 响应不应计入客户端流量统计");
 
     // 4) 断言：上行（session + 全局）、下行（session 归属 + 全局）
     let sess = &traffic_after["sessions"]["traffic-sess-1"];
@@ -200,10 +197,7 @@ async fn traffic_up_down_and_session_attribution() {
     // 速率字段齐全（1s/5s/60s 三档）
     for dir in ["up", "down"] {
         for w in ["1s", "5s", "60s"] {
-            assert!(
-                g["rates"][dir][w].is_f64(),
-                "global rates.{dir}.{w} 缺失"
-            );
+            assert!(g["rates"][dir][w].is_f64(), "global rates.{dir}.{w} 缺失");
             assert!(
                 sess["rates"][dir][w].is_f64(),
                 "session rates.{dir}.{w} 缺失"

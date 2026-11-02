@@ -120,9 +120,7 @@ pub(crate) async fn responses(
         }
     }
     if session_id.is_some() {
-        response
-            .extensions_mut()
-            .insert(TrafficSession(session_id));
+        response.extensions_mut().insert(TrafficSession(session_id));
     }
     response
 }

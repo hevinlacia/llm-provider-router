@@ -170,7 +170,7 @@ async fn setup_env() -> TestEnv {
             "LLM_PROVIDER_ROUTER_USAGE_DB_PATH",
             tmp.path().join("usage.sqlite3"),
         )
-        .env("LLM_PROVIDER_ROUTER_REQUEST_TIMEOUT_SECONDS", "30")
+        .env("LLM_PROVIDER_ROUTER_READ_TIMEOUT_SECONDS", "30")
         .env("E2E_MOCK_KEY", "dummy-key")
         .stdout(Stdio::from(log("backend-out")))
         .stderr(Stdio::from(log("backend-err")))

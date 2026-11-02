@@ -379,8 +379,5 @@ pub(crate) async fn api_internal_delta_load(
     Json(payload): Json<Value>,
 ) -> Response {
     let imported = crate::features::responses::delta::load(&payload, &app.settings);
-    json_status(
-        StatusCode::OK,
-        merge_ok(json!({ "imported": imported })),
-    )
+    json_status(StatusCode::OK, merge_ok(json!({ "imported": imported })))
 }

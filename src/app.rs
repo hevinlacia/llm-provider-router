@@ -26,11 +26,16 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(settings: Settings) -> anyhow::Result<Self> {
-        let timeout = std::time::Duration::from_secs_f64(settings.request_timeout_seconds);
+        // 读空闲超时而非总超时：2026-11-02 事故根因——.timeout(600s) 含 body 流式
+        // 读取的总死线，长思考流恰在 600s 整被殄断（diag 三次 598 与 600s 精确对齐；
+        // reqwest bytes_stream 把 body 错误统一包成 "error decoding response body"）。
+        // read_timeout 每读到一段数据即重置，只要流仍在流动就不限总时长；连接停滞
+        // 超上限才报错（此时错误带 TimedOut 源，is_timeout() 可识别分类）。
+        let read_timeout = std::time::Duration::from_secs_f64(settings.read_timeout_seconds);
         // opencode-go (zen/go) 上游用 Cloudflare 拦截非浏览器 UA（error 1010），
         // 全局使用浏览器 UA 以兼容该上游；OpenAI 兼容 API 不校验 UA，无副作用。
         let mut builder = reqwest::Client::builder()
-            .timeout(timeout)
+            .read_timeout(read_timeout)
             .pool_idle_timeout(Duration::from_secs(30))
             .tcp_keepalive(Duration::from_secs(30))
             .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36");

@@ -41,7 +41,7 @@ pub(crate) fn prepare_upstream_payload(payload: &Value, alias: &ModelAlias) -> V
             inject_prompt_cache_key: true,
             monthly_quota_fallback_seconds: 0.0,
             five_hour_quota_fallback_seconds: 0.0,
-            request_timeout_seconds: 0.0,
+            read_timeout_seconds: 0.0,
             local_bearer_token: None,
             usage_db_path: "".into(),
             state_db_path: "".into(),

@@ -856,7 +856,11 @@ mod tests {
         });
         let adv = apply_delta(&mut p2, &s).expect("delta after handoff must hit");
         assert_ne!(adv.new_hash, hash);
-        assert_eq!(p2["input"].as_array().unwrap().len(), 3, "prefix restored + append");
+        assert_eq!(
+            p2["input"].as_array().unwrap().len(),
+            3,
+            "prefix restored + append"
+        );
         assert_eq!(p2["instructions"], json!("sys"));
     }
 

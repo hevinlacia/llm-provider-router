@@ -140,7 +140,10 @@ impl Traffic {
 
         let mut sessions = serde_json::Map::new();
         for (sid, entry) in &inner.sessions {
-            sessions.insert(sid.clone(), entry_view(&entry.buckets, entry.total_up, entry.total_down, now));
+            sessions.insert(
+                sid.clone(),
+                entry_view(&entry.buckets, entry.total_up, entry.total_down, now),
+            );
         }
 
         serde_json::json!({
@@ -181,12 +184,14 @@ fn touch_session<'a>(
             sessions.remove(&oldest);
         }
     }
-    sessions.entry(sid.to_string()).or_insert_with(|| SessionEntry {
-        buckets: Buckets::new(),
-        total_up: 0,
-        total_down: 0,
-        last_activity: now,
-    })
+    sessions
+        .entry(sid.to_string())
+        .or_insert_with(|| SessionEntry {
+            buckets: Buckets::new(),
+            total_up: 0,
+            total_down: 0,
+            last_activity: now,
+        })
 }
 
 fn now_sec() -> u64 {

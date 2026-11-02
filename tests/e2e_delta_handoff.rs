@@ -64,7 +64,13 @@ async fn wait_healthy(url: &str, label: &str, log_dir: &Path) {
         }
         if Instant::now() >= deadline {
             let mut dump = String::new();
-            for name in ["a-err.log", "a-out.log", "b-err.log", "b-out.log", "proxy-err.log"] {
+            for name in [
+                "a-err.log",
+                "a-out.log",
+                "b-err.log",
+                "b-out.log",
+                "proxy-err.log",
+            ] {
                 if let Ok(content) = std::fs::read_to_string(log_dir.join(name)) {
                     dump.push_str(&format!("--- {name} ---\n{content}\n"));
                 }
@@ -84,8 +90,11 @@ fn spawn_backend(name: &str, port: u16, tmp: &Path) -> ChildGuard {
         .env("LLM_PROVIDER_ROUTER_HOST", "127.0.0.1")
         .env("LLM_PROVIDER_ROUTER_PORT", port.to_string())
         .env("LLM_PROVIDER_ROUTER_USAGE_DB_PATH", ":memory:")
-        .env("LLM_PROVIDER_ROUTER_STATE_DB_PATH", state_dir.join("state.db"))
-        .env("LLM_PROVIDER_ROUTER_REQUEST_TIMEOUT_SECONDS", "30")
+        .env(
+            "LLM_PROVIDER_ROUTER_STATE_DB_PATH",
+            state_dir.join("state.db"),
+        )
+        .env("LLM_PROVIDER_ROUTER_READ_TIMEOUT_SECONDS", "30")
         .env("E2E_HANDOFF_MOCK_KEY", "dummy-key")
         .stdout(Stdio::from(
             std::fs::File::create(tmp.join(format!("{name}-out.log"))).unwrap(),
@@ -129,9 +138,19 @@ async fn delta_cache_handoff_between_slots() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.headers()["x-delta-cache"], "ready", "A: full registered");
-    let token = resp.headers()["x-delta-token"].to_str().unwrap().to_string();
-    let hash1 = resp.headers()["x-delta-base-hash"].to_str().unwrap().to_string();
+    assert_eq!(
+        resp.headers()["x-delta-cache"],
+        "ready",
+        "A: full registered"
+    );
+    let token = resp.headers()["x-delta-token"]
+        .to_str()
+        .unwrap()
+        .to_string();
+    let hash1 = resp.headers()["x-delta-base-hash"]
+        .to_str()
+        .unwrap()
+        .to_string();
     let _ = resp.bytes().await.unwrap();
 
     // 2) B 槽上同一 token 必然 miss（缓存是进程内存态）——事故基线
@@ -145,7 +164,11 @@ async fn delta_cache_handoff_between_slots() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.headers()["x-delta-cache"], "miss", "B: cache empty before handoff");
+    assert_eq!(
+        resp.headers()["x-delta-cache"],
+        "miss",
+        "B: cache empty before handoff"
+    );
     let _ = resp.bytes().await.unwrap();
 
     // 3) handoff：dump A → load B
@@ -185,7 +208,10 @@ async fn delta_cache_handoff_between_slots() {
         "advance",
         "handoff: delta survives the slot switch"
     );
-    let hash2 = resp.headers()["x-delta-base-hash"].to_str().unwrap().to_string();
+    let hash2 = resp.headers()["x-delta-base-hash"]
+        .to_str()
+        .unwrap()
+        .to_string();
     assert_ne!(hash1, hash2, "advance rotates base hash");
     let _ = resp.bytes().await.unwrap();
 
@@ -216,8 +242,12 @@ async fn delta_cache_handoff_between_slots() {
         .env("LLM_PROVIDER_ROUTER_GREEN_URL", &base_b)
         .env("LLM_PROVIDER_ROUTER_ACTIVE_BACKEND_FILE", &active_file)
         .env("LLM_PROVIDER_ROUTER_SLOT_AUTO_HEAL", "0")
-        .stdout(Stdio::from(std::fs::File::create(tmp.path().join("proxy-out.log")).unwrap()))
-        .stderr(Stdio::from(std::fs::File::create(tmp.path().join("proxy-err.log")).unwrap()))
+        .stdout(Stdio::from(
+            std::fs::File::create(tmp.path().join("proxy-out.log")).unwrap(),
+        ))
+        .stderr(Stdio::from(
+            std::fs::File::create(tmp.path().join("proxy-err.log")).unwrap(),
+        ))
         .spawn()
         .map(ChildGuard)
         .unwrap();

@@ -200,7 +200,10 @@ pub struct Settings {
     pub inject_prompt_cache_key: bool,
     pub monthly_quota_fallback_seconds: f64,
     pub five_hour_quota_fallback_seconds: f64,
-    pub request_timeout_seconds: f64,
+    /// 上游读空闲超时（秒）：每次成功读到数据即重置，只限制「连接停滞」不限制流总时长。
+    /// 原 request_timeout_seconds 是含 body 流式读取的总死线，长思考流恰在 600s 整被
+    /// 掐断（2026-11-02 事故，diag 三次 598 与 600s 精确对齐），已改为 read_timeout 语义。
+    pub read_timeout_seconds: f64,
     pub local_bearer_token: Option<String>,
     pub usage_db_path: String,
     pub state_db_path: String,
@@ -267,8 +270,7 @@ pub fn load_settings() -> anyhow::Result<Settings> {
             "5400",
         )
         .parse()?,
-        request_timeout_seconds: env_or("LLM_PROVIDER_ROUTER_REQUEST_TIMEOUT_SECONDS", "600")
-            .parse()?,
+        read_timeout_seconds: env_or("LLM_PROVIDER_ROUTER_READ_TIMEOUT_SECONDS", "600").parse()?,
         local_bearer_token: env::var("LLM_PROVIDER_ROUTER_BEARER_TOKEN")
             .ok()
             .filter(|value| !value.is_empty())
