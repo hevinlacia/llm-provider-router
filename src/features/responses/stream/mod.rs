@@ -313,6 +313,7 @@ pub(crate) async fn stream_responses_route(
                                     &alias,
                                     &key,
                                     &exc.to_string(),
+                                    exc.is_timeout(),
                                     body_text.len(),
                                     session_id.as_deref(),
                                 );
@@ -322,6 +323,7 @@ pub(crate) async fn stream_responses_route(
                                     &key.name,
                                     body_text.len(),
                                     &exc.to_string(),
+                                    exc.is_timeout(),
                                 )));
                                 return;
                             }
@@ -399,6 +401,7 @@ pub(crate) async fn stream_responses_route(
                                     &alias,
                                     &key,
                                     &exc.to_string(),
+                                    exc.is_timeout(),
                                     body_text.len(),
                                     session_id.as_deref(),
                                 );
@@ -408,6 +411,7 @@ pub(crate) async fn stream_responses_route(
                                     &key.name,
                                     body_text.len(),
                                     &exc.to_string(),
+                                    exc.is_timeout(),
                                 )));
                                 return;
                             }
@@ -1146,9 +1150,11 @@ fn sse_stream_break_event(
     key: &str,
     bytes: usize,
     exc: &str,
+    is_timeout: bool,
 ) -> String {
+    let timeout_hint = if is_timeout { " (read idle timeout)" } else { "" };
     let message = format!(
-        "upstream stream broke mid-response after {bytes} bytes ({provider}/{key} for {alias}): {exc}"
+        "upstream stream broke mid-response after {bytes} bytes ({provider}/{key} for {alias}): {exc}{timeout_hint}"
     );
     sse_error_message(&message)
 }

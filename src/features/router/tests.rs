@@ -28,7 +28,7 @@ fn test_settings() -> Settings {
         inject_prompt_cache_key: true,
         monthly_quota_fallback_seconds: 86400.0,
         five_hour_quota_fallback_seconds: 5400.0,
-        request_timeout_seconds: 30.0,
+        read_timeout_seconds: 30.0,
         local_bearer_token: None,
         usage_db_path: ":memory:".to_string(),
         state_db_path: ":memory:".to_string(),
@@ -876,6 +876,7 @@ fn note_stream_break_records_usage_ring_buffer_and_journal() {
         &alias,
         &key,
         "error decoding response body",
+        false,
         1234,
         Some("sess-break"),
     );
@@ -892,14 +893,49 @@ fn note_stream_break_records_usage_ring_buffer_and_journal() {
     assert_eq!(entry["class"], "transient");
     let message = entry["message"].as_str().unwrap_or_default();
     assert!(
-        message.contains("[stream-break]") && message.contains("1234 bytes"),
-        "错误消息应含断流前缀与已收字节数，实际 {message}"
+        message.contains("[stream-break:transport]") && message.contains("1234 bytes"),
+        "错误消息应含分类断流前缀与已收字节数，实际 {message}"
     );
 
     let snapshot = state.usage_snapshot("all", None, None).unwrap();
     assert!(
         snapshot["by_status"].get("598").is_some(),
         "usage 快照必须出现 598 状态计数，实际 {snapshot}"
+    );
+}
+
+#[test]
+fn note_stream_break_classifies_timeout_vs_transport() {
+    // 2026-11-02 事故：600s 总死线殄断长流被 reqwest 统一包装成
+    // "error decoding response body"，无法区分超时与真上游断流。
+    // note_stream_break 必须按 is_timeout 落分类标签。
+    let app = AppState::new(test_settings()).unwrap();
+    let key = sub_test_key("break-key", "STREAM_BREAK_TIMEOUT_TEST_KEY");
+    let alias = ModelAlias::new(
+        "ark/break-model",
+        "openai/break-model",
+        "https://ark.example.com/api/coding/v3",
+        vec![key.clone()],
+        None,
+    );
+
+    note_stream_break(
+        &app,
+        &alias,
+        &key,
+        "error decoding response body",
+        true,
+        3_436_970,
+        Some("sess-break-timeout"),
+    );
+
+    let state = app.state.lock().unwrap();
+    let errors = recent_errors_json(&state);
+    assert_eq!(errors.len(), 1);
+    let message = errors[0]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("[stream-break:timeout]"),
+        "超时类断流必须带 timeout 标签，实际 {message}"
     );
 }
 

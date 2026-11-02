@@ -216,7 +216,7 @@ async fn setup_env() -> TestEnv {
             "LLM_PROVIDER_ROUTER_STATE_DB_PATH",
             state_dir.join("state.db"),
         )
-        .env("LLM_PROVIDER_ROUTER_REQUEST_TIMEOUT_SECONDS", "30")
+        .env("LLM_PROVIDER_ROUTER_READ_TIMEOUT_SECONDS", "30")
         .env("E2E_DELTA_MOCK_KEY", "dummy-key")
         .stdout(Stdio::from(
             std::fs::File::create(log_dir.join("backend-out.log")).unwrap(),

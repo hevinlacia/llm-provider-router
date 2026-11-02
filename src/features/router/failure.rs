@@ -465,21 +465,26 @@ fn freeze_rate_limited(
 /// 请求内差分冻结：某 key 失败（transient，未冻结）后同行 key 成功 → 冻结失败 key。
 /// 无需依赖报错文案，供应商改文案后依然自动把坏 key 排除出可用池。
 /// 上游流中断观测记录：HTTP 200 已提交、SSE body 传输中途断开（reqwest
-/// `bytes_stream` 返回 Err，Display 统一为 "error decoding response body"，
-/// 实为连接重置/TLS 截断等传输层错误）。流已提交无法换 key 重试，但此前
-/// 完全不记 usage/错误日志——dashboard 与 /api/errors/recent 均无痕迹，
-/// 间歇性断流排障无证据。此处补齐：用量记账（598 状态计数）、ring buffer
-/// （errors 页，按 provider/key 定位坏上游）、journal+diag（upstream.failure
-/// 事件持久化）。
+/// `bytes_stream` 返回 Err，Display 统一为 "error decoding response body"）。
+/// 按错误源分类：is_timeout()=true 为读空闲超时/死线类（含历史 total 超时——
+/// 2026-11-02 事故根因，600s 总超时把长流殄断）；false 为连接重置/TLS 截断等
+/// 真传输层故障。流已提交无法换 key 重试，但此前完全不记 usage/错误日志——
+/// dashboard 与 /api/errors/recent 均无痕迹，间歇性断流排障无证据。此处补齐：
+/// 用量记账（598 状态计数）、ring buffer（errors 页，按 provider/key 定位坏上游）、
+/// journal+diag（upstream.failure 事件持久化）。
 pub(crate) fn note_stream_break(
     app: &AppState,
     alias: &ModelAlias,
     key: &KeyRef,
     exc_text: &str,
+    is_timeout: bool,
     bytes_received: usize,
     session_id: Option<&str>,
 ) {
-    let message = format!("[stream-break] {bytes_received} bytes received: {exc_text}");
+    // 分类标签可 greppable：timeout = 读空闲超时/死线类（多为 router 自身超时配置），
+    // transport = 连接重置/TLS 截断等真上游故障。
+    let kind = if is_timeout { "timeout" } else { "transport" };
+    let message = format!("[stream-break:{kind}] {bytes_received} bytes received: {exc_text}");
     let mut state = match app.state.lock() {
         Ok(state) => state,
         Err(_) => return,

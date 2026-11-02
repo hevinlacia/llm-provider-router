@@ -500,18 +500,22 @@ async fn stream_anthropic_passthrough(
                                 &alias,
                                 &key,
                                 &exc.to_string(),
+                                exc.is_timeout(),
                                 body_text.len(),
                                 session_id.as_deref(),
                             );
                             // 中流断开文案与 key 耗尽（all N upstream keys failed）可区分：
-                            // 流已部分送达无法换 key 重试，需带 provider/key/字节数定位（REQ-189）。
+                            // 流已部分送达无法换 key 重试，需带 provider/key/字节数定位（REQ-189）；
+                            // timeout 类额外标注（多为 router 自身读空闲超时/历史总死线触发）。
+                            let timeout_hint = if exc.is_timeout() { " (read idle timeout)" } else { "" };
                             let message = format!(
-                                "upstream stream broke mid-response after {} bytes ({}/{} for {}): {}",
+                                "upstream stream broke mid-response after {} bytes ({}/{} for {}): {}{}",
                                 body_text.len(),
                                 alias.provider(),
                                 key.name,
                                 alias.alias,
-                                exc
+                                exc,
+                                timeout_hint
                             );
                             yield Ok(Bytes::from(anthropic_sse_error(&message)));
                             return;
