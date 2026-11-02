@@ -222,8 +222,10 @@ impl SlotManager {
     /// 部署锁持有期间（hot-deploy restart→precheck→切流窗口）跳过 idle 下线（REQ-190）：
     /// precheck 直连槽端口绕过 `touch()`，目标槽流量时钟不刷新，常规决策必然 Stop。
     pub async fn check_once(&self, active: &str) {
-        let deploy_locked =
-            !matches!(crate::deploy_lock::probe_lock(), crate::deploy_lock::LockState::Free);
+        let deploy_locked = !matches!(
+            crate::deploy_lock::probe_lock(),
+            crate::deploy_lock::LockState::Free
+        );
         for spec in self.specs.iter() {
             let healthy = self.probe(spec).await;
             let action = {
@@ -571,14 +573,29 @@ mod tests {
         // REQ-190：部署锁持有期间，同参数下原本会 Stop 的槽必须保持不动，
         // 防止 precheck 窗口误杀刚拉起的目标槽。
         let args = (
-            "green", "blue", true, 500u64, 1500u64, 900u64, true, 0u64, (Action::None, 0), 15u64,
+            "green",
+            "blue",
+            true,
+            500u64,
+            1500u64,
+            900u64,
+            true,
+            0u64,
+            (Action::None, 0),
+            15u64,
         );
         assert_eq!(
-            decide(args.0, args.1, args.2, args.3, args.4, args.5, args.6, args.7, args.8, args.9, true),
+            decide(
+                args.0, args.1, args.2, args.3, args.4, args.5, args.6, args.7, args.8, args.9,
+                true
+            ),
             Action::None
         );
         assert_eq!(
-            decide(args.0, args.1, args.2, args.3, args.4, args.5, args.6, args.7, args.8, args.9, false),
+            decide(
+                args.0, args.1, args.2, args.3, args.4, args.5, args.6, args.7, args.8, args.9,
+                false
+            ),
             Action::Stop
         );
     }

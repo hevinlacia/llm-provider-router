@@ -64,7 +64,8 @@ pub(crate) fn default_endpoints_table() -> RouterEndpointsTable {
             RouterEndpointEntry {
                 name: "lan".into(),
                 url: "http://edge.lan/llm-router".into(),
-                note: "内网域名 80 端口路径式（immortalwrt .lan → edge 容器，真 LAN 不走 subnet）".into(),
+                note: "内网域名 80 端口路径式（immortalwrt .lan → edge 容器，真 LAN 不走 subnet）"
+                    .into(),
             },
             RouterEndpointEntry {
                 name: "tailscale".into(),
@@ -79,7 +80,8 @@ pub(crate) fn default_endpoints_table() -> RouterEndpointsTable {
             RouterEndpointEntry {
                 name: "subnet".into(),
                 url: "http://192.168.6.249/llm-router".into(),
-                note: "subnet 中转兜底（经 Tailscale 访问 edge 内网 IP 80 路径式，最低优先级）".into(),
+                note: "subnet 中转兜底（经 Tailscale 访问 edge 内网 IP 80 路径式，最低优先级）"
+                    .into(),
             },
         ],
         updated_at: None,
