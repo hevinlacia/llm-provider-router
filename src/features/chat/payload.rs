@@ -41,7 +41,7 @@ pub(crate) fn prepare_upstream_payload(payload: &Value, alias: &ModelAlias) -> V
             inject_prompt_cache_key: true,
             monthly_quota_fallback_seconds: 0.0,
             five_hour_quota_fallback_seconds: 0.0,
-            request_timeout_seconds: 0.0,
+            read_timeout_seconds: 0.0,
             local_bearer_token: None,
             usage_db_path: "".into(),
             state_db_path: "".into(),
@@ -63,7 +63,6 @@ pub(crate) fn prepare_upstream_payload(payload: &Value, alias: &ModelAlias) -> V
             delta_cache_max_total_bytes: 512 * 1024 * 1024,
             delta_cache_session_max_bytes: 16 * 1024 * 1024,
             delta_cache_ttl_seconds: 3 * 3600,
-            env_file_path: None,
         });
     // 收集期：记录原始 payload 的关键字段（不含消息正文/密钥），便于事后定位是协议兼容还是模型能力问题。
     if is_muse_spark(alias)

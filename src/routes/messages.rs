@@ -18,6 +18,7 @@ use crate::features::chat::select::{
     clear_unsupported_if_ok, record_usage, select_key_locked, upstream_key_value_locked,
     usage_key_name,
 };
+use crate::features::router::util::should_retry_upstream_send;
 use crate::features::router::{
     circuit_breaker_on_exhaustion, handle_connect_failure, handle_embedded_failure,
     handle_response_failure, note_stream_break, note_success_differential, FailureAction,
@@ -35,7 +36,7 @@ use std::collections::HashSet;
 use super::resp::{inject_router_headers, CallError};
 use super::resp::{internal_error, json_status, status_code};
 use super::responses::{responses_alias_dispatch, translate_request};
-use super::session_fingerprint::extract_session_id;
+use super::session_fingerprint::{extract_session_id, opencode_session_header};
 use super::traffic_layer::{self, TrafficSession};
 
 /// 非流式响应体读取上限（64MB，与路由层 body limit 一致）。
@@ -397,31 +398,39 @@ async fn stream_anthropic_passthrough(
                     record_usage(&app.state, &alias.alias, &usage_key_name(&key), 599, None, session_id.as_deref());
                     // 本地配置问题，不影响熔断判定。
                     last_failure_transient = false;
-                    last_error = Some(format!("missing key value for {}", usage_key_name(&key)));
+                    last_error = Some(format!(
+                        "missing key value for {} ({})",
+                        usage_key_name(&key),
+                        key.value_source_hint()
+                    ));
                     continue;
                 };
 
+                // opencode-go 上游必须携带 x-opencode-session（见 opencode_session_header）
+                let oc_session = opencode_session_header(&alias, session_id.as_deref());
                 let mut response: Option<reqwest::Response> = None;
                 for attempt in 0..2 {
-                    match app
+                    let mut request = app
                         .client
                         .post(&endpoint)
                         .header("x-api-key", key_value.clone())
                         .header("anthropic-version", "2023-06-01")
-                        .header(CONTENT_TYPE, "application/json")
-                        .json(&upstream_payload)
-                        .send()
-                        .await
+                        .header(CONTENT_TYPE, "application/json");
+                    if let Some((name, value)) = &oc_session {
+                        request = request.header(*name, value.clone());
+                    }
+                    match request.json(&upstream_payload).send().await
                     {
                         Ok(resp) => {
                             response = Some(resp);
                             break;
                         }
                         Err(exc) => {
-                            // 连接层失败（拒连/DNS/建连超时）对同一死主机立即二连发无意义，
-                        // 直接交给 handle_connect_failure 冻结 + failover；超时类保留一次重试。
-                        let retryable = (exc.is_timeout() || exc.is_request()) && !exc.is_connect();
-                            if attempt == 0 && retryable {
+                            // 连接/请求层失败一律重试一次（2026-11-05 全池瘫痪事故）：本机流量经
+                            // OpenClash 透明代理出网，节点抖动/连接被 RST 是常态；一次瞬时失败就
+                            // 冻结唯一 key 会让所有会话同时不可用。重试会新建连接，真死主机两次
+                            // 都失败再冻结，代价仅多一次建连。
+                            if should_retry_upstream_send(attempt, exc.is_connect(), exc.is_timeout()) {
                                 continue;
                             }
                             break;
@@ -500,18 +509,22 @@ async fn stream_anthropic_passthrough(
                                 &alias,
                                 &key,
                                 &exc.to_string(),
+                                exc.is_timeout(),
                                 body_text.len(),
                                 session_id.as_deref(),
                             );
                             // 中流断开文案与 key 耗尽（all N upstream keys failed）可区分：
-                            // 流已部分送达无法换 key 重试，需带 provider/key/字节数定位（REQ-189）。
+                            // 流已部分送达无法换 key 重试，需带 provider/key/字节数定位（REQ-189）；
+                            // timeout 类额外标注（多为 router 自身读空闲超时/历史总死线触发）。
+                            let timeout_hint = if exc.is_timeout() { " (read idle timeout)" } else { "" };
                             let message = format!(
-                                "upstream stream broke mid-response after {} bytes ({}/{} for {}): {}",
+                                "upstream stream broke mid-response after {} bytes ({}/{} for {}): {}{}",
                                 body_text.len(),
                                 alias.provider(),
                                 key.name,
                                 alias.alias,
-                                exc
+                                exc,
+                                timeout_hint
                             );
                             yield Ok(Bytes::from(anthropic_sse_error(&message)));
                             return;
@@ -640,27 +653,30 @@ async fn call_anthropic_passthrough(
             continue;
         };
 
+        // opencode-go 上游必须携带 x-opencode-session（见 opencode_session_header）
+        let oc_session = opencode_session_header(&alias, session_id.as_deref());
         let mut response: Option<reqwest::Response> = None;
         for attempt in 0..2 {
-            match app
+            let mut request = app
                 .client
                 .post(&endpoint)
                 .header("x-api-key", key_value.clone())
                 .header("anthropic-version", "2023-06-01")
-                .header(CONTENT_TYPE, "application/json")
-                .json(&upstream_payload)
-                .send()
-                .await
-            {
+                .header(CONTENT_TYPE, "application/json");
+            if let Some((name, value)) = &oc_session {
+                request = request.header(*name, value.clone());
+            }
+            match request.json(&upstream_payload).send().await {
                 Ok(resp) => {
                     response = Some(resp);
                     break;
                 }
                 Err(exc) => {
-                    // 连接层失败（拒连/DNS/建连超时）对同一死主机立即二连发无意义，
-                    // 直接交给 handle_connect_failure 冻结 + failover；超时类保留一次重试。
-                    let retryable = (exc.is_timeout() || exc.is_request()) && !exc.is_connect();
-                    if attempt == 0 && retryable {
+                    // 连接/请求层失败一律重试一次（2026-11-05 全池瘫痪事故）：本机流量经
+                    // OpenClash 透明代理出网，节点抖动/连接被 RST 是常态；一次瞬时失败就
+                    // 冻结唯一 key 会让所有会话同时不可用。重试会新建连接，真死主机两次
+                    // 都失败再冻结，代价仅多一次建连。
+                    if should_retry_upstream_send(attempt, exc.is_connect(), exc.is_timeout()) {
                         continue;
                     }
                     break;

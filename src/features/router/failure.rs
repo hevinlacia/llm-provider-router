@@ -75,42 +75,57 @@ fn extract_error_message(body_text: &str) -> String {
         .unwrap_or_else(|| body_text.chars().take(300).collect())
 }
 
+/// 取错误文案：`message` 优先，兼容智谱/BigModel 的 `msg` 别名
+/// （2026-11 zp 鉴权失败以 HTTP 200 + `{"code":1000,"msg":"身份验证失败。"}`
+/// 返回，此前该形状识别不到 → 当成功透传，key 不冻结、会话不解绑）。
+fn error_message<'a>(value: &'a Value) -> Option<&'a str> {
+    value
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("msg").and_then(Value::as_str))
+}
+
+/// 取错误码：字符串或数字都接受（智谱是数字 code 1000，OpenAI 系是字符串码）。
+fn error_code(value: &Value) -> String {
+    value
+        .get("code")
+        .and_then(|code| {
+            code.as_str()
+                .map(str::to_string)
+                .or_else(|| code.as_i64().map(|n| n.to_string()))
+        })
+        .or_else(|| {
+            value
+                .get("type")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "upstream_error".to_string())
+}
+
 /// 识别单个 SSE/JSON 事件是否为上游错误，返回 (code, message)。
-/// 兼容四种形状（2026-10 zp 线上事故：5 小时限额以 HTTP 200 + 流内错误事件返回，
+/// 兼容五种形状（2026-10 zp 线上事故：5 小时限额以 HTTP 200 + 流内错误事件返回，
 /// 此前被当成正常流转发，key 不冻结、会话不解绑，故障切换失效）：
 /// - chat/自定义错误体：`{"error":{"code":..., "message":...}}`；
 /// - Responses 流内错误事件：`{"type":"error","code":...,"message":...}`；
 /// - Responses 失败事件：`{"type":"response.failed","response":{"error":{...}}}`；
-/// - 路由自身错误事件：`{"code":...,"message":...}`（无 type 字段）。
+/// - 路由自身错误事件：`{"code":...,"message":...}`（无 type 字段）；
+/// - 智谱/BigModel 形状：`{"code":1000,"msg":"身份验证失败。"}`（`msg` 别名 + 数字码）。
 pub(crate) fn extract_stream_error_event(value: &Value) -> Option<(String, String)> {
     let typ = value.get("type").and_then(Value::as_str).unwrap_or("");
     if typ == "response.failed" {
         let err = value.pointer("/response/error").filter(|v| v.is_object())?;
-        let message = err.get("message").and_then(Value::as_str)?;
-        let code = err
-            .get("code")
-            .and_then(Value::as_str)
-            .or_else(|| err.get("type").and_then(Value::as_str))
-            .unwrap_or("upstream_error");
-        return Some((code.to_string(), message.to_string()));
+        let message = error_message(err)?;
+        return Some((error_code(err), message.to_string()));
     }
     if let Some(err) = value.get("error").filter(|v| v.is_object()) {
-        if let Some(message) = err.get("message").and_then(Value::as_str) {
-            let code = err
-                .get("code")
-                .and_then(Value::as_str)
-                .or_else(|| err.get("type").and_then(Value::as_str))
-                .unwrap_or("upstream_error");
-            return Some((code.to_string(), message.to_string()));
+        if let Some(message) = error_message(err) {
+            return Some((error_code(err), message.to_string()));
         }
     }
     if typ == "error" || typ.is_empty() {
-        if let Some(message) = value.get("message").and_then(Value::as_str) {
-            let code = value
-                .get("code")
-                .and_then(Value::as_str)
-                .unwrap_or("upstream_error");
-            return Some((code.to_string(), message.to_string()));
+        if let Some(message) = error_message(value) {
+            return Some((error_code(value), message.to_string()));
         }
     }
     None
@@ -223,7 +238,12 @@ pub(crate) fn handle_embedded_failure(
     session_id: Option<&str>,
 ) -> bool {
     // 快速门禁：正文不含错误标记时直接返回（成功流零开销路径）。
-    if !body_text.contains("\"error\"") && !body_text.contains("response.failed") {
+    // `"msg"` / `"code"` 覆盖智谱形状（HTTP 200 + {code,msg}），误判只多一次扫描。
+    if !body_text.contains("\"error\"")
+        && !body_text.contains("response.failed")
+        && !body_text.contains("\"msg\"")
+        && !body_text.contains("\"code\"")
+    {
         return false;
     }
     match scan_error_event_text(body_text) {
@@ -415,9 +435,19 @@ pub(crate) fn handle_connect_failure(
             state.unbind(&alias.alias, sid);
         }
         // 短熔断：freeze 只延长不缩短，不会覆盖更长的配额/差分冻结。
+        //
+        // 单 key 池豁免（2026-11-05）：冻结的本意是「把坏 key 隔离掉、failover 到
+        // 另一个 key」。池里只有 1 个 key 时没有 failover 目标，冻结唯一 key 只会把
+        // 「偶发一次连接失败」升级成「全池直接不可用」（且指数退避可长到 960s，
+        // OpenClash 透明代理链路抖动下极易发生）。因此单 key 池只记录不冻结：
+        // 本次请求失败返回，下一次请求重新建连尝试（已带一次内部重试）。
+        let single_key_pool = alias.keys.len() <= 1;
+        let key_id = key_state_id(key);
+        // 可观测性：无论是否冻结都计数（单 key 池不冻结，更依赖这个计数发现
+        // 「代理链路不稳」），重试后仍失败的真实次数。
+        state.note_connect_failure(&key_id, &message);
         let base = state.tunables().connect_error_freeze_seconds;
-        if base > 0.0 {
-            let key_id = key_state_id(key);
+        if base > 0.0 && !single_key_pool {
             let ttl = state.note_connect_failure_streak(&key_id, base);
             if ttl > 0.0 {
                 let _ = state.freeze(
@@ -465,21 +495,26 @@ fn freeze_rate_limited(
 /// 请求内差分冻结：某 key 失败（transient，未冻结）后同行 key 成功 → 冻结失败 key。
 /// 无需依赖报错文案，供应商改文案后依然自动把坏 key 排除出可用池。
 /// 上游流中断观测记录：HTTP 200 已提交、SSE body 传输中途断开（reqwest
-/// `bytes_stream` 返回 Err，Display 统一为 "error decoding response body"，
-/// 实为连接重置/TLS 截断等传输层错误）。流已提交无法换 key 重试，但此前
-/// 完全不记 usage/错误日志——dashboard 与 /api/errors/recent 均无痕迹，
-/// 间歇性断流排障无证据。此处补齐：用量记账（598 状态计数）、ring buffer
-/// （errors 页，按 provider/key 定位坏上游）、journal+diag（upstream.failure
-/// 事件持久化）。
+/// `bytes_stream` 返回 Err，Display 统一为 "error decoding response body"）。
+/// 按错误源分类：is_timeout()=true 为读空闲超时/死线类（含历史 total 超时——
+/// 2026-11-02 事故根因，600s 总超时把长流殄断）；false 为连接重置/TLS 截断等
+/// 真传输层故障。流已提交无法换 key 重试，但此前完全不记 usage/错误日志——
+/// dashboard 与 /api/errors/recent 均无痕迹，间歇性断流排障无证据。此处补齐：
+/// 用量记账（598 状态计数）、ring buffer（errors 页，按 provider/key 定位坏上游）、
+/// journal+diag（upstream.failure 事件持久化）。
 pub(crate) fn note_stream_break(
     app: &AppState,
     alias: &ModelAlias,
     key: &KeyRef,
     exc_text: &str,
+    is_timeout: bool,
     bytes_received: usize,
     session_id: Option<&str>,
 ) {
-    let message = format!("[stream-break] {bytes_received} bytes received: {exc_text}");
+    // 分类标签可 greppable：timeout = 读空闲超时/死线类（多为 router 自身超时配置），
+    // transport = 连接重置/TLS 截断等真上游故障。
+    let kind = if is_timeout { "timeout" } else { "transport" };
+    let message = format!("[stream-break:{kind}] {bytes_received} bytes received: {exc_text}");
     let mut state = match app.state.lock() {
         Ok(state) => state,
         Err(_) => return,

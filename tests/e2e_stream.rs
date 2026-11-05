@@ -79,14 +79,52 @@ async fn spawn_mock_upstream() -> SocketAddr {
     addr
 }
 
+/// mock 上游：首次连接立即关闭（模拟 OpenClash 代理节点抖动 / 连接被 RST /
+/// stale pooled connection），之后正常回放 SSE。用于验证连接层失败会重试一次。
+async fn spawn_flaky_upstream(fail_first_n: usize) -> SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut served = 0usize;
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                continue;
+            };
+            served += 1;
+            if served <= fail_first_n {
+                // 前 N 个连接不返回任何响应直接关闭 → 客户端拿到 send/connect 错误。
+                drop(sock);
+                continue;
+            }
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = vec![0u8; 8192];
+                // 尽力读掉请求头（读到多少算多少），再回完整 SSE
+                let _ = tokio::time::timeout(Duration::from_secs(2), sock.read(&mut buf)).await;
+                let body = mock_full_body();
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = sock.write_all(head.as_bytes()).await;
+                let _ = sock.write_all(body.as_bytes()).await;
+                let _ = sock.shutdown().await;
+            });
+        }
+    });
+    addr
+}
+
 /// 写最小可用的 config/ 目录：一个 provider(mock) + 一个物理模型 + 一个逻辑模型。
 fn write_config_tree(root: &Path, mock_base: &str) {
     let cfg = root.join("config");
     std::fs::create_dir_all(&cfg).unwrap();
+    // key 值只从明文 api-keys.json 读取（环境变量取值已移除）。
+    std::fs::write(cfg.join("api-keys.json"), r#"{"mock-key":"dummy-key"}"#).unwrap();
     std::fs::write(
         cfg.join("providers-v2.json"),
         format!(
-            r#"{{"providers":{{"mock":{{"base_url":"","responses_base_url":"{mock_base}","keys":{{"mock-key":{{"env_var":"E2E_MOCK_KEY","weight":1,"billing_type":"payg","enabled":true,"persist":true}}}}}}}}}}"#
+            r#"{{"providers":{{"mock":{{"base_url":"","responses_base_url":"{mock_base}","keys":{{"mock-key":{{"weight":1,"billing_type":"payg","enabled":true}}}}}}}}}}"#
         ),
     )
     .unwrap();
@@ -114,8 +152,18 @@ struct TestEnv {
     _tmp: TempDir,
     _backend: ChildGuard,
     _proxy: ChildGuard,
+    /// 串行化锁：`free_port()` 是「绑定 :0 取值后立即释放」的免竞态写法，
+    /// 多测试并行时可能互相抢到同一端口，导致请求串到别的 backend
+    /// （2026-11-05 加第 6 个用例后暴露）。持有到测试结束即串行。
+    _serial: tokio::sync::MutexGuard<'static, ()>,
     proxy_url: String,
     client: reqwest::Client,
+}
+
+/// 跨测试共享的串行化锁（每个测试文件独立进程，只需本文件内串行）。
+fn env_serial_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
 async fn wait_healthy(url: &str, label: &str, log_dir: &Path) {
@@ -146,7 +194,11 @@ async fn wait_healthy(url: &str, label: &str, log_dir: &Path) {
 }
 
 async fn setup_env() -> TestEnv {
-    let mock_addr = spawn_mock_upstream().await;
+    setup_env_with_mock(spawn_mock_upstream().await).await
+}
+
+async fn setup_env_with_mock(mock_addr: SocketAddr) -> TestEnv {
+    let serial = env_serial_lock().lock().await;
     let mock_base = format!("http://{mock_addr}");
     let tmp = tempfile::tempdir().unwrap();
     write_config_tree(tmp.path(), &mock_base);
@@ -170,8 +222,14 @@ async fn setup_env() -> TestEnv {
             "LLM_PROVIDER_ROUTER_USAGE_DB_PATH",
             tmp.path().join("usage.sqlite3"),
         )
-        .env("LLM_PROVIDER_ROUTER_REQUEST_TIMEOUT_SECONDS", "30")
-        .env("E2E_MOCK_KEY", "dummy-key")
+        // 关键隔离（2026-11-05）：不设就回退到生产默认
+        // ~/.local/state/llm-provider-router/state.sqlite3，测试会与真实冻结
+        // 记录/并行测试互相污染，表现为莫名奇妙的 "no available upstream key"。
+        .env(
+            "LLM_PROVIDER_ROUTER_STATE_DB_PATH",
+            tmp.path().join("state.sqlite3"),
+        )
+        .env("LLM_PROVIDER_ROUTER_READ_TIMEOUT_SECONDS", "30")
         .stdout(Stdio::from(log("backend-out")))
         .stderr(Stdio::from(log("backend-err")))
         .spawn()
@@ -205,6 +263,7 @@ async fn setup_env() -> TestEnv {
         _tmp: tmp,
         _backend: backend,
         _proxy: proxy,
+        _serial: serial,
         proxy_url,
         client: reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
@@ -332,4 +391,91 @@ async fn e2e_json_uncompressed_without_accept_encoding() {
     assert!(resp.headers().get("content-encoding").is_none());
     let v: serde_json::Value = resp.json().await.unwrap();
     assert!(v.is_object());
+}
+
+/// 回归（2026-11-05 全池瘫痪事故）：上游连接层失败必须重试一次。
+///
+/// 场景：本机流量经路由器 OpenClash 透明代理出网，代理节点抖动或连接被 RST 是
+/// 常态。修复前 `(exc.is_timeout() || exc.is_request()) && !exc.is_connect()` 把
+/// connect 类错误排除在重试之外 → 一次瞬时失败即冻结唯一 key（30s 起指数退避），
+/// 表现为「会话 A 用得好好的，会话 B 一请求，A 也全挂」。
+///
+/// 验收口径：首次连接被上游直接关闭，router 重试后仍应拿到完整 SSE。
+#[tokio::test(flavor = "multi_thread")]
+async fn connect_error_is_retried_once() {
+    let env = setup_env_with_mock(spawn_flaky_upstream(1).await).await;
+    let resp = env
+        .client
+        .post(format!("{}/v1/responses", env.proxy_url))
+        .json(&serde_json::json!({"model": "e2e-auto", "stream": true, "input": "hi"}))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        resp.status().is_success(),
+        "连接层瞬时失败后应重试成功，实际 status={}",
+        resp.status()
+    );
+    let body = resp.bytes().await.unwrap();
+    let text = String::from_utf8_lossy(&body);
+    assert!(
+        text.contains("response.created"),
+        "重试后应拿到完整 SSE，实际 body={}",
+        &text[..text.len().min(200)]
+    );
+    assert!(
+        !text.contains("upstream_error"),
+        "不应把连接层瞬时失败暴露为上游错误: {}",
+        &text[..text.len().min(200)]
+    );
+}
+
+/// 端到端验证「连接失败统计」可见化（2026-11-05）：上游所有连接都立即关闭，
+/// router 内部重试一次仍失败 → 计入 /api/errors/connect-stats，供 dashboard
+/// 判断「是不是 OpenClash 透明代理链路不稳」。
+#[tokio::test(flavor = "multi_thread")]
+async fn connect_stats_records_exhausted_connect_failure() {
+    // usize::MAX：所有连接都直接关闭，内部重试也救不回来。
+    let env = setup_env_with_mock(spawn_flaky_upstream(usize::MAX).await).await;
+    let resp = env
+        .client
+        .post(format!("{}/v1/responses", env.proxy_url))
+        .json(&serde_json::json!({"model": "e2e-auto", "stream": true, "input": "hi"}))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("upstream_error") || body.contains("connect error"),
+        "重试耗尽后应报上游错误，实际: {}",
+        &body[..body.len().min(200)]
+    );
+
+    let stats: serde_json::Value = env
+        .client
+        .get(format!("{}/api/errors/connect-stats", env.proxy_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        stats["summary"]["total"], 1,
+        "一次请求最终失败应计 1 次（不是每次重试各计一次）: {stats}"
+    );
+    assert_eq!(stats["summary"]["recent_1h"], 1);
+    assert_eq!(stats["summary"]["affected_keys"], 1);
+    let keys = stats["keys"].as_array().expect("keys 数组");
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0]["key"], "mock/mock-key");
+    assert_eq!(keys[0]["total"], 1);
+    assert!(
+        keys[0]["last_message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("connect error"),
+        "应保留最近错误摘要: {}",
+        keys[0]["last_message"]
+    );
 }

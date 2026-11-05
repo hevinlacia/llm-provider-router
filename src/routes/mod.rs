@@ -90,7 +90,7 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     let app_state = AppState::new(settings.clone())?;
     // Delta 上下文缓存开关：env 默认值启动应用，运行期经 /api/config/delta-cache 热切换。
     crate::features::responses::delta::set_enabled(settings.delta_cache_enabled);
-    // v2 配置热加载：文件变更自动重载，手工编辑 config/*.json 无需 reload-env/重启。
+    // v2 配置热加载：文件变更自动重载，手工编辑 config/*.json 无需重启。
     crate::hot_reload::spawn_watcher(app_state.clone());
     let app = Router::new()
         .route("/analytics", get(usage::dashboard))
@@ -100,6 +100,10 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         .route("/settings", get(usage::dashboard))
         .route("/api/state", get(usage::api_state))
         .route("/api/errors/recent", get(errors::api_errors_recent))
+        .route(
+            "/api/errors/connect-stats",
+            get(errors::api_errors_connect_stats),
+        )
         .route("/api/usage", get(usage::api_usage))
         .route("/api/usage/series", get(usage::api_usage_series))
         .route("/api/sessions/active", get(usage::api_sessions_active))
@@ -153,10 +157,6 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         .route(
             "/api/config/keys",
             get(config::api_config_keys).put(config::api_config_keys_update),
-        )
-        .route(
-            "/api/config/reload-env",
-            post(config::api_config_reload_env),
         )
         .route(
             "/api/config/search-providers",

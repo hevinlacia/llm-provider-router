@@ -118,7 +118,10 @@ use axum::http::HeaderMap;
 /// session/trace 字段，最后兜底解析 Claude Code 的 `metadata.user_id`
 /// （形如 `user_<hash>_account_<uuid>_session_<uuid>`）。
 pub(crate) fn extract_session_id(payload: &Value, headers: &HeaderMap) -> Option<String> {
-    header_str(headers, "x-litellm-session-id")
+    // OpenCode 官方会话头最高优先：客户端显式带来时直接采用，同时作为
+    // opencode-go 上游补头的透传来源（见 opencode_session_header）。
+    header_str(headers, "x-opencode-session")
+        .or_else(|| header_str(headers, "x-litellm-session-id"))
         .or_else(|| header_str(headers, "x-opencode-session-id"))
         .or_else(|| header_str(headers, "x-session-id"))
         .or_else(|| header_str(headers, "x-session-affinity"))
@@ -185,6 +188,39 @@ pub(crate) fn header_str(headers: &HeaderMap, name: &'static str) -> Option<Stri
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+// ---------------------------------------------------------------------------
+// opencode-go 上游会话头补齐（2026-11-04 400 事故）
+// ---------------------------------------------------------------------------
+
+/// OpenCode Go 上游强制要求 `x-opencode-session`（每会话稳定 ID，用于路由与
+/// prompt cache 优化），缺失直接 400；该错误会被分类为 transient，唯一 key 的
+/// 供应商随之冻结 → 全池不可用。代理转发时必须补齐，优先级：
+/// 客户端显式头（extract_session_id 已优先读取）> 会话指纹 > 随机 ID 兕底。
+/// 返回 None 表示上游不是 OpenCode，不加头。
+pub(crate) fn opencode_session_header(
+    alias: &crate::config::ModelAlias,
+    session_id: Option<&str>,
+) -> Option<(&'static str, String)> {
+    let is_opencode = alias.provider() == "opencode-go"
+        || alias.provider() == "opencode"
+        || alias.base_url.contains("opencode");
+    if !is_opencode {
+        return None;
+    }
+    // 只保留 header value 安全字符（visible ASCII 子集），截断防超长；
+    // 净化为空或无会话标识时生成随机 ID（单请求内稳定即可，仍满足上游要求）。
+    let sanitized = session_id
+        .map(|s| {
+            s.chars()
+                .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@'))
+                .take(128)
+                .collect::<String>()
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("auto-{:032x}", rand::random::<u128>()));
+    Some(("x-opencode-session", sanitized))
 }
 
 #[cfg(test)]
@@ -397,6 +433,77 @@ mod tests {
         assert_eq!(
             extract_session_id(&payload, &headers).as_deref(),
             Some("explicit-sess")
+        );
+    }
+
+    fn oc_alias() -> crate::config::ModelAlias {
+        crate::config::ModelAlias::new(
+            "deepseek-flash",
+            "openai/deepseek-v4.1-flash",
+            "https://opencode.ai/inference/go/openai/v1",
+            vec![],
+            None,
+        )
+    }
+
+    #[test]
+    fn opencode_header_added_for_opencode_base_url() {
+        let (name, value) = opencode_session_header(&oc_alias(), Some("sess-123")).unwrap();
+        assert_eq!(name, "x-opencode-session");
+        assert_eq!(value, "sess-123");
+    }
+
+    #[test]
+    fn opencode_header_added_for_opencode_go_provider() {
+        // 空 keys 时 provider() 回退到 alias 名，模拟 provider=opencode-go 的 key 配置。
+        let alias = crate::config::ModelAlias::new(
+            "opencode-go",
+            "openai/deepseek-v4.1-flash",
+            "https://gateway.example.com/v1",
+            vec![],
+            None,
+        );
+        assert!(opencode_session_header(&alias, Some("s1")).is_some());
+    }
+
+    #[test]
+    fn opencode_header_skipped_for_other_upstream() {
+        let alias = crate::config::ModelAlias::new(
+            "glm-flash",
+            "openai/glm-5.3-flash",
+            "https://ark.cn-beijing.volces.com/api/v3",
+            vec![],
+            None,
+        );
+        assert!(opencode_session_header(&alias, Some("sess-1")).is_none());
+    }
+
+    #[test]
+    fn opencode_header_sanitizes_unsafe_chars() {
+        let (_, value) =
+            opencode_session_header(&oc_alias(), Some("sess_A1-b.c@中文/sp ace")).unwrap();
+        assert_eq!(value, "sess_A1-b.c@space");
+    }
+
+    #[test]
+    fn opencode_header_random_fallback_without_session() {
+        let (name, value) = opencode_session_header(&oc_alias(), None).unwrap();
+        assert_eq!(name, "x-opencode-session");
+        assert!(value.starts_with("auto-"));
+        assert_eq!(value.len(), 37); // auto- + 32 hex
+                                     // 两次调用生成不同 ID（随机兜底），但同请求内由调用方缓存保证稳定。
+        let (_, value2) = opencode_session_header(&oc_alias(), None).unwrap();
+        assert_ne!(value, value2);
+    }
+
+    #[test]
+    fn extract_prefers_x_opencode_session_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-opencode-session", "oc-sess-9".parse().unwrap());
+        headers.insert("x-litellm-session-id", "litellm-1".parse().unwrap());
+        assert_eq!(
+            extract_session_id(&serde_json::json!({}), &headers).as_deref(),
+            Some("oc-sess-9")
         );
     }
 }

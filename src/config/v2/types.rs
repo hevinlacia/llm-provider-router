@@ -23,7 +23,6 @@ pub const V2_VIRTUAL_MODELS_PATH: &str = "config/virtual-models.json";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct V2Key {
-    pub env_var: String,
     #[serde(default = "default_weight")]
     pub weight: i64,
     #[serde(default = "default_billing")]
@@ -35,9 +34,6 @@ pub struct V2Key {
     /// 手动启用/停用开关（默认 true）。停用的 key 不参与负载均衡。
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    /// key 值是否可持久化到 api-keys.json（env-only key 设 false）。
-    #[serde(default = "default_persist")]
-    pub persist: bool,
 }
 
 fn default_weight() -> i64 {
@@ -47,9 +43,6 @@ fn default_billing() -> String {
     "subscription".to_string()
 }
 fn default_enabled() -> bool {
-    true
-}
-fn default_persist() -> bool {
     true
 }
 

@@ -119,10 +119,9 @@ export type KeyConfig = {
     name: string;
     provider: string;
     billing_type: string;
-    env_var: string;
+    /** key 值是否已在明文 api-keys.json 里配置 */
     configured: boolean;
-    encrypted_configured: boolean;
-    env_configured: boolean;
+    /** vault = 已配置明文值；missing = 未配置 */
     source: string;
   }>;
   config_path: string;
@@ -151,7 +150,8 @@ export type UsageSeriesResponse = {
 // ---- v2 分层架构状态（GET /api/config/v2）----
 
 export type V2KeyStatus = {
-  env_var: string;
+  /** key 值是否已在明文 api-keys.json 里配置 */
+  configured: boolean;
   weight: number;
   billing_type: string;
   /** 日 token 配额（可选）：当日 tokens 达限则该 key 视为耗尽（priority 降级用）；null = 不限 */
@@ -359,6 +359,33 @@ export type RecentErrorEntry = {
 export type RecentErrorsResponse = {
   ok: boolean;
   errors?: RecentErrorEntry[];
+};
+
+// —— 连接失败统计（/api/errors/connect-stats）——
+// 用于判断「是不是 OpenClash 透明代理链路不稳」而不是「key 失效」。
+
+export type ConnectFailureKeyRow = {
+  key: string;
+  total: number;
+  recent_1h: number;
+  recent_24h: number;
+  last_at: number;
+  seconds_since_last: number;
+  last_message: string;
+};
+
+export type ConnectFailureSummary = {
+  total: number;
+  recent_1h: number;
+  recent_24h: number;
+  affected_keys: number;
+};
+
+export type ConnectFailureStatsResponse = {
+  ok: boolean;
+  summary?: ConnectFailureSummary;
+  keys?: ConnectFailureKeyRow[];
+  note?: string;
 };
 
 // —— 上游解析兜底（/api/config/dns-overrides）——

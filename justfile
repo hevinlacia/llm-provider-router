@@ -22,6 +22,8 @@ frontend-build:
 # 明文 config/api-keys.json 仅本机（gitignored）；加密副本 api-keys.sops.json 提交 git。
 # dashboard 改 key 后跑 just vault-encrypt 同步加密副本。
 # 跨机恢复：just vault-decrypt （需 ~/.config/sops/age/keys.txt 私钥）。
+# 生效语义（2026-11-05 起只有一个来源）：key 值只从明文 config/api-keys.json 读，
+# 每请求现场读盘，解密/改值即生效无需重启（环境变量取值已移除）。
 vault-encrypt:
     cp config/api-keys.json config/api-keys.sops.json
     SOPS_AGE_KEY_FILE={{age_key_file}} sops --encrypt --config config/.sops.yaml --in-place config/api-keys.sops.json
@@ -29,7 +31,7 @@ vault-encrypt:
 
 vault-decrypt:
     SOPS_AGE_KEY_FILE={{age_key_file}} sops --decrypt --config config/.sops.yaml config/api-keys.sops.json > config/api-keys.json
-    @echo "decrypted config/api-keys.json（重启后端或调 /api/config/reload-env 后生效）"
+    @echo "decrypted config/api-keys.json（下一请求即生效，无需重启）"
 
 age_key_file := "~/.config/sops/age/keys.txt"
 

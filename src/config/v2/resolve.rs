@@ -128,11 +128,9 @@ fn enabled_keys_filtered(
         .filter(|(key_name, _)| keys_allow.is_none_or(|names| names.iter().any(|n| n == *key_name)))
         .map(|(key_name, key)| KeyRef {
             name: key_name.clone(),
-            env_var: key.env_var.clone(),
             weight: key.weight,
             provider: provider_name.to_string(),
             billing_type: key.billing_type.clone(),
-            persist: key.persist,
             daily_token_quota: key.daily_token_quota,
         })
         .collect()

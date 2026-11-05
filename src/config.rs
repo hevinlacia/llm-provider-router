@@ -19,22 +19,24 @@ pub const DEFAULT_DIAG_SAMPLE_EVERY: &str = "1";
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct KeyRef {
     pub name: String,
-    pub env_var: String,
     pub weight: i64,
     pub provider: String,
     pub billing_type: String,
-    /// Whether the key value may be persisted to config/api-keys.json.
-    /// Env-only keys (persist=false) are read strictly from the environment.
-    #[serde(default = "default_persist")]
-    pub persist: bool,
     /// 日 token 配额（可选，自然日口径）：当日 tokens ≥ 配额则该 key 视为耗尽。
     /// None = 不限（永不耗尽）；上游 429 冻结仍独立兜底。
     #[serde(default)]
     pub daily_token_quota: Option<u64>,
 }
 
-fn default_persist() -> bool {
-    true
+impl KeyRef {
+    /// upstream_key_value 返回 None 时的人读提示：key 值只来自明文
+    /// api-keys.json（按 key 名条目），不存在环境变量兜底（2026-11-05 起）。
+    pub fn value_source_hint(&self) -> String {
+        format!(
+            "请在 api-keys.json 配置 \"{}\" 条目（明文填充，每请求现场读盘）",
+            self.name
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -200,7 +202,10 @@ pub struct Settings {
     pub inject_prompt_cache_key: bool,
     pub monthly_quota_fallback_seconds: f64,
     pub five_hour_quota_fallback_seconds: f64,
-    pub request_timeout_seconds: f64,
+    /// 上游读空闲超时（秒）：每次成功读到数据即重置，只限制「连接停滞」不限制流总时长。
+    /// 原 request_timeout_seconds 是含 body 流式读取的总死线，长思考流恰在 600s 整被
+    /// 掐断（2026-11-02 事故，diag 三次 598 与 600s 精确对齐），已改为 read_timeout 语义。
+    pub read_timeout_seconds: f64,
     pub local_bearer_token: Option<String>,
     pub usage_db_path: String,
     pub state_db_path: String,
@@ -208,9 +213,6 @@ pub struct Settings {
     pub token_price_config_path: String,
     pub model_alias_config_path: String,
     pub search_providers_path: String,
-    /// 运行期刷新 key 用的 env 文件（如 systemd environment.d 生成的 agent-env.conf）；
-    /// 设置后 `/api/config/reload-env` 可重读该文件并把变量 set_var 进当前进程环境。
-    pub env_file_path: Option<String>,
     /// 供应商模型列表持久化路径（设置界面“查看供应商详情”缓存）。
     pub provider_models_path: String,
     /// 报错分类规则配置（模板 + tunables + 供应商绑定）。缺失时用内置预设。
@@ -267,8 +269,7 @@ pub fn load_settings() -> anyhow::Result<Settings> {
             "5400",
         )
         .parse()?,
-        request_timeout_seconds: env_or("LLM_PROVIDER_ROUTER_REQUEST_TIMEOUT_SECONDS", "600")
-            .parse()?,
+        read_timeout_seconds: env_or("LLM_PROVIDER_ROUTER_READ_TIMEOUT_SECONDS", "600").parse()?,
         local_bearer_token: env::var("LLM_PROVIDER_ROUTER_BEARER_TOKEN")
             .ok()
             .filter(|value| !value.is_empty())
@@ -292,9 +293,6 @@ pub fn load_settings() -> anyhow::Result<Settings> {
             "LLM_PROVIDER_ROUTER_SEARCH_PROVIDERS_PATH",
             DEFAULT_SEARCH_PROVIDERS_PATH,
         ),
-        env_file_path: env::var("LLM_PROVIDER_ROUTER_ENV_FILE")
-            .ok()
-            .filter(|value| !value.is_empty()),
         provider_models_path: env_or(
             "LLM_PROVIDER_ROUTER_PROVIDER_MODELS_PATH",
             "config/provider-models.json",

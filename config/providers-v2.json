@@ -7,11 +7,9 @@
       "retry": null,
       "keys": {
         "deepseek-official": {
-          "env_var": "AGENT_AI_DEEPSEEK_API_KEY",
           "weight": 1,
           "billing_type": "payg",
-          "enabled": false,
-          "persist": true
+          "enabled": false
         }
       }
     },
@@ -22,11 +20,9 @@
       "retry": null,
       "keys": {
         "jt": {
-          "env_var": "PROVIDER_ARK_AGENT_JT_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
+          "enabled": true
         }
       }
     },
@@ -49,11 +45,9 @@
       },
       "keys": {
         "hevin2": {
-          "env_var": "AGENT_AI_ARK_HEVIN2_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
+          "enabled": true
         }
       }
     },
@@ -74,11 +68,9 @@
       },
       "keys": {
         "oai-hevin": {
-          "env_var": "AGENT_AI_OPENAI_HEVIN_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
+          "enabled": true
         }
       }
     },
@@ -89,26 +81,22 @@
       "retry": null,
       "keys": {
         "hevin-6544": {
-          "env_var": "PROVIDER_ARK_AGENT_6544_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
+          "enabled": true
         }
       }
     },
     "opencode-go": {
-      "base_url": "https://opencode.ai/zen/go/v1",
-      "responses_base_url": "https://opencode.ai/zen/go/v1",
+      "base_url": "https://opencode.ai/inference/go/openai/v1",
+      "responses_base_url": "https://opencode.ai/inference/go/openai/v1",
       "anthropic_base_url": null,
       "retry": null,
       "keys": {
         "hevin": {
-          "env_var": "AGENT_AI_OPENCODEGO_HEVIN_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
-          "enabled": true,
-          "persist": true
+          "enabled": true
         }
       }
     }

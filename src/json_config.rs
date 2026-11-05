@@ -212,27 +212,31 @@ impl TokenPriceConfig {
     }
 }
 
-/// Stores LLM provider key VALUES (env_var -> secret) in a gitignored JSON file.
-/// Encrypted backup lives in ~/Developer/vault; the vault regenerates
-/// ~/.config/environment.d/agent-env.conf from this file to share keys with
-/// other tools (opencode, pi) that consume env vars directly.
+/// 明文 key 值存储（key 名 -> secret），落在 gitignored 的 config/api-keys.json。
+/// 2026-11-05 起 key 值只从这里读（环境变量取值已移除）；`path = ":memory:"`
+/// 时用进程内 map（测试隔离，不落盘）。
 pub struct ApiKeysStore {
     pub path: PathBuf,
+    memory: std::sync::Mutex<HashMap<String, String>>,
 }
 
 impl ApiKeysStore {
     pub fn new(path: &str) -> Self {
         Self {
             path: expand_path(path),
+            memory: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
-    pub fn exists(&self) -> bool {
-        !self.is_memory() && self.path.exists()
-    }
-
     pub fn load(&self) -> HashMap<String, String> {
-        if self.is_memory() || !self.path.exists() {
+        if self.is_memory() {
+            return self
+                .memory
+                .lock()
+                .map(|keys| keys.clone())
+                .unwrap_or_default();
+        }
+        if !self.path.exists() {
             return HashMap::new();
         }
         let Ok(raw) = fs::read_to_string(&self.path) else {
@@ -243,6 +247,9 @@ impl ApiKeysStore {
 
     pub fn write(&self, keys: &HashMap<String, String>) -> anyhow::Result<()> {
         if self.is_memory() {
+            if let Ok(mut memory) = self.memory.lock() {
+                *memory = keys.clone();
+            }
             return Ok(());
         }
         if let Some(parent) = self.path.parent() {

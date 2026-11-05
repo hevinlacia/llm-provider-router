@@ -1,4 +1,4 @@
-import type { ActiveSessionsResponse, ErrorRulesConfig, FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderModelsResponse, RecentErrorsResponse, RouterCapabilities, SearchProvidersConfig, DnsOverridesConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, V2UnsupportedEntry } from './types';
+import type { ActiveSessionsResponse, ConnectFailureStatsResponse, ErrorRulesConfig, FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderModelsResponse, RecentErrorsResponse, RouterCapabilities, SearchProvidersConfig, DnsOverridesConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, V2UnsupportedEntry } from './types';
 
 /** 部署基路径（vite base 注入，'/' 归一为 ''）：fetch 与手写路径路由统一拼前缀。 */
 export const appBase = import.meta.env.BASE_URL === '/' ? '' : import.meta.env.BASE_URL.replace(/\/+$/, '');
@@ -138,14 +138,14 @@ export const api = {
     const query = refresh ? '?refresh=1' : '';
     return request<ProviderModelsResponse>(`/api/config/v2/providers/${encodeURIComponent(name)}/models${query}`);
   },
-  updateV2Provider(oldName: string, provider: { name: string; base_url: string; responses_base_url?: string | null; anthropic_base_url?: string | null; keys: Record<string, { env_var: string; weight: number; billing_type: string; daily_token_quota?: number | null; enabled: boolean }> }) {
+  updateV2Provider(oldName: string, provider: { name: string; base_url: string; responses_base_url?: string | null; anthropic_base_url?: string | null; keys: Record<string, { weight: number; billing_type: string; daily_token_quota?: number | null; enabled: boolean }> }) {
     return request<V2Status>('/api/config/v2/providers', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ old_name: oldName, provider }),
     });
   },
-  createV2Provider(provider: { name: string; base_url: string; responses_base_url?: string | null; anthropic_base_url?: string | null; keys: Record<string, { env_var: string; weight: number; billing_type: string; daily_token_quota?: number | null; enabled: boolean }> }) {
+  createV2Provider(provider: { name: string; base_url: string; responses_base_url?: string | null; anthropic_base_url?: string | null; keys: Record<string, { weight: number; billing_type: string; daily_token_quota?: number | null; enabled: boolean }> }) {
     return request<V2Status>('/api/config/v2/providers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -226,5 +226,8 @@ export const api = {
   },
   async recentErrors() {
     return request<RecentErrorsResponse>('/api/errors/recent');
+  },
+  async connectFailureStats() {
+    return request<ConnectFailureStatsResponse>('/api/errors/connect-stats');
   },
 };

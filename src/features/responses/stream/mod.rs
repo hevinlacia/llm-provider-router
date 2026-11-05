@@ -29,6 +29,7 @@ use crate::features::chat::select::{
 };
 use crate::features::responses::store;
 use crate::features::responses::translate;
+use crate::features::router::util::should_retry_upstream_send;
 use crate::features::router::{
     apply_embedded_failure, circuit_breaker_on_exhaustion, extract_stream_error_event,
     handle_connect_failure, handle_embedded_failure, handle_response_failure, note_stream_break,
@@ -182,32 +183,43 @@ pub(crate) async fn stream_responses_route(
                     record_usage(&app.state, &alias.alias, &usage_key_name(&key), 599, None, session_id.as_deref());
                     // 本地配置问题，不影响熔断判定。
                     last_failure_transient = false;
-                    last_error = Some(format!("missing key value for {}", usage_key_name(&key)));
+                    last_error = Some(format!(
+                        "missing key value for {} ({})",
+                        usage_key_name(&key),
+                        key.value_source_hint()
+                    ));
                     continue;
                 };
 
+                // opencode-go 上游必须携带 x-opencode-session（见 opencode_session_header）
+                let oc_session = crate::routes::session_fingerprint::opencode_session_header(
+                    &alias,
+                    session_id.as_deref(),
+                );
                 let mut response: Option<reqwest::Response> = None;
                 let mut last_exc: Option<String> = None;
                 for attempt in 0..2 {
-                    match app
+                    let mut request = app
                         .client
                         .post(&endpoint)
                         .bearer_auth(key_value.clone())
-                        .header(CONTENT_TYPE, "application/json")
-                        .json(&upstream_payload)
-                        .send()
-                        .await
+                        .header(CONTENT_TYPE, "application/json");
+                    if let Some((name, value)) = &oc_session {
+                        request = request.header(*name, value.clone());
+                    }
+                    match request.json(&upstream_payload).send().await
                     {
                         Ok(resp) => {
                             response = Some(resp);
                             break;
                         }
                         Err(exc) => {
-                            // 连接层失败（拒连/DNS/建连超时）对同一死主机立即二连发无意义，
-                        // 直接交给 handle_connect_failure 冻结 + failover；超时类保留一次重试。
-                        let retryable = (exc.is_timeout() || exc.is_request()) && !exc.is_connect();
+                            // 连接/请求层失败一律重试一次（2026-11-05 全池瘫痪事故）：本机
+                            // 流量经 OpenClash 透明代理出网，节点抖动/连接被 RST 是常态；一次
+                            // 瞬时失败就冻结唯一 key 会让所有会话同时不可用。重试会新建连接，
+                            // 真死主机两次都失败再冻结，代价仅多一次建连。
                             last_exc = Some(exc.to_string());
-                            if attempt == 0 && retryable {
+                            if should_retry_upstream_send(attempt, exc.is_connect(), exc.is_timeout()) {
                                 continue;
                             }
                             break;
@@ -313,6 +325,7 @@ pub(crate) async fn stream_responses_route(
                                     &alias,
                                     &key,
                                     &exc.to_string(),
+                                    exc.is_timeout(),
                                     body_text.len(),
                                     session_id.as_deref(),
                                 );
@@ -322,6 +335,7 @@ pub(crate) async fn stream_responses_route(
                                     &key.name,
                                     body_text.len(),
                                     &exc.to_string(),
+                                    exc.is_timeout(),
                                 )));
                                 return;
                             }
@@ -399,6 +413,7 @@ pub(crate) async fn stream_responses_route(
                                     &alias,
                                     &key,
                                     &exc.to_string(),
+                                    exc.is_timeout(),
                                     body_text.len(),
                                     session_id.as_deref(),
                                 );
@@ -408,6 +423,7 @@ pub(crate) async fn stream_responses_route(
                                     &key.name,
                                     body_text.len(),
                                     &exc.to_string(),
+                                    exc.is_timeout(),
                                 )));
                                 return;
                             }
@@ -1146,9 +1162,15 @@ fn sse_stream_break_event(
     key: &str,
     bytes: usize,
     exc: &str,
+    is_timeout: bool,
 ) -> String {
+    let timeout_hint = if is_timeout {
+        " (read idle timeout)"
+    } else {
+        ""
+    };
     let message = format!(
-        "upstream stream broke mid-response after {bytes} bytes ({provider}/{key} for {alias}): {exc}"
+        "upstream stream broke mid-response after {bytes} bytes ({provider}/{key} for {alias}): {exc}{timeout_hint}"
     );
     sse_error_message(&message)
 }

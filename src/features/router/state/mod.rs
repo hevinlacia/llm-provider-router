@@ -21,12 +21,15 @@ use crate::usage_store::UsageStore;
 use anyhow::Context;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::env;
 
 pub(crate) mod config;
 mod keys;
 mod routing;
 pub(crate) mod v2;
+
+/// 连接失败统计的滑动窗口保留时长（秒）：超过即从 `recent` 里淘汰，
+/// 防止长期运行内存增长；`total` 仍为进程生命周期累计值。
+const CONNECT_FAILURE_RETENTION_SECONDS: f64 = 24.0 * 3600.0;
 
 #[derive(Clone, Debug)]
 pub struct FrozenKey {
@@ -47,6 +50,21 @@ pub struct ConnectStreak {
     pub count: u32,
     pub last_at: f64,
     pub last_ttl: f64,
+}
+
+/// 上游连接失败统计（可观测性，重启归零）：独立于 599 短熔断退避。
+/// 单 key 池不冻结（见 `handle_connect_failure` 的单 key 池豁免），但仍计入这里，
+/// 用于判断「OpenClash 透明代理链路是否不稳」而不是「key 失效」。
+#[derive(Clone, Debug, Default)]
+pub struct ConnectFailureStat {
+    /// 进程生命周期内累计次数。
+    pub total: u64,
+    /// 最近一次失败时间戳（秒）。
+    pub last_at: f64,
+    /// 最近一次失败的错误摘要（脱敏截断）。
+    pub last_message: String,
+    /// 最近失败时间戳（仅保留近 24h），供前端算近 1h / 近 24h 次数。
+    pub recent: VecDeque<f64>,
 }
 
 #[derive(Debug)]
@@ -88,6 +106,10 @@ pub struct RouterState {
     recent_errors: RecentErrors,
     /// 连接失败连败计数（内存，重启丢失），键为 key_state_id。
     connect_streaks: HashMap<String, ConnectStreak>,
+    /// 上游连接失败统计（内存，重启丢失），键为 key_state_id。
+    /// 与 [`ConnectStreak`] 分工：那个驱动退避冻结策略（单 key 池已豁免），
+    /// 这个只做可观测性——用来判断「代理链路是否不稳」而非「key 失效」。
+    connect_failures: HashMap<String, ConnectFailureStat>,
     /// 测试钩子：handler 级集成测试直接注册的路由别名（生产构建不编译）。
     #[cfg(test)]
     test_aliases: HashMap<String, ModelAlias>,
@@ -136,72 +158,8 @@ impl RouterState {
                 "llm-provider-router: error-rules load failed, using builtin defaults: {err}"
             );
         }
-        // First run (file missing): seed from environment so existing keys are
-        // captured into the sole source of truth. Otherwise: apply stored key
-        // values to the process environment without overriding existing vars.
-        if !api_keys_store.exists() {
-            let mut seed: HashMap<String, String> = HashMap::new();
-            for provider in v2.providers.values() {
-                for key in provider.keys.values() {
-                    // Env-only keys (e.g. deepseek-official) are never
-                    // persisted to api-keys.json; they come from the
-                    // environment only. Empty env_var (dashboard inline key)
-                    // has nothing to seed from either.
-                    if !key.persist || key.env_var.is_empty() {
-                        continue;
-                    }
-                    if let Ok(value) = env::var(&key.env_var) {
-                        if !value.is_empty() {
-                            seed.insert(key.env_var.clone(), value);
-                        }
-                    }
-                }
-            }
-            if !seed.is_empty() {
-                let _ = api_keys_store.write(&seed);
-            }
-        } else {
-            let env_only_vars: HashSet<String> = v2
-                .providers
-                .values()
-                .flat_map(|provider| provider.keys.values())
-                .filter(|key| !key.persist)
-                .map(|key| key.env_var.clone())
-                .collect();
-            let known_env_vars: HashSet<String> = v2
-                .providers
-                .values()
-                .flat_map(|provider| provider.keys.values())
-                .filter(|key| !key.env_var.is_empty())
-                .map(|key| key.env_var.clone())
-                .collect();
-            let stored = api_keys_store.load();
-            let mut prune: Vec<String> = Vec::new();
-            for (env_var, value) in &stored {
-                // Vault-by-name entries (dashboard inline keys without an
-                // env var) are read by upstream_key_value from the store;
-                // never inject them as environment variables.
-                if !known_env_vars.contains(env_var) {
-                    continue;
-                }
-                // One-time cleanup: env-only keys must not linger in the
-                // plaintext store; the environment is their only source.
-                if env_only_vars.contains(env_var) {
-                    prune.push(env_var.clone());
-                    continue;
-                }
-                if env::var(env_var).ok().filter(|v| !v.is_empty()).is_none() {
-                    env::set_var(env_var, value);
-                }
-            }
-            if !prune.is_empty() {
-                let mut remaining = stored;
-                for var in &prune {
-                    remaining.remove(var);
-                }
-                let _ = api_keys_store.write(&remaining);
-            }
-        }
+        // key 值来源（2026-11-05 起）：只有一个来源——明文 api-keys.json
+        // （按 key 名条目，每请求现场读盘，即改即生效）；环境变量取值已移除。
         let state = Self {
             settings,
             state_store,
@@ -217,51 +175,11 @@ impl RouterState {
             error_rules,
             recent_errors: VecDeque::new(),
             connect_streaks: HashMap::new(),
+            connect_failures: HashMap::new(),
             #[cfg(test)]
             test_aliases: HashMap::new(),
         };
         Ok(state)
-    }
-
-    /// 运行期重读 env 文件（如 systemd environment.d 生成的 agent-env.conf）并把变量
-    /// 注入当前进程环境，使新增/更新的 provider key 无需重启即可被
-    /// `upstream_key_value` 读到（key 值在路由时 live `env::var`）。
-    /// 同时重读 v2 配置，让 providers-v2.json 里新增的 key/provider 即时生效。
-    /// 未配置 `LLM_PROVIDER_ROUTER_ENV_FILE` 时返回空结果（不报错）。
-    pub fn reload_env(&mut self) -> anyhow::Result<serde_json::Value> {
-        let Some(path) = self.settings.env_file_path.clone() else {
-            return Ok(serde_json::json!({
-                "reloaded": 0,
-                "path": "",
-                "message": "LLM_PROVIDER_ROUTER_ENV_FILE not configured",
-            }));
-        };
-        let expanded = expand_path(&path);
-        let content = std::fs::read_to_string(&expanded)
-            .map_err(|e| anyhow::anyhow!("read env file {}: {e}", expanded.display()))?;
-        let mut imported = 0usize;
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') || !line.contains('=') {
-                continue;
-            }
-            let (key, value) = match line.split_once('=') {
-                Some(pair) => pair,
-                None => continue,
-            };
-            let key = key.trim();
-            if key.is_empty() {
-                continue;
-            }
-            std::env::set_var(key, value.trim());
-            imported += 1;
-        }
-        // 重读 v2 配置：新增的 key/provider 即时生效。
-        let _ = self.reload_v2();
-        Ok(serde_json::json!({
-            "reloaded": imported,
-            "path": expanded.display().to_string(),
-        }))
     }
 
     pub fn cleanup(&mut self) -> anyhow::Result<()> {
@@ -385,6 +303,76 @@ impl RouterState {
     /// 某 key 成功跑通后清除连败计数（下次连接失败重新从 base 起步）。
     pub fn clear_connect_streak(&mut self, key_id: &str) {
         self.connect_streaks.remove(key_id);
+    }
+
+    /// 记录一次上游连接失败（可观测性，与冻结策略解耦）。
+    /// 单 key 池虽然不冻结，但仍要计数——否则「代理链路不稳」完全不可见。
+    /// `recent` 只保留近 24h，防止长时间运行后内存无限增长。
+    pub fn note_connect_failure(&mut self, key_id: &str, message: &str) {
+        let now = now_seconds();
+        let stat = self.connect_failures.entry(key_id.to_string()).or_default();
+        stat.total = stat.total.saturating_add(1);
+        stat.last_at = now;
+        stat.last_message = message.chars().take(200).collect();
+        stat.recent.push_back(now);
+        let cutoff = now - CONNECT_FAILURE_RETENTION_SECONDS;
+        while stat.recent.front().is_some_and(|ts| *ts < cutoff) {
+            stat.recent.pop_front();
+        }
+    }
+
+    /// 连接失败统计快照（供 dashboard / API）。按失败次数降序。
+    /// 返回 `(按 key 明细数组, 全局汇总)`。
+    pub fn connect_failures_snapshot(&self) -> (Vec<Value>, Value) {
+        let now = now_seconds();
+        let hour_ago = now - 3600.0;
+        let day_ago = now - CONNECT_FAILURE_RETENTION_SECONDS;
+        let mut rows: Vec<(u64, Value)> = self
+            .connect_failures
+            .iter()
+            .map(|(key_id, stat)| {
+                let recent_1h = stat.recent.iter().filter(|ts| **ts >= hour_ago).count();
+                let recent_24h = stat.recent.iter().filter(|ts| **ts >= day_ago).count();
+                (
+                    stat.total,
+                    json!({
+                        "key": key_id,
+                        "total": stat.total,
+                        "recent_1h": recent_1h,
+                        "recent_24h": recent_24h,
+                        "last_at": stat.last_at,
+                        "seconds_since_last": (now - stat.last_at).max(0.0) as i64,
+                        "last_message": stat.last_message,
+                    }),
+                )
+            })
+            .collect();
+        rows.sort_by_key(|(total, _)| std::cmp::Reverse(*total));
+        let keys: Vec<Value> = rows.into_iter().map(|(_, row)| row).collect();
+        let total: u64 = self.connect_failures.values().map(|s| s.total).sum();
+        let recent_1h: usize = self
+            .connect_failures
+            .values()
+            .map(|s| s.recent.iter().filter(|ts| **ts >= hour_ago).count())
+            .sum();
+        let recent_24h: usize = self
+            .connect_failures
+            .values()
+            .map(|s| s.recent.iter().filter(|ts| **ts >= day_ago).count())
+            .sum();
+        let summary = json!({
+            "total": total,
+            "recent_1h": recent_1h,
+            "recent_24h": recent_24h,
+            "affected_keys": keys.len(),
+        });
+        (keys, summary)
+    }
+
+    /// 测试钩子：直接注入连接失败统计（模拟历史数据）。
+    #[cfg(test)]
+    pub(crate) fn force_connect_failure_stat(&mut self, key_id: &str, stat: ConnectFailureStat) {
+        self.connect_failures.insert(key_id.to_string(), stat);
     }
 
     /// 测试钩子：读取当前连败计数（不存在则 0）。

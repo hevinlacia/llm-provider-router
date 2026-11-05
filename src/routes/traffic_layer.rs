@@ -68,5 +68,9 @@ pub(crate) fn request_up_bytes(headers: &HeaderMap, payload: &Value) -> u64 {
         .get(axum::http::header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or_else(|| serde_json::to_vec(payload).map(|v| v.len() as u64).unwrap_or(0))
+        .unwrap_or_else(|| {
+            serde_json::to_vec(payload)
+                .map(|v| v.len() as u64)
+                .unwrap_or(0)
+        })
 }

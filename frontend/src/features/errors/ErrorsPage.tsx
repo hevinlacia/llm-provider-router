@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../api';
-import type { RecentErrorEntry } from '../../types';
+import { KpiCard } from '../../components/tables';
+import type {
+  ConnectFailureKeyRow,
+  ConnectFailureSummary,
+  RecentErrorEntry,
+} from '../../types';
 
 const CLASS_LABEL: Record<string, string> = {
   invalid: '失效',
@@ -15,16 +20,32 @@ function formatTime(ts: number): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+/** 把「距最近一次失败多少秒」渲染成人读相对时间。 */
+function formatAgo(seconds: number): string {
+  if (seconds < 60) return `${seconds} 秒前`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时前`;
+  return `${Math.floor(seconds / 86400)} 天前`;
+}
+
 export function ErrorsPage() {
   const [errors, setErrors] = useState<RecentErrorEntry[]>([]);
+  const [connSummary, setConnSummary] = useState<ConnectFailureSummary | null>(null);
+  const [connKeys, setConnKeys] = useState<ConnectFailureKeyRow[]>([]);
   const [error, setError] = useState('');
   const [classFilter, setClassFilter] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(true);
 
   const load = useCallback(async () => {
     try {
-      const data = await api.recentErrors();
+      // 独立 catch：前端可能先于后端部署（旧后端无 connect-stats 端点）。
+      const [data, stats] = await Promise.all([
+        api.recentErrors(),
+        api.connectFailureStats().catch(() => null),
+      ]);
       setErrors(data.errors ?? []);
+      setConnSummary(stats?.summary ?? null);
+      setConnKeys(stats?.keys ?? []);
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -74,6 +95,35 @@ export function ErrorsPage() {
         <button className="secondary" onClick={() => void load()}>刷新</button>
       </div>
     </header>
+    {connSummary && <section className="card">
+      <h2 style={{ marginTop: 0 }}>上游连接失败统计</h2>
+      <div className="muted" style={{ marginBottom: 10 }}>
+        只统计「重试后仍失败」的上游建连错误（status 599），与 key 失效无关。
+        持续增长通常意味着路由器 OpenClash 透明代理链路不稳（节点抖动 / 连接被 RST），
+        而非 key 过期；内存态，重启归零。
+      </div>
+      <div className="kpi-grid">
+        <KpiCard label="累计连接失败" value={String(connSummary.total)} accent="kpi-primary" />
+        <KpiCard label="近 1 小时" value={String(connSummary.recent_1h)} />
+        <KpiCard label="近 24 小时" value={String(connSummary.recent_24h)} />
+        <KpiCard label="涉及 key" value={String(connSummary.affected_keys)} />
+      </div>
+      {connKeys.length === 0 ? <p className="muted">暂无连接失败记录（链路正常）。</p> : <div className="table-wrap"><table>
+        <thead><tr>
+          <th>Key</th><th>累计</th><th>近 1h</th><th>近 24h</th><th>最近失败</th><th>最近错误</th>
+        </tr></thead>
+        <tbody>{connKeys.map((row) => <tr key={row.key}>
+          <td>{row.key}</td>
+          <td>{row.total}</td>
+          <td>{row.recent_1h > 0 ? <span className="status warn">{row.recent_1h}</span> : <span className="muted">0</span>}</td>
+          <td>{row.recent_24h > 0 ? <span className="status warn">{row.recent_24h}</span> : <span className="muted">0</span>}</td>
+          <td style={{ whiteSpace: 'nowrap' }} title={formatTime(row.last_at)}>
+            {formatAgo(row.seconds_since_last)}
+          </td>
+          <td style={{ maxWidth: 420, overflowWrap: 'anywhere' }} className="muted">{row.last_message}</td>
+        </tr>)}</tbody>
+      </table></div>}
+    </section>}
     <section className="card">
       {visible.length === 0 ? <p className="muted">暂无报错记录。</p> : <div className="table-wrap"><table>
         <thead><tr>

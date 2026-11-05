@@ -189,7 +189,7 @@ LLM_PROVIDER_ROUTER_SESSION_TTL_SECONDS=3600
 LLM_PROVIDER_ROUTER_MONTHLY_QUOTA_FALLBACK_SECONDS=86400
 LLM_PROVIDER_ROUTER_5H_QUOTA_FALLBACK_SECONDS=5400
 LLM_PROVIDER_ROUTER_AUTH_INVALID_FREEZE_SECONDS=86400
-LLM_PROVIDER_ROUTER_REQUEST_TIMEOUT_SECONDS=600
+LLM_PROVIDER_ROUTER_READ_TIMEOUT_SECONDS=600
 LLM_PROVIDER_ROUTER_BEARER_TOKEN=<optional; local auth token, read from environment only; falls back to LLM_PROVIDER_ROUTER_API_KEY>
 LLM_PROVIDER_ROUTER_USAGE_DB_PATH=~/.local/state/llm-provider-router/usage.sqlite3
 LLM_PROVIDER_ROUTER_STATE_DB_PATH=~/.local/state/llm-provider-router/state.sqlite3
@@ -198,9 +198,11 @@ LLM_PROVIDER_ROUTER_SEARCH_PROVIDERS_PATH=config/search-providers.json
 
 ## Provider Key Vault
 
-Providers read key values from environment variables named by each key's `env_var`. Two extra paths exist:
+Provider key 值**只来自明文 `config/api-keys.json`**（key 名 → 值，gitignored，按 key 名现场读盘，即改即生效）。
+2026-11-05 起不再支持从环境变量取值（`env_var` / `source` 字段已移除）——环境变量里的旧值可能与明文不一致，
+曾导致「供应商明明配了 key 却一直 401 / 身份验证失败」。
 
-- **Dashboard inline values**（Settings → Providers → Edit → Keys → Value column）：直接粘贴明文值，立即生效（`env::set_var`）并持久化到 `config/api-keys.json`（gitignored 明文本机文件），重启后自动重新注入。UI 只显示 set/missing 状态，不回显明文。
+- **Dashboard inline values**（Settings → Providers → Edit → Keys → 明文密钥）：直接粘贴明文值，保存即写入 `config/api-keys.json`，下一个请求生效。UI 只显示 set/missing 状态，不回显明文。
 - **SOPS 加密副本**（`config/api-keys.sops.json`）：明文原件不进 git；加密副本提交，规则在 `config/.sops.yaml`（age）。
 
 ```bash
@@ -340,7 +342,7 @@ LLM_PROVIDER_ROUTER_SLOT_AUTO_HEAL=1                # 活跃槽不在线时自�
 查看生命周期状态：`curl http://127.0.0.1:8789/_proxy/health` 的 `slot_management` 字段，
 或 `python3 bin/hot-deploy-router.py status`（含各槽 `idle_for` / `last_action`）。
 
-API key values are read from environment variables loaded from `~/.config/opencode/agent-secrets.env`. The encrypted source of truth is now `~/Developer/vault`; restore it with `python3 ~/Developer/vault/scripts/vault.py restore`. The dashboard can still show whether keys are configured and can update runtime env values, but persistent key changes should be made through the vault/env file flow.
+Provider key 值只从明文 `config/api-keys.json` 读取（2026-11-05 起不再支持环境变量取值）；加密副本与恢复流程见上文 Provider Key Vault（`bin/vault.sh`）。Dashboard 只显示 set / missing 状态，可随时粘贴新值覆盖（下一请求生效）。
 
 ## Persistence
 

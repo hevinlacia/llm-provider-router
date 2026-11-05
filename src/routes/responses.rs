@@ -15,6 +15,7 @@ use crate::features::chat::select::{
     upstream_key_value_locked, usage_key_name,
 };
 use crate::features::responses::{delta, store, translate};
+use crate::features::router::util::should_retry_upstream_send;
 use crate::features::router::{
     circuit_breaker_on_exhaustion, handle_connect_failure, handle_embedded_failure,
     handle_response_failure, note_success_differential, FailureAction, NoAvailableKeyError,
@@ -29,7 +30,7 @@ use std::collections::HashSet;
 
 use super::resp::{inject_router_headers, validate_auth, CallError};
 use super::resp::{internal_error, json_status, status_code};
-use super::session_fingerprint::extract_session_id;
+use super::session_fingerprint::{extract_session_id, opencode_session_header};
 use super::traffic_layer::{self, TrafficSession};
 
 /// input_items 端点 query 参数。
@@ -120,9 +121,7 @@ pub(crate) async fn responses(
         }
     }
     if session_id.is_some() {
-        response
-            .extensions_mut()
-            .insert(TrafficSession(session_id));
+        response.extensions_mut().insert(TrafficSession(session_id));
     }
     response
 }
@@ -352,26 +351,29 @@ async fn call_responses_passthrough(
             continue;
         };
 
+        // opencode-go 上游必须携带 x-opencode-session（见 opencode_session_header）
+        let oc_session = opencode_session_header(&alias, session_id.as_deref());
         let mut response: Option<reqwest::Response> = None;
         for attempt in 0..2 {
-            match app
+            let mut request = app
                 .client
                 .post(&endpoint)
                 .bearer_auth(key_value.clone())
-                .header("content-type", "application/json")
-                .json(&payload)
-                .send()
-                .await
-            {
+                .header("content-type", "application/json");
+            if let Some((name, value)) = &oc_session {
+                request = request.header(*name, value.clone());
+            }
+            match request.json(&payload).send().await {
                 Ok(resp) => {
                     response = Some(resp);
                     break;
                 }
                 Err(exc) => {
-                    // 连接层失败（拒连/DNS/建连超时）对同一死主机立即二连发无意义，
-                    // 直接交给 handle_connect_failure 冻结 + failover；超时类保留一次重试。
-                    let retryable = (exc.is_timeout() || exc.is_request()) && !exc.is_connect();
-                    if attempt == 0 && retryable {
+                    // 连接/请求层失败一律重试一次（2026-11-05 全池瘫痪事故）：本机流量经
+                    // OpenClash 透明代理出网，节点抖动/连接被 RST 是常态；一次瞬时失败就
+                    // 冻结唯一 key 会让所有会话同时不可用。重试会新建连接，真死主机两次
+                    // 都失败再冻结，代价仅多一次建连。
+                    if should_retry_upstream_send(attempt, exc.is_connect(), exc.is_timeout()) {
                         continue;
                     }
                     break;
@@ -531,29 +533,31 @@ async fn call_upstream_responses(
             continue;
         };
 
+        // opencode-go 上游必须携带 x-opencode-session（见 opencode_session_header）
+        let oc_session = opencode_session_header(&alias, session_id.as_deref());
         let mut response: Option<reqwest::Response> = None;
         for attempt in 0..2 {
-            match app
-                .client
-                .post(format!(
-                    "{}/chat/completions",
-                    alias.base_url.trim_end_matches('/')
-                ))
+            let mut request = app.client.post(format!(
+                "{}/chat/completions",
+                alias.base_url.trim_end_matches('/')
+            ));
+            request = request
                 .bearer_auth(key_value.clone())
-                .header("content-type", "application/json")
-                .json(&payload)
-                .send()
-                .await
-            {
+                .header("content-type", "application/json");
+            if let Some((name, value)) = &oc_session {
+                request = request.header(*name, value.clone());
+            }
+            match request.json(&payload).send().await {
                 Ok(resp) => {
                     response = Some(resp);
                     break;
                 }
                 Err(exc) => {
-                    // 连接层失败（拒连/DNS/建连超时）对同一死主机立即二连发无意义，
-                    // 直接交给 handle_connect_failure 冻结 + failover；超时类保留一次重试。
-                    let retryable = (exc.is_timeout() || exc.is_request()) && !exc.is_connect();
-                    if attempt == 0 && retryable {
+                    // 连接/请求层失败一律重试一次（2026-11-05 全池瘫痪事故）：本机流量经
+                    // OpenClash 透明代理出网，节点抖动/连接被 RST 是常态；一次瞬时失败就
+                    // 冻结唯一 key 会让所有会话同时不可用。重试会新建连接，真死主机两次
+                    // 都失败再冻结，代价仅多一次建连。
+                    if should_retry_upstream_send(attempt, exc.is_connect(), exc.is_timeout()) {
                         continue;
                     }
                     break;

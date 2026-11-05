@@ -32,11 +32,9 @@ impl RouterState {
                 .filter(|(_, k)| k.enabled)
                 .map(|(name, key)| KeyRef {
                     name: name.clone(),
-                    env_var: key.env_var.clone(),
                     weight: key.weight,
                     provider: custom.provider.clone(),
                     billing_type: key.billing_type.clone(),
-                    persist: key.persist,
                     daily_token_quota: key.daily_token_quota,
                 })
                 .collect();
@@ -65,6 +63,7 @@ impl RouterState {
     /// v2 架构完整状态视图：供应商（含 key enabled/frozen/可用性聚合）、
     /// 物理模型、逻辑模型（策略 + 路由目标）。
     pub fn v2_status(&mut self) -> Value {
+        let stored_keys = self.api_keys_store.load();
         let cfg = &self.v2;
         let mut providers = serde_json::Map::new();
         let provider_models =
@@ -90,7 +89,9 @@ impl RouterState {
                 keys.insert(
                     kname.clone(),
                     json!({
-                        "env_var": key.env_var,
+                        "configured": stored_keys
+                            .get(kname)
+                            .is_some_and(|value| !value.is_empty()),
                         "weight": key.weight,
                         "billing_type": key.billing_type,
                         "daily_token_quota": key.daily_token_quota,
@@ -351,28 +352,25 @@ impl RouterState {
         })
     }
 
-    /// v2 供应商探测信息：Chat Completions API 地址（base_url）+ Responses API 地址 + enabled key 的 env_var 列表（用于拉取模型名列表）。
+    /// v2 供应商探测信息：Chat Completions API 地址（base_url）+ Responses API 地址 +
+    /// enabled key 名列表（用于拉取模型名列表；key 值由调用方从明文 api-keys.json 读取）。
     /// 探测统一走 Chat Completions API：模型名拉取优先 base_url，未配置时回退 responses_base_url。
     pub fn v2_provider_probe(&self, name: &str) -> Option<(String, Option<String>, Vec<String>)> {
         let cfg = &self.v2;
         let provider = cfg.providers.get(name)?;
-        let mut env_vars: Vec<String> = provider
+        let mut key_names: Vec<String> = provider
             .keys
             .iter()
             .filter(|(_, key)| key.enabled)
-            .map(|(_, key)| key.env_var.clone())
+            .map(|(key_name, _)| key_name.clone())
             .collect();
-        if env_vars.is_empty() {
-            env_vars = provider
-                .keys
-                .values()
-                .map(|key| key.env_var.clone())
-                .collect();
+        if key_names.is_empty() {
+            key_names = provider.keys.keys().cloned().collect();
         }
         Some((
             provider.base_url.clone(),
             provider.responses_base_url.clone(),
-            env_vars,
+            key_names,
         ))
     }
 

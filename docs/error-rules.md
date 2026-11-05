@@ -41,6 +41,16 @@ invalid/限流冻结对应 key、解除会话粘性绑定、记入最近报错�
 default/ark 模板也加了 `rate_limit_error` / `rate_limit_exceeded` 关键词规则，
 覆盖其他供应商的流内限流事件。
 
+2026-11 补充（zp 鉴权失败形状）：智谱鉴权失败同样走 **HTTP 200 + 错误体**
+`{"code":1000,"msg":"身份验证失败。","success":false}`（字段是 `msg` 不是 `message`、
+错误码是数字）。此前扫描器只认 `message` 且快速门禁只匹配 `"error"`，该形状整条漏掉 →
+坏 key 当成功透传、永不冻结。现在：
+
+- `extract_stream_error_event` 接受 `msg` 别名与数字 `code`（第五种形状）；
+- `handle_embedded_failure` 快速门禁放宽到 `"error"` / `response.failed` / `"msg"` / `"code"`；
+- default / ark / zp 三个内置模板的 invalid 规则都加了鉴权文案关键词
+  （`身份验证失败` / `authentication failed` / `invalid api key`），命中即按失效冻结整把 key。
+
 ## 两层兜底（不依赖报错文案）
 
 - **差分冻结**：同一请求内某 key 失败（transient，未冻结）而后续 key 成功
