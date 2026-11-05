@@ -98,8 +98,8 @@
       }
     },
     "opencode-go": {
-      "base_url": "https://opencode.ai/zen/go/v1",
-      "responses_base_url": "https://opencode.ai/zen/go/v1",
+      "base_url": "https://opencode.ai/inference/go/openai/v1",
+      "responses_base_url": "https://opencode.ai/inference/go/openai/v1",
       "anthropic_base_url": null,
       "retry": null,
       "keys": {

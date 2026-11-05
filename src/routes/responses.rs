@@ -29,7 +29,7 @@ use std::collections::HashSet;
 
 use super::resp::{inject_router_headers, validate_auth, CallError};
 use super::resp::{internal_error, json_status, status_code};
-use super::session_fingerprint::extract_session_id;
+use super::session_fingerprint::{extract_session_id, opencode_session_header};
 use super::traffic_layer::{self, TrafficSession};
 
 /// input_items 端点 query 参数。
@@ -350,17 +350,19 @@ async fn call_responses_passthrough(
             continue;
         };
 
+        // opencode-go 上游必须携带 x-opencode-session（见 opencode_session_header）
+        let oc_session = opencode_session_header(&alias, session_id.as_deref());
         let mut response: Option<reqwest::Response> = None;
         for attempt in 0..2 {
-            match app
+            let mut request = app
                 .client
                 .post(&endpoint)
                 .bearer_auth(key_value.clone())
-                .header("content-type", "application/json")
-                .json(&payload)
-                .send()
-                .await
-            {
+                .header("content-type", "application/json");
+            if let Some((name, value)) = &oc_session {
+                request = request.header(*name, value.clone());
+            }
+            match request.json(&payload).send().await {
                 Ok(resp) => {
                     response = Some(resp);
                     break;
@@ -529,20 +531,21 @@ async fn call_upstream_responses(
             continue;
         };
 
+        // opencode-go 上游必须携带 x-opencode-session（见 opencode_session_header）
+        let oc_session = opencode_session_header(&alias, session_id.as_deref());
         let mut response: Option<reqwest::Response> = None;
         for attempt in 0..2 {
-            match app
-                .client
-                .post(format!(
-                    "{}/chat/completions",
-                    alias.base_url.trim_end_matches('/')
-                ))
+            let mut request = app.client.post(format!(
+                "{}/chat/completions",
+                alias.base_url.trim_end_matches('/')
+            ));
+            request = request
                 .bearer_auth(key_value.clone())
-                .header("content-type", "application/json")
-                .json(&payload)
-                .send()
-                .await
-            {
+                .header("content-type", "application/json");
+            if let Some((name, value)) = &oc_session {
+                request = request.header(*name, value.clone());
+            }
+            match request.json(&payload).send().await {
                 Ok(resp) => {
                     response = Some(resp);
                     break;

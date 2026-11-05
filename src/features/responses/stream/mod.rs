@@ -186,17 +186,23 @@ pub(crate) async fn stream_responses_route(
                     continue;
                 };
 
+                // opencode-go 上游必须携带 x-opencode-session（见 opencode_session_header）
+                let oc_session = crate::routes::session_fingerprint::opencode_session_header(
+                    &alias,
+                    session_id.as_deref(),
+                );
                 let mut response: Option<reqwest::Response> = None;
                 let mut last_exc: Option<String> = None;
                 for attempt in 0..2 {
-                    match app
+                    let mut request = app
                         .client
                         .post(&endpoint)
                         .bearer_auth(key_value.clone())
-                        .header(CONTENT_TYPE, "application/json")
-                        .json(&upstream_payload)
-                        .send()
-                        .await
+                        .header(CONTENT_TYPE, "application/json");
+                    if let Some((name, value)) = &oc_session {
+                        request = request.header(*name, value.clone());
+                    }
+                    match request.json(&upstream_payload).send().await
                     {
                         Ok(resp) => {
                             response = Some(resp);
@@ -1152,7 +1158,11 @@ fn sse_stream_break_event(
     exc: &str,
     is_timeout: bool,
 ) -> String {
-    let timeout_hint = if is_timeout { " (read idle timeout)" } else { "" };
+    let timeout_hint = if is_timeout {
+        " (read idle timeout)"
+    } else {
+        ""
+    };
     let message = format!(
         "upstream stream broke mid-response after {bytes} bytes ({provider}/{key} for {alias}): {exc}{timeout_hint}"
     );

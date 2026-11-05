@@ -35,7 +35,7 @@ use std::collections::HashSet;
 use super::resp::{inject_router_headers, CallError};
 use super::resp::{internal_error, json_status, status_code};
 use super::responses::{responses_alias_dispatch, translate_request};
-use super::session_fingerprint::extract_session_id;
+use super::session_fingerprint::{extract_session_id, opencode_session_header};
 use super::traffic_layer::{self, TrafficSession};
 
 /// 非流式响应体读取上限（64MB，与路由层 body limit 一致）。
@@ -401,17 +401,20 @@ async fn stream_anthropic_passthrough(
                     continue;
                 };
 
+                // opencode-go 上游必须携带 x-opencode-session（见 opencode_session_header）
+                let oc_session = opencode_session_header(&alias, session_id.as_deref());
                 let mut response: Option<reqwest::Response> = None;
                 for attempt in 0..2 {
-                    match app
+                    let mut request = app
                         .client
                         .post(&endpoint)
                         .header("x-api-key", key_value.clone())
                         .header("anthropic-version", "2023-06-01")
-                        .header(CONTENT_TYPE, "application/json")
-                        .json(&upstream_payload)
-                        .send()
-                        .await
+                        .header(CONTENT_TYPE, "application/json");
+                    if let Some((name, value)) = &oc_session {
+                        request = request.header(*name, value.clone());
+                    }
+                    match request.json(&upstream_payload).send().await
                     {
                         Ok(resp) => {
                             response = Some(resp);
@@ -644,18 +647,20 @@ async fn call_anthropic_passthrough(
             continue;
         };
 
+        // opencode-go 上游必须携带 x-opencode-session（见 opencode_session_header）
+        let oc_session = opencode_session_header(&alias, session_id.as_deref());
         let mut response: Option<reqwest::Response> = None;
         for attempt in 0..2 {
-            match app
+            let mut request = app
                 .client
                 .post(&endpoint)
                 .header("x-api-key", key_value.clone())
                 .header("anthropic-version", "2023-06-01")
-                .header(CONTENT_TYPE, "application/json")
-                .json(&upstream_payload)
-                .send()
-                .await
-            {
+                .header(CONTENT_TYPE, "application/json");
+            if let Some((name, value)) = &oc_session {
+                request = request.header(*name, value.clone());
+            }
+            match request.json(&upstream_payload).send().await {
                 Ok(resp) => {
                     response = Some(resp);
                     break;
