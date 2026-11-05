@@ -1,0 +1,25 @@
+tests/e2e_stream.rs
+  9aa64e580c48546d 84,94-95,153-156,161-166,199,223-229,265,405
+src/features/router/failure.rs
+  9aa64e580c48546d 428
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "2c7a4296ace9c8c5c000a906c43eeb010abd55de",
+  "prompts": {
+    "9aa64e580c48546d": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1a6f6-2af1-733f-a44f-fa95d3a396c5",
+        "model": "medium-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 22,
+      "total_deletions": 5,
+      "accepted_lines": 22,
+      "overriden_lines": 0
+    }
+  }
+}
