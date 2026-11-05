@@ -6,11 +6,19 @@ use axum::extract::{Query, State};
 use axum::http::header::CACHE_CONTROL;
 use axum::http::HeaderValue;
 use axum::response::Response;
+use axum::Json;
+use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
 use super::resp::{merge_ok, with_state_json};
 use super::{UsageQuery, UsageSeriesQuery};
+
+/// `POST /api/frozen/clear` 可选请求体：`{"provider": "zp"}` 只清该供应商。
+#[derive(Debug, Deserialize)]
+pub(crate) struct FrozenClearRequest {
+    pub provider: Option<String>,
+}
 
 pub(crate) async fn health(State(app): State<AppState>) -> Response {
     with_state_json(&app, |state| Ok(merge_ok(state.snapshot()?)))
@@ -93,9 +101,31 @@ pub(crate) async fn api_usage_reset(State(app): State<AppState>) -> Response {
     })
 }
 
-pub(crate) async fn api_frozen_clear(State(app): State<AppState>) -> Response {
-    with_state_json(&app, |state| {
-        state.clear_frozen()?;
-        Ok(merge_ok(state.snapshot()?))
+/// `POST /api/frozen/clear`：清除 key 冻结冷却。可选 JSON body `{"provider": "zp"}`
+/// 只清该供应商（含连败退避计数重置，dashboard Providers 行「Unfreeze」按钮）；
+/// 无 body / 无 provider 维持旧行为清全部（dashboard 首页「Clear Frozen Keys」）。
+pub(crate) async fn api_frozen_clear(
+    State(app): State<AppState>,
+    body: Option<Json<FrozenClearRequest>>,
+) -> Response {
+    let provider = body
+        .and_then(|Json(payload)| payload.provider)
+        .filter(|p| !p.trim().is_empty());
+    with_state_json(&app, move |state| {
+        let cleared = match provider.as_deref() {
+            Some(name) => state.clear_frozen_for_provider(name)?,
+            None => {
+                let snapshot = state.snapshot()?;
+                let before = snapshot["frozen"]
+                    .as_object()
+                    .map(|frozen| frozen.len())
+                    .unwrap_or(0);
+                state.clear_frozen()?;
+                before
+            }
+        };
+        let mut payload = merge_ok(state.snapshot()?);
+        payload["cleared"] = json!(cleared);
+        Ok(payload)
     })
 }
