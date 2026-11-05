@@ -81,7 +81,7 @@ async fn spawn_mock_upstream() -> SocketAddr {
 
 /// mock 上游：首次连接立即关闭（模拟 OpenClash 代理节点抖动 / 连接被 RST /
 /// stale pooled connection），之后正常回放 SSE。用于验证连接层失败会重试一次。
-async fn spawn_flaky_upstream() -> SocketAddr {
+async fn spawn_flaky_upstream(fail_first_n: usize) -> SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -91,8 +91,8 @@ async fn spawn_flaky_upstream() -> SocketAddr {
                 continue;
             };
             served += 1;
-            if served == 1 {
-                // 首个连接不返回任何响应直接关闭 → 客户端拿到 send/connect 错误。
+            if served <= fail_first_n {
+                // 前 N 个连接不返回任何响应直接关闭 → 客户端拿到 send/connect 错误。
                 drop(sock);
                 continue;
             }
@@ -150,8 +150,18 @@ struct TestEnv {
     _tmp: TempDir,
     _backend: ChildGuard,
     _proxy: ChildGuard,
+    /// 串行化锁：`free_port()` 是「绑定 :0 取值后立即释放」的免竞态写法，
+    /// 多测试并行时可能互相抢到同一端口，导致请求串到别的 backend
+    /// （2026-11-05 加第 6 个用例后暴露）。持有到测试结束即串行。
+    _serial: tokio::sync::MutexGuard<'static, ()>,
     proxy_url: String,
     client: reqwest::Client,
+}
+
+/// 跨测试共享的串行化锁（每个测试文件独立进程，只需本文件内串行）。
+fn env_serial_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
 async fn wait_healthy(url: &str, label: &str, log_dir: &Path) {
@@ -186,6 +196,7 @@ async fn setup_env() -> TestEnv {
 }
 
 async fn setup_env_with_mock(mock_addr: SocketAddr) -> TestEnv {
+    let serial = env_serial_lock().lock().await;
     let mock_base = format!("http://{mock_addr}");
     let tmp = tempfile::tempdir().unwrap();
     write_config_tree(tmp.path(), &mock_base);
@@ -208,6 +219,13 @@ async fn setup_env_with_mock(mock_addr: SocketAddr) -> TestEnv {
         .env(
             "LLM_PROVIDER_ROUTER_USAGE_DB_PATH",
             tmp.path().join("usage.sqlite3"),
+        )
+        // 关键隔离（2026-11-05）：不设就回退到生产默认
+        // ~/.local/state/llm-provider-router/state.sqlite3，测试会与真实冻结
+        // 记录/并行测试互相污染，表现为莫名奇妙的 "no available upstream key"。
+        .env(
+            "LLM_PROVIDER_ROUTER_STATE_DB_PATH",
+            tmp.path().join("state.sqlite3"),
         )
         .env("LLM_PROVIDER_ROUTER_READ_TIMEOUT_SECONDS", "30")
         .env("E2E_MOCK_KEY", "dummy-key")
@@ -244,6 +262,7 @@ async fn setup_env_with_mock(mock_addr: SocketAddr) -> TestEnv {
         _tmp: tmp,
         _backend: backend,
         _proxy: proxy,
+        _serial: serial,
         proxy_url,
         client: reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
@@ -383,7 +402,7 @@ async fn e2e_json_uncompressed_without_accept_encoding() {
 /// 验收口径：首次连接被上游直接关闭，router 重试后仍应拿到完整 SSE。
 #[tokio::test(flavor = "multi_thread")]
 async fn connect_error_is_retried_once() {
-    let env = setup_env_with_mock(spawn_flaky_upstream().await).await;
+    let env = setup_env_with_mock(spawn_flaky_upstream(1).await).await;
     let resp = env
         .client
         .post(format!("{}/v1/responses", env.proxy_url))
@@ -407,5 +426,55 @@ async fn connect_error_is_retried_once() {
         !text.contains("upstream_error"),
         "不应把连接层瞬时失败暴露为上游错误: {}",
         &text[..text.len().min(200)]
+    );
+}
+
+/// 端到端验证「连接失败统计」可见化（2026-11-05）：上游所有连接都立即关闭，
+/// router 内部重试一次仍失败 → 计入 /api/errors/connect-stats，供 dashboard
+/// 判断「是不是 OpenClash 透明代理链路不稳」。
+#[tokio::test(flavor = "multi_thread")]
+async fn connect_stats_records_exhausted_connect_failure() {
+    // usize::MAX：所有连接都直接关闭，内部重试也救不回来。
+    let env = setup_env_with_mock(spawn_flaky_upstream(usize::MAX).await).await;
+    let resp = env
+        .client
+        .post(format!("{}/v1/responses", env.proxy_url))
+        .json(&serde_json::json!({"model": "e2e-auto", "stream": true, "input": "hi"}))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("upstream_error") || body.contains("connect error"),
+        "重试耗尽后应报上游错误，实际: {}",
+        &body[..body.len().min(200)]
+    );
+
+    let stats: serde_json::Value = env
+        .client
+        .get(format!("{}/api/errors/connect-stats", env.proxy_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        stats["summary"]["total"], 1,
+        "一次请求最终失败应计 1 次（不是每次重试各计一次）: {stats}"
+    );
+    assert_eq!(stats["summary"]["recent_1h"], 1);
+    assert_eq!(stats["summary"]["affected_keys"], 1);
+    let keys = stats["keys"].as_array().expect("keys 数组");
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0]["key"], "mock/mock-key");
+    assert_eq!(keys[0]["total"], 1);
+    assert!(
+        keys[0]["last_message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("connect error"),
+        "应保留最近错误摘要: {}",
+        keys[0]["last_message"]
     );
 }

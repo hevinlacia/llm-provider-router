@@ -425,7 +425,7 @@ pub(crate) fn handle_connect_failure(
         let key_id = key_state_id(key);
         // 可观测性：无论是否冻结都计数（单 key 池不冻结，更依赖这个计数发现
         // 「代理链路不稳」），重试后仍失败的真实次数。
-        state.note_connect_failure(&key_id, exc_text);
+        state.note_connect_failure(&key_id, &message);
         let base = state.tunables().connect_error_freeze_seconds;
         if base > 0.0 && !single_key_pool {
             let ttl = state.note_connect_failure_streak(&key_id, base);
