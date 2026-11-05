@@ -1,0 +1,45 @@
+src/config/v2/fold.rs
+  9aa64e580c48546d 88
+justfile
+  9aa64e580c48546d 25-26
+src/config/v2/types.rs
+  9aa64e580c48546d 41-44
+src/routes/messages.rs
+  9aa64e580c48546d 400,404
+src/features/router/state/mod.rs
+  9aa64e580c48546d 138-142
+src/features/router/tests.rs
+  9aa64e580c48546d 15,69,79,89,178,318-321,328,333,340,342-345,349,368,378,607,617,755,771,786,802,959,1110-1228
+src/features/router/state/config.rs
+  9aa64e580c48546d 4,200-207,210-220,230,237,246,249,254,261-265,267,270-278,282,285-293,297-310,314-319,321-326,379-402
+src/config/v2/resolve.rs
+  9aa64e580c48546d 136
+src/config.rs
+  9aa64e580c48546d 30-34,41-79
+src/features/responses/stream/mod.rs
+  9aa64e580c48546d 185,189
+src/features/router/state/v2.rs
+  9aa64e580c48546d 40
+src/routes/config_v2.rs
+  9aa64e580c48546d 112-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "f19c7752f7e041b0027939e5a8353978f1295341",
+  "prompts": {
+    "9aa64e580c48546d": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1a6f6-2af1-733f-a44f-fa95d3a396c5",
+        "model": "medium-model-auto"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 312,
+      "overriden_lines": 6
+    }
+  }
+}
