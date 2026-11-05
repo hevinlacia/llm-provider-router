@@ -361,6 +361,33 @@ export type RecentErrorsResponse = {
   errors?: RecentErrorEntry[];
 };
 
+// —— 连接失败统计（/api/errors/connect-stats）——
+// 用于判断「是不是 OpenClash 透明代理链路不稳」而不是「key 失效」。
+
+export type ConnectFailureKeyRow = {
+  key: string;
+  total: number;
+  recent_1h: number;
+  recent_24h: number;
+  last_at: number;
+  seconds_since_last: number;
+  last_message: string;
+};
+
+export type ConnectFailureSummary = {
+  total: number;
+  recent_1h: number;
+  recent_24h: number;
+  affected_keys: number;
+};
+
+export type ConnectFailureStatsResponse = {
+  ok: boolean;
+  summary?: ConnectFailureSummary;
+  keys?: ConnectFailureKeyRow[];
+  note?: string;
+};
+
 // —— 上游解析兜底（/api/config/dns-overrides）——
 
 export type DnsOverridesConfig = {

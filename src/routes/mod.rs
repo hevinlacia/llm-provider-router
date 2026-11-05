@@ -100,6 +100,10 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
         .route("/settings", get(usage::dashboard))
         .route("/api/state", get(usage::api_state))
         .route("/api/errors/recent", get(errors::api_errors_recent))
+        .route(
+            "/api/errors/connect-stats",
+            get(errors::api_errors_connect_stats),
+        )
         .route("/api/usage", get(usage::api_usage))
         .route("/api/usage/series", get(usage::api_usage_series))
         .route("/api/sessions/active", get(usage::api_sessions_active))

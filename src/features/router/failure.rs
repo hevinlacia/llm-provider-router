@@ -422,9 +422,12 @@ pub(crate) fn handle_connect_failure(
         // OpenClash 透明代理链路抖动下极易发生）。因此单 key 池只记录不冻结：
         // 本次请求失败返回，下一次请求重新建连尝试（已带一次内部重试）。
         let single_key_pool = alias.keys.len() <= 1;
+        let key_id = key_state_id(key);
+        // 可观测性：无论是否冻结都计数（单 key 池不冻结，更依赖这个计数发现
+        // 「代理链路不稳」），重试后仍失败的真实次数。
+        state.note_connect_failure(&key_id, exc_text);
         let base = state.tunables().connect_error_freeze_seconds;
         if base > 0.0 && !single_key_pool {
-            let key_id = key_state_id(key);
             let ttl = state.note_connect_failure_streak(&key_id, base);
             if ttl > 0.0 {
                 let _ = state.freeze(

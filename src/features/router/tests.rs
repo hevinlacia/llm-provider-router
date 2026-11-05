@@ -1284,3 +1284,67 @@ fn connect_failure_does_not_freeze_single_key_pool() {
         "失败仍应记入 recent errors"
     );
 }
+
+// —— 连接失败统计（可观测性，2026-11-05）——
+
+#[test]
+fn connect_failure_stats_counts_even_for_single_key_pool() {
+    let app = AppState::new(test_settings()).unwrap();
+    let key = connect_test_key();
+    // 单 key 池：不冻结，但统计必须累计（否则代理链路不稳完全不可见）。
+    let alias = connect_test_single_key_alias(&key);
+    for _ in 0..3 {
+        let _ = handle_connect_failure(&app, &alias, &key, "connection reset by peer", Some("s1"));
+    }
+
+    let mut state = app.state.lock().unwrap();
+    let (keys, summary) = state.connect_failures_snapshot();
+    assert_eq!(summary["total"], 3, "累计次数应为 3");
+    assert_eq!(summary["recent_1h"], 3, "近 1h 次数应为 3");
+    assert_eq!(summary["recent_24h"], 3, "近 24h 次数应为 3");
+    assert_eq!(summary["affected_keys"], 1);
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0]["key"], "zp/jt");
+    assert_eq!(keys[0]["total"], 3);
+    assert!(
+        keys[0]["last_message"]
+            .as_str()
+            .unwrap()
+            .contains("connection reset"),
+        "应保留最近错误摘要"
+    );
+    // 单 key 池仍不冻结（回归保护）。
+    assert!(state.snapshot().unwrap()["frozen"]["zp/jt"].is_null());
+}
+
+#[test]
+fn connect_failure_stats_prunes_entries_older_than_retention() {
+    let app = AppState::new(test_settings()).unwrap();
+    let key = connect_test_key();
+    let alias = connect_test_single_key_alias(&key);
+    {
+        let mut state = app.state.lock().unwrap();
+        // 直接构造：一条 25 小时前的旧记录 + 一条当前记录
+        let now = now_seconds();
+        state.force_connect_failure_stat(
+            "zp/jt",
+            crate::features::router::state::ConnectFailureStat {
+                total: 10,
+                last_at: now,
+                last_message: "reset".into(),
+                recent: vec![now - 25.0 * 3600.0, now].into_iter().collect(),
+            },
+        );
+    }
+    // 再记一次失败：应淘汰 24h 窗口外的旧时间戳
+    let _ = handle_connect_failure(&app, &alias, &key, "reset", Some("s1"));
+
+    let state = app.state.lock().unwrap();
+    let (keys, summary) = state.connect_failures_snapshot();
+    assert_eq!(summary["total"], 11, "total 是生命周期累计值，不随窗口淘汰");
+    assert_eq!(
+        summary["recent_24h"], 2,
+        "25h 前的记录应被淘汰，只剩最近两条"
+    );
+    assert_eq!(keys[0]["recent_1h"], 2);
+}

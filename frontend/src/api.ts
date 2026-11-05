@@ -1,4 +1,4 @@
-import type { ActiveSessionsResponse, ErrorRulesConfig, FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderModelsResponse, RecentErrorsResponse, RouterCapabilities, SearchProvidersConfig, DnsOverridesConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, V2UnsupportedEntry } from './types';
+import type { ActiveSessionsResponse, ConnectFailureStatsResponse, ErrorRulesConfig, FilterState, KeyConfig, ModelAliasConfig, PhysicalModelPatch, PhysicalModelsConfig, ProviderModelsResponse, RecentErrorsResponse, RouterCapabilities, SearchProvidersConfig, DnsOverridesConfig, StateResponse, ThinkingMapsConfig, TokenPriceConfig, UsageSeriesBucket, UsageSeriesGroupBy, UsageSeriesResponse, UsageSnapshot, V2Status, V2UnsupportedEntry } from './types';
 
 /** 部署基路径（vite base 注入，'/' 归一为 ''）：fetch 与手写路径路由统一拼前缀。 */
 export const appBase = import.meta.env.BASE_URL === '/' ? '' : import.meta.env.BASE_URL.replace(/\/+$/, '');
@@ -219,5 +219,8 @@ export const api = {
   },
   async recentErrors() {
     return request<RecentErrorsResponse>('/api/errors/recent');
+  },
+  async connectFailureStats() {
+    return request<ConnectFailureStatsResponse>('/api/errors/connect-stats');
   },
 };
