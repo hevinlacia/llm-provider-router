@@ -109,7 +109,7 @@
       "retry": null,
       "keys": {
         "hevin": {
-          "env_var": "AGENT_AI_OPENCODEGO_HEVIN_API_KEY",
+          "env_var": "",
           "weight": 1,
           "billing_type": "subscription",
           "enabled": true,
