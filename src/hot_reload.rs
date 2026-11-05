@@ -2,7 +2,7 @@
 //!
 //! 轮询 `config/` 下 v2 配置文件的 (mtime, len) 快照，检测到变化即重载 v2 配置，
 //! 手工编辑 `providers-v2.json` / `models.json` / `logical-models.json` /
-//! `virtual-models.json` 后无需调用 `/api/config/reload-env` 或重启即可生效。
+//! `virtual-models.json` 后无需重启即可生效。
 //!
 //! 设计取舍：
 //! - 不引入 notify 等文件系统 watcher 依赖，2s 轮询对个人工具足够及时且实现最简。

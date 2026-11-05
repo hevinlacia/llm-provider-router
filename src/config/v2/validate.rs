@@ -17,11 +17,6 @@ pub fn validate(cfg: &V2Config) -> anyhow::Result<()> {
                 "provider {provider_name}: at least one of Chat Completions API / Responses API / Anthropic API base URL must be set"
             ));
         }
-        for (key_name, key) in &provider.keys {
-            // env_var 允许为空：dashboard 明文直配的 key（值存 api-keys.json vault，
-            // 按 key 名取值），不再强制绑定环境变量名。
-            let _ = (key_name, key);
-        }
     }
     for (model_id, model) in &cfg.models {
         if !cfg.providers.contains_key(&model.provider) {

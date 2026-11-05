@@ -131,10 +131,12 @@ fn spawn_mock_upstream(root: &Path) -> MockUpstream {
 fn write_config_tree(root: &Path, mock_base: &str) {
     let cfg = root.join("config");
     std::fs::create_dir_all(&cfg).unwrap();
+    // key 值只从明文 api-keys.json 读取（环境变量取值已移除）。
+    std::fs::write(cfg.join("api-keys.json"), r#"{"mock-key":"dummy-key"}"#).unwrap();
     std::fs::write(
         cfg.join("providers-v2.json"),
         format!(
-            r#"{{"providers":{{"mock":{{"base_url":"","responses_base_url":"{mock_base}","keys":{{"mock-key":{{"env_var":"E2E_DELTA_MOCK_KEY","weight":1,"billing_type":"payg","enabled":true,"persist":true}}}}}}}}}}"#
+            r#"{{"providers":{{"mock":{{"base_url":"","responses_base_url":"{mock_base}","keys":{{"mock-key":{{"weight":1,"billing_type":"payg","enabled":true}}}}}}}}}}"#
         ),
     )
     .unwrap();
@@ -217,7 +219,6 @@ async fn setup_env() -> TestEnv {
             state_dir.join("state.db"),
         )
         .env("LLM_PROVIDER_ROUTER_READ_TIMEOUT_SECONDS", "30")
-        .env("E2E_DELTA_MOCK_KEY", "dummy-key")
         .stdout(Stdio::from(
             std::fs::File::create(log_dir.join("backend-out.log")).unwrap(),
         ))

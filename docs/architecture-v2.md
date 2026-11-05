@@ -21,7 +21,7 @@
 | **PhysicalModel（物理模型）** | 某供应商下的真实模型，如 `ark/deepseek-v4-flash` | 继承 Provider | 继承 Provider | ✅（可选覆写） |
 | **ModelFamily（模型族）** | 跨供应商关联"同一模型"（如 deepseek-v4-flash 族），用于把不同供应商的同族模型绑定到逻辑模型 | ❌ | ❌ | ❌ |
 | **LogicalModel（逻辑模型 / 模型组）** | 对外暴露名（alias），无 base_url、无 key，只有路由目标 + 路由策略 + 默认参数 | ❌ | ❌ | ✅（默认参数） |
-| **Key** | 供应商下的凭证，env_var + weight + billing_type | — | — | — |
+| **Key** | 供应商下的凭证：key 名 + weight + billing_type；值只存明文 `config/api-keys.json` | — | — | — |
 
 **命名**：采用"逻辑模型 / 模型组（LogicalModel）"，不使用"虚拟供应商"（避免与物理供应商混淆，且它没有 base_url/key 的语义）。
 
@@ -42,28 +42,28 @@
         "retry_on_status": [401, 402, 429, 500, 502, 503, 504]
       },
       "keys": {
-        "garvin":    { "env_var": "AGENT_AI_ARK_GARVIN_API_KEY",    "weight": 6, "billing_type": "subscription" },
-        "wilford":   { "env_var": "AGENT_AI_ARK_WILFORD_API_KEY",   "weight": 3, "billing_type": "subscription", "enabled": false },
-        "hevin":     { "env_var": "AGENT_AI_ARK_HEVIN_API_KEY",     "weight": 5, "billing_type": "subscription" },
-        "khaine":    { "env_var": "AGENT_AI_ARK_KHAINE_API_KEY",    "weight": 6, "billing_type": "subscription" },
-        "cyril":     { "env_var": "AGENT_AI_ARK_CYRIL_API_KEY",     "weight": 4, "billing_type": "subscription" },
-        "moss":      { "env_var": "AGENT_AI_ARK_MOSS_API_KEY",      "weight": 4, "billing_type": "subscription" },
-        "ronnie":    { "env_var": "AGENT_AI_ARK_RONNIE_API_KEY",    "weight": 4, "billing_type": "subscription" },
-        "hevin-private": { "env_var": "AGENT_AI_ARK_HEVIN_PRIVATE_API_KEY", "weight": 6, "billing_type": "subscription" },
-        "shell":     { "env_var": "AGENT_AI_ARK_SHELL_API_KEY",     "weight": 6, "billing_type": "subscription" }
+        "garvin":    { "weight": 6, "billing_type": "subscription" },
+        "wilford":   { "weight": 3, "billing_type": "subscription", "enabled": false },
+        "hevin":     { "weight": 5, "billing_type": "subscription" },
+        "khaine":    { "weight": 6, "billing_type": "subscription" },
+        "cyril":     { "weight": 4, "billing_type": "subscription" },
+        "moss":      { "weight": 4, "billing_type": "subscription" },
+        "ronnie":    { "weight": 4, "billing_type": "subscription" },
+        "hevin-private": { "weight": 6, "billing_type": "subscription" },
+        "shell":     { "weight": 6, "billing_type": "subscription" }
       }
     },
     "deepseek-official": {
       "base_url": "https://api.deepseek.com",
       "keys": {
-        "deepseek-official": { "env_var": "AGENT_AI_DEEPSEEK_API_KEY", "weight": 1, "billing_type": "payg" }
+        "deepseek-official": { "weight": 1, "billing_type": "payg" }
       }
     },
     "openai-relay": {
       "base_url": "https://api.aixhan.com/v1",
       "retry": { "max_retry_seconds": 1800, "retry_delay_seconds": 15.0, "retry_on_status": [429, 500, 502, 503, 504] },
       "keys": {
-        "oai-hevin": { "env_var": "AGENT_AI_OPENAI_HEVIN_API_KEY", "weight": 1, "billing_type": "subscription" }
+        "oai-hevin": { "weight": 1, "billing_type": "subscription" }
       }
     }
   }
@@ -291,15 +291,12 @@ fn resolve(alias, session):
 
 ---
 
-## 10. 运行期 env 刷新（reload-env）
+## 10. key 值来源（2026-11-05 简化）
 
-`POST /api/config/reload-env` 让运行中的 backend 无需重启即读到新增/更新的
-provider key：
+key 值只有一个来源：明文 `config/api-keys.json`（key 名 → 值，gitignored），
+每次请求现场读盘，改值/解密立即生效，无需重启。
 
-- 配置：`LLM_PROVIDER_ROUTER_ENV_FILE`（systemd 单元里设为
-  `~/.config/environment.d/agent-env.conf`，即 vault 维护的合并 env 文件）。
-- 行为：重读该文件并 `std::env::set_var` 每个 `KEY=value` 到当前进程环境，
-  再 `reload_v2()` 重读 providers-v2.json 等配置，使新 key/provider 即时生效。
-  key 值在路由时 live `env::var`，因此无需重启。
-- 入口：front-proxy 8789 的 fallback 会把该请求转发到活跃 backend；
-  vault 的「刷新环境变量」在 import-environment 之后自动调用它。
+已移除：`env_var` / `source` 字段、环境变量取值、`/api/config/reload-env`、
+`LLM_PROVIDER_ROUTER_ENV_FILE`。原因：双源下环境变量里的旧值与明文不一致时，
+供应商会持续鉴权失败（如 zp/智谱返回 HTTP 200 + `{"code":1000,"msg":"身份验证失败。"}`），
+排查成本高。

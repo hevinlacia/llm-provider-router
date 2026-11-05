@@ -21,7 +21,7 @@ case "${1:-}" in
   decrypt)
     [[ -f "config/api-keys.sops.json" ]] || { echo "missing config/api-keys.sops.json"; exit 1; }
     SOPS_AGE_KEY_FILE="$AGE_KEY_FILE" sops --decrypt --config config/.sops.yaml config/api-keys.sops.json > "$PLAIN"
-    echo "decrypted config/api-keys.json — restart backend or POST /api/config/reload-env to apply"
+    echo "decrypted config/api-keys.json — 下一请求即生效（key 值每请求读盘），无需重启"
     ;;
   status)
     [[ -f "$PLAIN" ]] && echo "plaintext: present" || echo "plaintext: MISSING"

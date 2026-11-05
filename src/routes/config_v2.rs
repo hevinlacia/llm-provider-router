@@ -89,11 +89,6 @@ fn parse_v2_provider_body(
             keys.insert(
                 name.clone(),
                 crate::config_v2::V2Key {
-                    env_var: value
-                        .get("env_var")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
                     weight: value.get("weight").and_then(Value::as_i64).unwrap_or(1),
                     billing_type: value
                         .get("billing_type")
@@ -105,14 +100,6 @@ fn parse_v2_provider_body(
                         .get("enabled")
                         .and_then(Value::as_bool)
                         .unwrap_or(true),
-                    persist: value
-                        .get("persist")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(true),
-                    source: value
-                        .get("source")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
                 },
             );
         }
@@ -338,12 +325,12 @@ pub(crate) async fn api_config_v2_provider_models(
         }
     }
 
-    // 2. 取 provider 信息（Chat Completions API 地址 + enabled key env_var）
+    // 2. 取 provider 信息（Chat Completions API 地址 + enabled key 名）
     let probe = match app.state.lock() {
         Ok(state) => state.v2_provider_probe(&name),
         Err(_) => return internal_error("router state lock poisoned"),
     };
-    let Some((base_url, responses_base_url, env_vars)) = probe else {
+    let Some((base_url, responses_base_url, key_names)) = probe else {
         return json_status(
             StatusCode::NOT_FOUND,
             json!({
@@ -352,7 +339,7 @@ pub(crate) async fn api_config_v2_provider_models(
             }),
         );
     };
-    if env_vars.is_empty() {
+    if key_names.is_empty() {
         return json_status(
             StatusCode::BAD_REQUEST,
             json!({ "ok": false, "error": format!("provider {name} has no keys configured") }),
@@ -371,13 +358,21 @@ pub(crate) async fn api_config_v2_provider_models(
         );
     }
 
-    // 3. 逐个 key 尝试拉取 /models
+    // 3. 逐个 key 尝试拉取 /models（key 值来自明文 api-keys.json）
+    let key_values: Vec<(String, Option<String>)> = match app.state.lock() {
+        Ok(mut state) => key_names
+            .iter()
+            .map(|name| (name.clone(), state.key_value_by_name(name)))
+            .collect(),
+        Err(_) => return internal_error("router state lock poisoned"),
+    };
     let mut last_error: Option<String> = None;
     let mut models: Option<Vec<String>> = None;
-    for env_var in &env_vars {
-        let key = std::env::var(env_var).ok().filter(|v| !v.is_empty());
+    for (key_name, key) in &key_values {
         let Some(key) = key else {
-            last_error = Some(format!("env var {env_var} is not set"));
+            last_error = Some(format!(
+                "api-keys.json 缺少 \"{key_name}\" 条目（key 值只从明文配置读取）"
+            ));
             continue;
         };
         let url = format!("{}/models", models_base.trim_end_matches('/'));

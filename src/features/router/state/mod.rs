@@ -158,11 +158,8 @@ impl RouterState {
                 "llm-provider-router: error-rules load failed, using builtin defaults: {err}"
             );
         }
-        // key 值来源（2026-11-04 起）：显式 source 开关（KeyRef::source_setting），
-        // env 模式只读进程环境变量（agent-env.conf 经 systemd 注入 + reload-env 热加载），
-        // vault 模式只读 api-keys.json（每请求现场读盘，即改即生效）。
-        // 旧版启动时的 vault→env 注入 / env→vault 播种 / env-only 清理已删除：
-        // 两个源互不搬运，vault 是纯被动存储，dashboard 写入见 set_key_values。
+        // key 值来源（2026-11-05 起）：只有一个来源——明文 api-keys.json
+        // （按 key 名条目，每请求现场读盘，即改即生效）；环境变量取值已移除。
         let state = Self {
             settings,
             state_store,
@@ -183,47 +180,6 @@ impl RouterState {
             test_aliases: HashMap::new(),
         };
         Ok(state)
-    }
-
-    /// 运行期重读 env 文件（如 systemd environment.d 生成的 agent-env.conf）并把变量
-    /// 注入当前进程环境，使新增/更新的 provider key 无需重启即可被
-    /// `upstream_key_value` 读到（key 值在路由时 live `env::var`）。
-    /// 同时重读 v2 配置，让 providers-v2.json 里新增的 key/provider 即时生效。
-    /// 未配置 `LLM_PROVIDER_ROUTER_ENV_FILE` 时返回空结果（不报错）。
-    pub fn reload_env(&mut self) -> anyhow::Result<serde_json::Value> {
-        let Some(path) = self.settings.env_file_path.clone() else {
-            return Ok(serde_json::json!({
-                "reloaded": 0,
-                "path": "",
-                "message": "LLM_PROVIDER_ROUTER_ENV_FILE not configured",
-            }));
-        };
-        let expanded = expand_path(&path);
-        let content = std::fs::read_to_string(&expanded)
-            .map_err(|e| anyhow::anyhow!("read env file {}: {e}", expanded.display()))?;
-        let mut imported = 0usize;
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') || !line.contains('=') {
-                continue;
-            }
-            let (key, value) = match line.split_once('=') {
-                Some(pair) => pair,
-                None => continue,
-            };
-            let key = key.trim();
-            if key.is_empty() {
-                continue;
-            }
-            std::env::set_var(key, value.trim());
-            imported += 1;
-        }
-        // 重读 v2 配置：新增的 key/provider 即时生效。
-        let _ = self.reload_v2();
-        Ok(serde_json::json!({
-            "reloaded": imported,
-            "path": expanded.display().to_string(),
-        }))
     }
 
     pub fn cleanup(&mut self) -> anyhow::Result<()> {

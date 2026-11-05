@@ -175,9 +175,16 @@ pub fn default_template() -> ClassTemplate {
                 status: vec![401, 402, 403],
                 ..Default::default()
             },
+            // 通用鉴权失败文案：上游可能以 HTTP 200 + 错误体返回（如智谱
+            // `{"code":1000,"msg":"身份验证失败。"}`），按「失效」冻结整把 key。
             ClassRule {
                 status: Vec::new(),
-                keywords_any: vec!["subscription has expired".into()],
+                keywords_any: vec![
+                    "subscription has expired".into(),
+                    "身份验证失败".into(),
+                    "authentication failed".into(),
+                    "invalid api key".into(),
+                ],
                 keywords_all: Vec::new(),
             },
         ],
@@ -220,9 +227,16 @@ pub fn ark_template() -> ClassTemplate {
                 keywords_any: Vec::new(),
                 keywords_all: vec!["codingplan".into(), "subscription".into()],
             },
+            // 通用鉴权失败文案：上游可能以 HTTP 200 + 错误体返回（如智谱
+            // `{"code":1000,"msg":"身份验证失败。"}`），按「失效」冻结整把 key。
             ClassRule {
                 status: Vec::new(),
-                keywords_any: vec!["subscription has expired".into()],
+                keywords_any: vec![
+                    "subscription has expired".into(),
+                    "身份验证失败".into(),
+                    "authentication failed".into(),
+                    "invalid api key".into(),
+                ],
                 keywords_all: Vec::new(),
             },
         ],
@@ -264,9 +278,16 @@ pub fn zp_template() -> ClassTemplate {
                 status: vec![401, 402, 403],
                 ..Default::default()
             },
+            // 鉴权失败文案：智谱以 HTTP 200 + `{"code":1000,"msg":"身份验证失败。"}`
+            // 返回（2026-11 zp 事故），需按「失效」冻结整把 key，而不是当成功透传。
             ClassRule {
                 status: Vec::new(),
-                keywords_any: vec!["subscription has expired".into()],
+                keywords_any: vec![
+                    "subscription has expired".into(),
+                    "身份验证失败".into(),
+                    "authentication failed".into(),
+                    "invalid api key".into(),
+                ],
                 keywords_all: Vec::new(),
             },
         ],
@@ -447,6 +468,30 @@ mod tests {
         // 普通 400 不误伤
         assert_eq!(
             classify(&config, "ark", 400, "invalid parameter: messages is empty").class,
+            ErrorClass::Transient
+        );
+    }
+
+    #[test]
+    fn zp_auth_failure_body_classifies_invalid() {
+        let config = builtin_config();
+        // 智谱鉴权失败：HTTP 200 + {"code":1000,"msg":"身份验证失败。"}
+        // （2026-11 zp 事故：该形状此前识别不到，也不归类为失效，坏 key 永远不被冻结）。
+        let body = r#"{"code":1000,"msg":"身份验证失败。","success":false}"#.to_lowercase();
+        let classified = classify(&config, "zp", 200, &body);
+        assert_eq!(classified.class, ErrorClass::Invalid);
+        // default / ark 模板同样识别通用鉴权文案
+        assert_eq!(
+            classify(&config, "aixhan", 200, "authentication failed").class,
+            ErrorClass::Invalid
+        );
+        assert_eq!(
+            classify(&config, "ark", 200, "invalid api key").class,
+            ErrorClass::Invalid
+        );
+        // 正常请求错误不被误判为失效
+        assert_eq!(
+            classify(&config, "zp", 400, "invalid parameter: messages is empty").class,
             ErrorClass::Transient
         );
     }
