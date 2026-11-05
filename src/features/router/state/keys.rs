@@ -19,13 +19,6 @@ impl RouterState {
         values
     }
 
-    pub fn known_key_names(&mut self) -> HashSet<String> {
-        self.all_key_refs()
-            .into_iter()
-            .map(|key| key.name)
-            .collect()
-    }
-
     /// 仅保留模型池实际引用的供应商真实模型（物理模型 id）。
     pub(crate) fn referenced_physical_model_ids(&self) -> HashSet<String> {
         let cfg = &self.v2;

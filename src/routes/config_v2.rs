@@ -109,6 +109,10 @@ fn parse_v2_provider_body(
                         .get("persist")
                         .and_then(Value::as_bool)
                         .unwrap_or(true),
+                    source: value
+                        .get("source")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
                 },
             );
         }

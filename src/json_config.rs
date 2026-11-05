@@ -227,10 +227,6 @@ impl ApiKeysStore {
         }
     }
 
-    pub fn exists(&self) -> bool {
-        !self.is_memory() && self.path.exists()
-    }
-
     pub fn load(&self) -> HashMap<String, String> {
         if self.is_memory() || !self.path.exists() {
             return HashMap::new();

@@ -38,6 +38,10 @@ pub struct V2Key {
     /// key 值是否可持久化到 api-keys.json（env-only key 设 false）。
     #[serde(default = "default_persist")]
     pub persist: bool,
+    /// 取值来源显式开关："env" = 只读进程环境变量；"vault" = 只读
+    /// api-keys.json 的 key 名条目。缺省按兼容规则推断（env_var 非空 = env）。
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 fn default_weight() -> i64 {

@@ -700,6 +700,7 @@ mod tests {
                 provider: "mock-provider".into(),
                 billing_type: "subscription".into(),
                 persist: true,
+                source: None,
                 daily_token_quota: None,
             }],
             None,

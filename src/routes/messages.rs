@@ -397,7 +397,11 @@ async fn stream_anthropic_passthrough(
                     record_usage(&app.state, &alias.alias, &usage_key_name(&key), 599, None, session_id.as_deref());
                     // 本地配置问题，不影响熔断判定。
                     last_failure_transient = false;
-                    last_error = Some(format!("missing key value for {}", usage_key_name(&key)));
+                    last_error = Some(format!(
+                        "missing key value for {} ({})",
+                        usage_key_name(&key),
+                        key.value_source_hint()
+                    ));
                     continue;
                 };
 

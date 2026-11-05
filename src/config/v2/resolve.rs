@@ -133,6 +133,7 @@ fn enabled_keys_filtered(
             provider: provider_name.to_string(),
             billing_type: key.billing_type.clone(),
             persist: key.persist,
+            source: key.source.clone(),
             daily_token_quota: key.daily_token_quota,
         })
         .collect()

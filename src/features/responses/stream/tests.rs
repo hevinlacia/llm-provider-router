@@ -282,6 +282,7 @@ async fn all_keys_429_ends_with_error_event_not_empty_stream() {
             provider: "mock-provider".into(),
             billing_type: "subscription".into(),
             persist: true,
+            source: None,
             daily_token_quota: None,
         }],
         Some(RetryPolicy::new(
@@ -417,6 +418,7 @@ async fn upstream_truncated_stream_emits_response_incomplete() {
             provider: "mock-provider".into(),
             billing_type: "subscription".into(),
             persist: true,
+            source: None,
             daily_token_quota: None,
         }],
         Some(RetryPolicy::new(
@@ -559,6 +561,7 @@ async fn subscription_invalid_400_falls_back_to_next_key() {
         provider: "ark".into(),
         billing_type: "subscription".into(),
         persist: true,
+        source: None,
         daily_token_quota: None,
     };
     let alias = ModelAlias::new(
@@ -712,6 +715,7 @@ async fn zp_midstream_quota_error_freezes_key_and_unbinds_session() {
             provider: "zp".into(),
             billing_type: "subscription".into(),
             persist: true,
+            source: None,
             daily_token_quota: None,
         }],
         None,
@@ -825,6 +829,7 @@ async fn zp_passthrough_response_failed_event_freezes_key() {
             provider: "zp".into(),
             billing_type: "subscription".into(),
             persist: true,
+            source: None,
             daily_token_quota: None,
         }],
         None,

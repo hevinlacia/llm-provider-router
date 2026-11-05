@@ -21,7 +21,6 @@ use crate::usage_store::UsageStore;
 use anyhow::Context;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::env;
 
 pub(crate) mod config;
 mod keys;
@@ -136,72 +135,11 @@ impl RouterState {
                 "llm-provider-router: error-rules load failed, using builtin defaults: {err}"
             );
         }
-        // First run (file missing): seed from environment so existing keys are
-        // captured into the sole source of truth. Otherwise: apply stored key
-        // values to the process environment without overriding existing vars.
-        if !api_keys_store.exists() {
-            let mut seed: HashMap<String, String> = HashMap::new();
-            for provider in v2.providers.values() {
-                for key in provider.keys.values() {
-                    // Env-only keys (e.g. deepseek-official) are never
-                    // persisted to api-keys.json; they come from the
-                    // environment only. Empty env_var (dashboard inline key)
-                    // has nothing to seed from either.
-                    if !key.persist || key.env_var.is_empty() {
-                        continue;
-                    }
-                    if let Ok(value) = env::var(&key.env_var) {
-                        if !value.is_empty() {
-                            seed.insert(key.env_var.clone(), value);
-                        }
-                    }
-                }
-            }
-            if !seed.is_empty() {
-                let _ = api_keys_store.write(&seed);
-            }
-        } else {
-            let env_only_vars: HashSet<String> = v2
-                .providers
-                .values()
-                .flat_map(|provider| provider.keys.values())
-                .filter(|key| !key.persist)
-                .map(|key| key.env_var.clone())
-                .collect();
-            let known_env_vars: HashSet<String> = v2
-                .providers
-                .values()
-                .flat_map(|provider| provider.keys.values())
-                .filter(|key| !key.env_var.is_empty())
-                .map(|key| key.env_var.clone())
-                .collect();
-            let stored = api_keys_store.load();
-            let mut prune: Vec<String> = Vec::new();
-            for (env_var, value) in &stored {
-                // Vault-by-name entries (dashboard inline keys without an
-                // env var) are read by upstream_key_value from the store;
-                // never inject them as environment variables.
-                if !known_env_vars.contains(env_var) {
-                    continue;
-                }
-                // One-time cleanup: env-only keys must not linger in the
-                // plaintext store; the environment is their only source.
-                if env_only_vars.contains(env_var) {
-                    prune.push(env_var.clone());
-                    continue;
-                }
-                if env::var(env_var).ok().filter(|v| !v.is_empty()).is_none() {
-                    env::set_var(env_var, value);
-                }
-            }
-            if !prune.is_empty() {
-                let mut remaining = stored;
-                for var in &prune {
-                    remaining.remove(var);
-                }
-                let _ = api_keys_store.write(&remaining);
-            }
-        }
+        // key 值来源（2026-11-04 起）：显式 source 开关（KeyRef::source_setting），
+        // env 模式只读进程环境变量（agent-env.conf 经 systemd 注入 + reload-env 热加载），
+        // vault 模式只读 api-keys.json（每请求现场读盘，即改即生效）。
+        // 旧版启动时的 vault→env 注入 / env→vault 播种 / env-only 清理已删除：
+        // 两个源互不搬运，vault 是纯被动存储，dashboard 写入见 set_key_values。
         let state = Self {
             settings,
             state_store,

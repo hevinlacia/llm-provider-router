@@ -12,6 +12,7 @@ use crate::features::router::freeze::{key_state_id, parse_quota_reset};
 use crate::features::router::selection::{
     drop_exhausted_candidates, key_exhausted, order_targets, priority_key_pick, weighted_pick,
 };
+use crate::features::router::state::config::apply_key_value_write;
 use crate::features::router::state::RouterState;
 use crate::json_config::TokenPrice;
 use crate::state_store::now_seconds;
@@ -65,6 +66,7 @@ fn weighted_pick_is_sticky_for_session() {
             provider: "ark".into(),
             billing_type: "subscription".into(),
             persist: true,
+            source: None,
             daily_token_quota: None,
         },
         KeyRef {
@@ -74,6 +76,7 @@ fn weighted_pick_is_sticky_for_session() {
             provider: "ark".into(),
             billing_type: "subscription".into(),
             persist: true,
+            source: None,
             daily_token_quota: None,
         },
         KeyRef {
@@ -83,6 +86,7 @@ fn weighted_pick_is_sticky_for_session() {
             provider: "ark".into(),
             billing_type: "subscription".into(),
             persist: true,
+            source: None,
             daily_token_quota: None,
         },
     ];
@@ -171,6 +175,7 @@ fn sub_test_key(name: &str, env_var: &str) -> KeyRef {
         provider: "ark".into(),
         billing_type: "subscription".into(),
         persist: true,
+        source: None,
         daily_token_quota: None,
     }
 }
@@ -310,42 +315,38 @@ fn binding_skips_key_already_tried_in_request() {
 }
 
 #[test]
-fn stored_keys_are_kept_and_applied_to_env() {
+fn startup_no_longer_touches_vault_or_env() {
+    // 2026-11-04 起 vault↔env 互通已删除：启动时不再把 vault 里 env-var 名的
+    // 条目注入进程环境，也不做播种/清理；vault 是纯被动存储，env 模式 key
+    // 由 agent-env.conf/systemd 直接供给。
     let dir = tempfile::tempdir().unwrap();
     let store_path = dir.path().join("api-keys.json");
     fs::write(
         &store_path,
         json!({
             "AGENT_AI_ARK_TEST_PERSIST_API_KEY": "persist-value",
+            "vault-inline": "inline-value",
         })
         .to_string(),
     )
     .unwrap();
-    env::set_var("AGENT_AI_ARK_TEST_PERSIST_API_KEY", "persist-value");
+    env::remove_var("AGENT_AI_ARK_TEST_PERSIST_API_KEY");
 
     let settings = Settings {
         api_keys_path: store_path.to_str().unwrap().to_string(),
         ..test_settings()
     };
     let mut state = RouterState::new(settings).unwrap();
+    let _ = &mut state;
 
-    // Persist key 保留在 store 中。
+    // 启动后 env 未被注入（互通已删除）。
+    assert!(env::var("AGENT_AI_ARK_TEST_PERSIST_API_KEY").is_err());
+
+    // vault 文件原样保留（无播种/清理改动）。
     let stored: HashMap<String, String> =
         serde_json::from_str(&fs::read_to_string(&store_path).unwrap()).unwrap();
     assert!(stored.contains_key("AGENT_AI_ARK_TEST_PERSIST_API_KEY"));
-
-    // store 中的 key 值在 env 缺失时被应用到进程环境（启动恢复机制）。
-    let restored = state
-        .all_key_refs()
-        .into_iter()
-        .find(|key| key.env_var == "AGENT_AI_ARK_TEST_PERSIST_API_KEY");
-    if let Some(key) = restored {
-        assert!(key.persist);
-        assert_eq!(
-            state.upstream_key_value(&key).unwrap().as_deref(),
-            Some("persist-value")
-        );
-    }
+    assert!(stored.contains_key("vault-inline"));
 }
 
 #[test]
@@ -364,6 +365,7 @@ fn zero_weight_key_is_not_selected_or_reused_from_binding() {
                 provider: "ark".into(),
                 billing_type: "subscription".into(),
                 persist: true,
+                source: None,
                 daily_token_quota: None,
             },
             KeyRef {
@@ -373,6 +375,7 @@ fn zero_weight_key_is_not_selected_or_reused_from_binding() {
                 provider: "ark".into(),
                 billing_type: "subscription".into(),
                 persist: true,
+                source: None,
                 daily_token_quota: None,
             },
         ],
@@ -601,6 +604,7 @@ fn two_key_alias() -> ModelAlias {
                 provider: "ark".into(),
                 billing_type: "subscription".into(),
                 persist: true,
+                source: None,
                 daily_token_quota: None,
             },
             KeyRef {
@@ -610,6 +614,7 @@ fn two_key_alias() -> ModelAlias {
                 provider: "ark".into(),
                 billing_type: "subscription".into(),
                 persist: true,
+                source: None,
                 daily_token_quota: None,
             },
         ],
@@ -747,6 +752,7 @@ fn inline_key_value_reads_from_store_by_name() {
         provider: "ark".into(),
         billing_type: "subscription".into(),
         persist: true,
+        source: None,
         daily_token_quota: None,
     };
     assert_eq!(
@@ -762,6 +768,7 @@ fn inline_key_value_reads_from_store_by_name() {
         provider: "ark".into(),
         billing_type: "subscription".into(),
         persist: true,
+        source: None,
         daily_token_quota: None,
     };
     assert_eq!(
@@ -776,6 +783,7 @@ fn inline_key_value_reads_from_store_by_name() {
         provider: "ark".into(),
         billing_type: "subscription".into(),
         persist: true,
+        source: None,
         daily_token_quota: None,
     };
     assert_eq!(state.upstream_key_value(&missing).unwrap(), None);
@@ -791,6 +799,7 @@ fn quota_key(name: &str, weight: i64, quota: Option<u64>) -> KeyRef {
         provider: "ark".into(),
         billing_type: "subscription".into(),
         persist: true,
+        source: None,
         daily_token_quota: quota,
     }
 }
@@ -947,6 +956,7 @@ fn connect_test_key() -> KeyRef {
         provider: "zp".into(),
         billing_type: "subscription".into(),
         persist: true,
+        source: None,
         daily_token_quota: None,
     }
 }
@@ -1096,4 +1106,131 @@ fn frozen_single_key_candidate_yields_no_available_for_fast_fallback() {
         .select_key_excluding(&alias, Some("sess-x"), &HashSet::new())
         .unwrap_err();
     assert!(err.retry_after > 0);
+}
+
+// —— key 取值来源显式开关（2026-11-04）——
+
+fn source_test_key(source: Option<&str>, env_var: &str, name: &str) -> KeyRef {
+    KeyRef {
+        name: name.into(),
+        env_var: env_var.into(),
+        weight: 1,
+        provider: "ark".into(),
+        billing_type: "subscription".into(),
+        persist: true,
+        source: source.map(str::to_string),
+        daily_token_quota: None,
+    }
+}
+
+#[test]
+fn source_setting_explicit_switch_and_auto_default() {
+    use crate::config::KeySource;
+    // 显式声明优先。
+    assert_eq!(
+        source_test_key(Some("env"), "", "k").source_setting(),
+        KeySource::Env
+    );
+    assert_eq!(
+        source_test_key(Some("vault"), "X", "k").source_setting(),
+        KeySource::Vault
+    );
+    // 缺省按兼容规则推断：env_var 非空 = env，否则 vault。
+    assert_eq!(
+        source_test_key(None, "X", "k").source_setting(),
+        KeySource::Env
+    );
+    assert_eq!(
+        source_test_key(None, "", "k").source_setting(),
+        KeySource::Vault
+    );
+    // 未知取值按缺省规则处理（宽容解析，不 fail-fast）。
+    assert_eq!(
+        source_test_key(Some("bogus"), "X", "k").source_setting(),
+        KeySource::Env
+    );
+    assert_eq!(
+        source_test_key(Some("bogus"), "", "k").source_setting(),
+        KeySource::Vault
+    );
+}
+
+#[test]
+fn upstream_key_value_strict_single_source_when_explicit() {
+    use crate::config::KeySource;
+    let dir = tempfile::tempdir().unwrap();
+    let store_path = dir.path().join("api-keys.json");
+    // vault 里故意放与 env 模式 key 同名的条目：显式声明后互不回落。
+    fs::write(&store_path, json!({ "env-key": "vault-value" }).to_string()).unwrap();
+    env::set_var("STRICT_SOURCE_ENV_TEST", "env-value");
+
+    let settings = Settings {
+        api_keys_path: store_path.to_str().unwrap().to_string(),
+        ..test_settings()
+    };
+    let mut state = RouterState::new(settings).unwrap();
+    let key = |source: Option<&str>| source_test_key(source, "STRICT_SOURCE_ENV_TEST", "env-key");
+
+    // 显式 env：只读环境变量，vault 同名条目不参与。
+    assert_eq!(
+        state
+            .upstream_key_value(&key(Some("env")))
+            .unwrap()
+            .as_deref(),
+        Some("env-value")
+    );
+    // 显式 vault：只读 vault，环境变量不参与。
+    assert_eq!(
+        state
+            .upstream_key_value(&key(Some("vault")))
+            .unwrap()
+            .as_deref(),
+        Some("vault-value")
+    );
+    // 显式 env 但变量缺失 → None（不回落 vault）。
+    env::remove_var("STRICT_SOURCE_ENV_TEST");
+    assert_eq!(state.upstream_key_value(&key(Some("env"))).unwrap(), None);
+    // 缺省（auto）+ env_var 非空 → env，同样不回落 vault。
+    assert_eq!(state.upstream_key_value(&key(None)).unwrap(), None);
+    let _ = KeySource::Env;
+}
+
+#[test]
+fn value_source_hint_names_the_right_place() {
+    let env_key = source_test_key(Some("env"), "MY_ENV_VAR", "k");
+    assert!(env_key.value_source_hint().contains("MY_ENV_VAR"));
+    assert!(env_key.value_source_hint().contains("source=env"));
+
+    let vault_key = source_test_key(Some("vault"), "", "hevin");
+    assert!(vault_key.value_source_hint().contains("\"hevin\""));
+    assert!(vault_key.value_source_hint().contains("api-keys.json"));
+}
+
+#[test]
+fn apply_key_value_write_routes_by_source() {
+    let mut stored: HashMap<String, String> = HashMap::new();
+
+    // vault 模式：写 stored，不动环境变量，返回 false。
+    let vault_key = source_test_key(Some("vault"), "", "vault-key");
+    assert!(!apply_key_value_write(&vault_key, "v1", &mut stored));
+    assert_eq!(stored.get("vault-key").map(String::as_str), Some("v1"));
+    assert!(env::var("APPLYKV_TEST").is_err());
+
+    // env 模式：写运行时环境变量，不动 stored，返回 true（runtime-only）。
+    let env_key = source_test_key(Some("env"), "APPLYKV_TEST", "env-key");
+    assert!(apply_key_value_write(&env_key, "e1", &mut stored));
+    assert_eq!(env::var("APPLYKV_TEST").unwrap(), "e1");
+    assert!(!stored.contains_key("env-key"));
+
+    // 空值 = 删除语义。
+    assert!(apply_key_value_write(&env_key, "", &mut stored));
+    assert!(env::var("APPLYKV_TEST").is_err());
+    assert!(!apply_key_value_write(&vault_key, "", &mut stored));
+    assert!(!stored.contains_key("vault-key"));
+
+    // env 模式但 env_var 为空：防御性 no-op（调用方 set_key_values 已 ensure! 拦截）。
+    let broken = source_test_key(Some("env"), "", "broken");
+    assert!(apply_key_value_write(&broken, "x", &mut stored));
+    assert!(stored.is_empty());
+    env::remove_var("APPLYKV_TEST");
 }

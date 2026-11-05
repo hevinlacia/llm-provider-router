@@ -22,6 +22,8 @@ frontend-build:
 # 明文 config/api-keys.json 仅本机（gitignored）；加密副本 api-keys.sops.json 提交 git。
 # dashboard 改 key 后跑 just vault-encrypt 同步加密副本。
 # 跨机恢复：just vault-decrypt （需 ~/.config/sops/age/keys.txt 私钥）。
+# 生效语义（2026-11-04 source 开关后）：vault 模式 key（source=vault）每请求现场读盘，
+# 解密即生效无需重启；env 模式 key（source=env）不走此文件，改 agent-env.conf + reload-env。
 vault-encrypt:
     cp config/api-keys.json config/api-keys.sops.json
     SOPS_AGE_KEY_FILE={{age_key_file}} sops --encrypt --config config/.sops.yaml --in-place config/api-keys.sops.json

@@ -11,7 +11,8 @@
           "weight": 1,
           "billing_type": "payg",
           "enabled": false,
-          "persist": true
+          "persist": true,
+          "source": "env"
         }
       }
     },
@@ -26,7 +27,8 @@
           "weight": 1,
           "billing_type": "subscription",
           "enabled": true,
-          "persist": true
+          "persist": true,
+          "source": "env"
         }
       }
     },
@@ -53,7 +55,8 @@
           "weight": 1,
           "billing_type": "subscription",
           "enabled": true,
-          "persist": true
+          "persist": true,
+          "source": "env"
         }
       }
     },
@@ -78,7 +81,8 @@
           "weight": 1,
           "billing_type": "subscription",
           "enabled": true,
-          "persist": true
+          "persist": true,
+          "source": "env"
         }
       }
     },
@@ -93,7 +97,8 @@
           "weight": 1,
           "billing_type": "subscription",
           "enabled": true,
-          "persist": true
+          "persist": true,
+          "source": "env"
         }
       }
     },
@@ -108,7 +113,8 @@
           "weight": 1,
           "billing_type": "subscription",
           "enabled": true,
-          "persist": true
+          "persist": true,
+          "source": "vault"
         }
       }
     }
