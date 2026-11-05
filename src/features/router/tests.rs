@@ -962,6 +962,21 @@ fn connect_test_key() -> KeyRef {
 }
 
 fn connect_test_alias(key: &KeyRef) -> ModelAlias {
+    // 双 key 池：connect 短熔断的 failover 语义只在多 key 池成立
+    // （单 key 池冻结无收益，见 handle_connect_failure 的 2026-11-05 豁免）。
+    let mut second = key.clone();
+    second.name = "jt-backup".into();
+    second.env_var = "ZP_JT_BACKUP".into();
+    ModelAlias::new(
+        "glm-auto",
+        "openai/glm-x",
+        "http://zp.test",
+        vec![key.clone(), second],
+        None,
+    )
+}
+
+fn connect_test_single_key_alias(key: &KeyRef) -> ModelAlias {
     ModelAlias::new(
         "glm-auto",
         "openai/glm-x",
@@ -1096,7 +1111,8 @@ fn connect_streak_backoff_caps_at_32x() {
 fn frozen_single_key_candidate_yields_no_available_for_fast_fallback() {
     let mut state = RouterState::new(test_settings()).unwrap();
     let key = connect_test_key();
-    let alias = connect_test_alias(&key);
+    // 此用例断言「单 key 候选被冻结后无可用 key」，必须用单 key 别名。
+    let alias = connect_test_single_key_alias(&key);
     state
         .freeze("zp/jt", now_seconds() + 60.0, "connect_error")
         .unwrap();
@@ -1233,4 +1249,38 @@ fn apply_key_value_write_routes_by_source() {
     assert!(apply_key_value_write(&broken, "x", &mut stored));
     assert!(stored.is_empty());
     env::remove_var("APPLYKV_TEST");
+}
+
+/// 回归（2026-11-05 全池瘫痪事故）：单 key 池的 connect 失败不冻结。
+///
+/// 冻结本意是隔离坏 key + failover 到其他 key；池里只有一个 key 时没有
+/// failover 目标，冻结它等于把「偶发一次连接失败」升级成「全池不可用」，
+/// 且指数退避可长到 960s（OpenClash 代理链路抖动下极易发生）。
+#[test]
+fn connect_failure_does_not_freeze_single_key_pool() {
+    let app = AppState::new(test_settings()).unwrap();
+    let key = connect_test_key();
+    let alias = connect_test_single_key_alias(&key);
+
+    match handle_connect_failure(&app, &alias, &key, "connection refused", Some("s1")) {
+        FailureAction::NextKeyTransient(_) => {}
+        other => panic!("期望 NextKeyTransient，实际 {other:?}"),
+    }
+
+    let mut state = app.state.lock().unwrap();
+    // 不冻结：frozen 里没有该 key，后续请求可以立刻重试建连。
+    assert!(
+        state.snapshot().unwrap()["frozen"]["zp/jt"].is_null(),
+        "单 key 池不应因 connect 失败被冻结"
+    );
+    assert_eq!(
+        state.connect_streak_count("zp/jt"),
+        0,
+        "单 key 池不应累计连败计数（否则冻结关闭后仍留脏状态）"
+    );
+    // 错误仍然要记录（可观测性不能丢）。
+    assert!(
+        state.recent_errors_iter().count() > 0,
+        "失败仍应记入 recent errors"
+    );
 }

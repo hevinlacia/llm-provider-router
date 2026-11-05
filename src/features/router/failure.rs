@@ -415,8 +415,15 @@ pub(crate) fn handle_connect_failure(
             state.unbind(&alias.alias, sid);
         }
         // 短熔断：freeze 只延长不缩短，不会覆盖更长的配额/差分冻结。
+        //
+        // 单 key 池豁免（2026-11-05）：冻结的本意是「把坏 key 隔离掉、failover 到
+        // 另一个 key」。池里只有 1 个 key 时没有 failover 目标，冻结唯一 key 只会把
+        // 「偶发一次连接失败」升级成「全池直接不可用」（且指数退避可长到 960s，
+        // OpenClash 透明代理链路抖动下极易发生）。因此单 key 池只记录不冻结：
+        // 本次请求失败返回，下一次请求重新建连尝试（已带一次内部重试）。
+        let single_key_pool = alias.keys.len() <= 1;
         let base = state.tunables().connect_error_freeze_seconds;
-        if base > 0.0 {
+        if base > 0.0 && !single_key_pool {
             let key_id = key_state_id(key);
             let ttl = state.note_connect_failure_streak(&key_id, base);
             if ttl > 0.0 {

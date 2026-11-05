@@ -18,6 +18,7 @@ use crate::features::chat::select::{
     clear_unsupported_if_ok, record_usage, select_key_locked, upstream_key_value_locked,
     usage_key_name,
 };
+use crate::features::router::util::should_retry_upstream_send;
 use crate::features::router::{
     circuit_breaker_on_exhaustion, handle_connect_failure, handle_embedded_failure,
     handle_response_failure, note_stream_break, note_success_differential, FailureAction,
@@ -425,10 +426,11 @@ async fn stream_anthropic_passthrough(
                             break;
                         }
                         Err(exc) => {
-                            // 连接层失败（拒连/DNS/建连超时）对同一死主机立即二连发无意义，
-                        // 直接交给 handle_connect_failure 冻结 + failover；超时类保留一次重试。
-                        let retryable = (exc.is_timeout() || exc.is_request()) && !exc.is_connect();
-                            if attempt == 0 && retryable {
+                            // 连接/请求层失败一律重试一次（2026-11-05 全池瘫痪事故）：本机流量经
+                            // OpenClash 透明代理出网，节点抖动/连接被 RST 是常态；一次瞬时失败就
+                            // 冻结唯一 key 会让所有会话同时不可用。重试会新建连接，真死主机两次
+                            // 都失败再冻结，代价仅多一次建连。
+                            if should_retry_upstream_send(attempt, exc.is_connect(), exc.is_timeout()) {
                                 continue;
                             }
                             break;
@@ -670,10 +672,11 @@ async fn call_anthropic_passthrough(
                     break;
                 }
                 Err(exc) => {
-                    // 连接层失败（拒连/DNS/建连超时）对同一死主机立即二连发无意义，
-                    // 直接交给 handle_connect_failure 冻结 + failover；超时类保留一次重试。
-                    let retryable = (exc.is_timeout() || exc.is_request()) && !exc.is_connect();
-                    if attempt == 0 && retryable {
+                    // 连接/请求层失败一律重试一次（2026-11-05 全池瘫痪事故）：本机流量经
+                    // OpenClash 透明代理出网，节点抖动/连接被 RST 是常态；一次瞬时失败就
+                    // 冻结唯一 key 会让所有会话同时不可用。重试会新建连接，真死主机两次
+                    // 都失败再冻结，代价仅多一次建连。
+                    if should_retry_upstream_send(attempt, exc.is_connect(), exc.is_timeout()) {
                         continue;
                     }
                     break;

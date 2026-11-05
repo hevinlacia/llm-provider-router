@@ -34,7 +34,17 @@ impl AppState {
         let read_timeout = std::time::Duration::from_secs_f64(settings.read_timeout_seconds);
         // opencode-go (zen/go) 上游用 Cloudflare 拦截非浏览器 UA（error 1010），
         // 全局使用浏览器 UA 以兼容该上游；OpenAI 兼容 API 不校验 UA，无副作用。
+        // 连接建立超时（2026-11-05 事故）：reqwest 默认无 connect_timeout，只有
+        // read_timeout。本机流量经路由器 OpenClash 透明代理出网，代理节点抖动时
+        // TCP 握手会黑洞挂到系统级超时（~127s+），期间客户端已 Operation aborted，
+        // 之后 router 才报 connect error 并冻结 key。显式设定建连上限，快速失败。
+        let connect_timeout = std::env::var("LLM_PROVIDER_ROUTER_CONNECT_TIMEOUT_SECONDS")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|v| *v > 0.0)
+            .unwrap_or(10.0);
         let mut builder = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs_f64(connect_timeout))
             .read_timeout(read_timeout)
             .pool_idle_timeout(Duration::from_secs(30))
             .tcp_keepalive(Duration::from_secs(30))
