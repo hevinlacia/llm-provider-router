@@ -19,68 +19,24 @@ pub const DEFAULT_DIAG_SAMPLE_EVERY: &str = "1";
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct KeyRef {
     pub name: String,
-    pub env_var: String,
     pub weight: i64,
     pub provider: String,
     pub billing_type: String,
-    /// Whether the key value may be persisted to config/api-keys.json.
-    /// Env-only keys (persist=false) are read strictly from the environment.
-    #[serde(default = "default_persist")]
-    pub persist: bool,
-    /// 取值来源显式开关（2026-11-04）："env" = 只读进程环境变量；"vault" =
-    /// 只读 api-keys.json 的 key 名条目。缺省按兼容规则推断
-    /// （env_var 非空 = env，否则 vault），不再做任何 vault↔env 互通。
-    #[serde(default)]
-    pub source: Option<String>,
     /// 日 token 配额（可选，自然日口径）：当日 tokens ≥ 配额则该 key 视为耗尽。
     /// None = 不限（永不耗尽）；上游 429 冻结仍独立兜底。
     #[serde(default)]
     pub daily_token_quota: Option<u64>,
 }
 
-/// key 值来源（[`KeyRef::source_setting`] 的解析结果）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KeySource {
-    /// 只读进程环境变量（key.env_var）。
-    Env,
-    /// 只读 config/api-keys.json（按 key.name）。
-    Vault,
-}
-
 impl KeyRef {
-    /// 解析 key 的取值来源：显式 `source` 字段优先（"env"/"vault"，未知值按
-    /// 缺省规则）；缺省沿用兼容规则：env_var 非空 = env，否则 vault。
-    pub fn source_setting(&self) -> KeySource {
-        match self.source.as_deref() {
-            Some("env") => KeySource::Env,
-            Some("vault") => KeySource::Vault,
-            _ if !self.env_var.is_empty() => KeySource::Env,
-            _ => KeySource::Vault,
-        }
-    }
-
-    /// upstream_key_value 返回 None 时的人读提示：指明该 key 的来源模式与
-    /// 应该去哪里配置值（2026-11-04 missing key value 排障经验）。
+    /// upstream_key_value 返回 None 时的人读提示：key 值只来自明文
+    /// api-keys.json（按 key 名条目），不存在环境变量兜底（2026-11-05 起）。
     pub fn value_source_hint(&self) -> String {
-        match self.source_setting() {
-            KeySource::Env => {
-                format!(
-                    "source=env, 请设置环境变量 {}（agent-env.conf + reload-env）",
-                    self.env_var
-                )
-            }
-            KeySource::Vault => {
-                format!(
-                    "source=vault, 请在 api-keys.json 配置 \"{}\" 条目",
-                    self.name
-                )
-            }
-        }
+        format!(
+            "请在 api-keys.json 配置 \"{}\" 条目（明文填充，每请求现场读盘）",
+            self.name
+        )
     }
-}
-
-fn default_persist() -> bool {
-    true
 }
 
 #[derive(Clone, Debug)]
@@ -257,9 +213,6 @@ pub struct Settings {
     pub token_price_config_path: String,
     pub model_alias_config_path: String,
     pub search_providers_path: String,
-    /// 运行期刷新 key 用的 env 文件（如 systemd environment.d 生成的 agent-env.conf）；
-    /// 设置后 `/api/config/reload-env` 可重读该文件并把变量 set_var 进当前进程环境。
-    pub env_file_path: Option<String>,
     /// 供应商模型列表持久化路径（设置界面“查看供应商详情”缓存）。
     pub provider_models_path: String,
     /// 报错分类规则配置（模板 + tunables + 供应商绑定）。缺失时用内置预设。
@@ -340,9 +293,6 @@ pub fn load_settings() -> anyhow::Result<Settings> {
             "LLM_PROVIDER_ROUTER_SEARCH_PROVIDERS_PATH",
             DEFAULT_SEARCH_PROVIDERS_PATH,
         ),
-        env_file_path: env::var("LLM_PROVIDER_ROUTER_ENV_FILE")
-            .ok()
-            .filter(|value| !value.is_empty()),
         provider_models_path: env_or(
             "LLM_PROVIDER_ROUTER_PROVIDER_MODELS_PATH",
             "config/provider-models.json",

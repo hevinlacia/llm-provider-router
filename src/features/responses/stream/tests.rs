@@ -235,7 +235,6 @@ async fn all_keys_429_ends_with_error_event_not_empty_stream() {
     });
 
     // key 值从环境变量读取（upstream_key_value 只读 env）。
-    std::env::set_var("DSH_TEST_ROUTER_429_KEY", "test-key-value");
 
     let settings = Settings {
         host: "127.0.0.1".to_string(),
@@ -266,9 +265,12 @@ async fn all_keys_429_ends_with_error_event_not_empty_stream() {
         delta_cache_max_total_bytes: 512 * 1024 * 1024,
         delta_cache_session_max_bytes: 16 * 1024 * 1024,
         delta_cache_ttl_seconds: 3 * 3600,
-        env_file_path: None,
     };
     let app_state = AppState::new(settings).unwrap();
+    {
+        let mut st = app_state.state.lock().unwrap();
+        st.set_test_key_value("test-key", "test-key-value");
+    }
 
     // 单 key、translate 模式（responses_base_url=None）、retry 策略含 429。
     let alias = ModelAlias::new(
@@ -277,12 +279,9 @@ async fn all_keys_429_ends_with_error_event_not_empty_stream() {
         &format!("http://{addr}"),
         vec![KeyRef {
             name: "test-key".into(),
-            env_var: "DSH_TEST_ROUTER_429_KEY".into(),
             weight: 1,
             provider: "mock-provider".into(),
             billing_type: "subscription".into(),
-            persist: true,
-            source: None,
             daily_token_quota: None,
         }],
         Some(RetryPolicy::new(
@@ -371,8 +370,6 @@ async fn upstream_truncated_stream_emits_response_incomplete() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    std::env::set_var("DSH_TEST_ROUTER_TRUNC_KEY", "test-key-value");
-
     let settings = Settings {
         host: "127.0.0.1".to_string(),
         port: 0,
@@ -402,9 +399,12 @@ async fn upstream_truncated_stream_emits_response_incomplete() {
         delta_cache_max_total_bytes: 512 * 1024 * 1024,
         delta_cache_session_max_bytes: 16 * 1024 * 1024,
         delta_cache_ttl_seconds: 3 * 3600,
-        env_file_path: None,
     };
     let app_state = AppState::new(settings).unwrap();
+    {
+        let mut st = app_state.state.lock().unwrap();
+        st.set_test_key_value("test-key", "test-key-value");
+    }
 
     // 单 key、translate 模式（responses_base_url=None）。
     let alias = ModelAlias::new(
@@ -413,12 +413,9 @@ async fn upstream_truncated_stream_emits_response_incomplete() {
         &format!("http://{addr}"),
         vec![KeyRef {
             name: "test-key".into(),
-            env_var: "DSH_TEST_ROUTER_TRUNC_KEY".into(),
             weight: 1,
             provider: "mock-provider".into(),
             billing_type: "subscription".into(),
-            persist: true,
-            source: None,
             daily_token_quota: None,
         }],
         Some(RetryPolicy::new(
@@ -517,9 +514,6 @@ async fn subscription_invalid_400_falls_back_to_next_key() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    std::env::set_var("RESP_SUB_BAD_KEY", "bad-key-value");
-    std::env::set_var("RESP_SUB_GOOD_KEY", "good-key-value");
-
     let settings = Settings {
         host: "127.0.0.1".to_string(),
         port: 0,
@@ -549,29 +543,27 @@ async fn subscription_invalid_400_falls_back_to_next_key() {
         delta_cache_max_total_bytes: 512 * 1024 * 1024,
         delta_cache_session_max_bytes: 16 * 1024 * 1024,
         delta_cache_ttl_seconds: 3 * 3600,
-        env_file_path: None,
     };
     let app_state = AppState::new(settings).unwrap();
+    {
+        let mut st = app_state.state.lock().unwrap();
+        st.set_test_key_value("bad", "bad-key-value");
+        st.set_test_key_value("good", "good-key-value");
+    }
 
     // 两把 key、provider=ark（命中 ark 模板的 CodingPlanEnterprise 订阅失效规则）。
-    let key = |name: &str, env_var: &str| KeyRef {
+    let key = |name: &str| KeyRef {
         name: name.into(),
-        env_var: env_var.into(),
         weight: 1,
         provider: "ark".into(),
         billing_type: "subscription".into(),
-        persist: true,
-        source: None,
         daily_token_quota: None,
     };
     let alias = ModelAlias::new(
         "ark/sub-fallback",
         "openai/sub-fallback",
         &format!("http://{addr}"),
-        vec![
-            key("bad", "RESP_SUB_BAD_KEY"),
-            key("good", "RESP_SUB_GOOD_KEY"),
-        ],
+        vec![key("bad"), key("good")],
         None,
     );
 
@@ -650,7 +642,6 @@ fn embedded_error_settings() -> crate::config::Settings {
         delta_cache_max_total_bytes: 512 * 1024 * 1024,
         delta_cache_session_max_bytes: 16 * 1024 * 1024,
         delta_cache_ttl_seconds: 3 * 3600,
-        env_file_path: None,
     }
 }
 
@@ -699,10 +690,12 @@ async fn zp_midstream_quota_error_freezes_key_and_unbinds_session() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    std::env::set_var("ZP_MIDSTREAM_KEY", "zp-key-value");
-
     let settings: Settings = embedded_error_settings();
     let app_state = AppState::new(settings).unwrap();
+    {
+        let mut st = app_state.state.lock().unwrap();
+        st.set_test_key_value("jt", "zp-key-value");
+    }
 
     let alias = ModelAlias::new(
         "zp/mid-stream-test",
@@ -710,12 +703,9 @@ async fn zp_midstream_quota_error_freezes_key_and_unbinds_session() {
         &format!("http://{addr}"),
         vec![KeyRef {
             name: "jt".into(),
-            env_var: "ZP_MIDSTREAM_KEY".into(),
             weight: 1,
             provider: "zp".into(),
             billing_type: "subscription".into(),
-            persist: true,
-            source: None,
             daily_token_quota: None,
         }],
         None,
@@ -813,10 +803,12 @@ async fn zp_passthrough_response_failed_event_freezes_key() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    std::env::set_var("ZP_PASSTHROUGH_KEY", "zp-key-value-2");
-
     let settings: Settings = embedded_error_settings();
     let app_state = AppState::new(settings).unwrap();
+    {
+        let mut st = app_state.state.lock().unwrap();
+        st.set_test_key_value("jt2", "zp-key-value-2");
+    }
 
     let alias = ModelAlias::new(
         "zp/passthrough-test",
@@ -824,12 +816,9 @@ async fn zp_passthrough_response_failed_event_freezes_key() {
         "",
         vec![KeyRef {
             name: "jt2".into(),
-            env_var: "ZP_PASSTHROUGH_KEY".into(),
             weight: 1,
             provider: "zp".into(),
             billing_type: "subscription".into(),
-            persist: true,
-            source: None,
             daily_token_quota: None,
         }],
         None,

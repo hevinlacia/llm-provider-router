@@ -5,8 +5,9 @@ use crate::config_v2::{TargetCandidate, V2Strategy};
 use crate::error_rules::{builtin_config, classify, ErrorClass};
 use crate::features::chat::select::clear_unsupported_if_ok;
 use crate::features::router::failure::{
-    circuit_breaker_on_exhaustion, handle_connect_failure, handle_response_failure,
-    note_stream_break, note_success_differential, recent_errors_json, FailureAction,
+    circuit_breaker_on_exhaustion, extract_stream_error_event, handle_connect_failure,
+    handle_response_failure, note_stream_break, note_success_differential, recent_errors_json,
+    FailureAction,
 };
 use crate::features::router::freeze::{key_state_id, parse_quota_reset};
 use crate::features::router::selection::{
@@ -52,7 +53,6 @@ fn test_settings() -> Settings {
         delta_cache_max_total_bytes: 512 * 1024 * 1024,
         delta_cache_session_max_bytes: 16 * 1024 * 1024,
         delta_cache_ttl_seconds: 3 * 3600,
-        env_file_path: None,
     }
 }
 
@@ -61,32 +61,23 @@ fn weighted_pick_is_sticky_for_session() {
     let keys = vec![
         KeyRef {
             name: "a".into(),
-            env_var: "A".into(),
             weight: 1,
             provider: "ark".into(),
             billing_type: "subscription".into(),
-            persist: true,
-            source: None,
             daily_token_quota: None,
         },
         KeyRef {
             name: "b".into(),
-            env_var: "B".into(),
             weight: 3,
             provider: "ark".into(),
             billing_type: "subscription".into(),
-            persist: true,
-            source: None,
             daily_token_quota: None,
         },
         KeyRef {
             name: "c".into(),
-            env_var: "C".into(),
             weight: 5,
             provider: "ark".into(),
             billing_type: "subscription".into(),
-            persist: true,
-            source: None,
             daily_token_quota: None,
         },
     ];
@@ -167,15 +158,12 @@ fn ark_subscription_bodies_classify_invalid() {
     );
 }
 
-fn sub_test_key(name: &str, env_var: &str) -> KeyRef {
+fn sub_test_key(name: &str) -> KeyRef {
     KeyRef {
         name: name.into(),
-        env_var: env_var.into(),
         weight: 1,
         provider: "ark".into(),
         billing_type: "subscription".into(),
-        persist: true,
-        source: None,
         daily_token_quota: None,
     }
 }
@@ -183,12 +171,12 @@ fn sub_test_key(name: &str, env_var: &str) -> KeyRef {
 #[test]
 fn subscription_invalid_400_freezes_key_and_select_skips_it() {
     let app = AppState::new(test_settings()).unwrap();
-    let expired = sub_test_key("expired", "SUB_TEST_KEY");
+    let expired = sub_test_key("expired");
     let alias_with_expired = ModelAlias::new(
         "ark/test-model",
         "openai/test-model",
         "https://ark.example.com/api/coding/v3",
-        vec![expired.clone(), sub_test_key("healthy", "SUB_TEST_HEALTHY")],
+        vec![expired.clone(), sub_test_key("healthy")],
         None,
     );
     let headers = http::HeaderMap::new();
@@ -229,7 +217,7 @@ fn subscription_invalid_400_freezes_key_and_select_skips_it() {
     }
 
     // 普通 400（无订阅失效特征）→ transient → 不冻结，但应换下一把。
-    let plain = sub_test_key("plain", "SUB_TEST_PLAIN");
+    let plain = sub_test_key("plain");
     let action = handle_response_failure(
         &app,
         &alias_with_expired,
@@ -255,7 +243,7 @@ fn subscription_invalid_400_freezes_key_and_select_skips_it() {
 #[test]
 fn differential_success_freezes_ambiguous_keys() {
     let app = AppState::new(test_settings()).unwrap();
-    let flaky = sub_test_key("flaky", "DIFF_TEST_KEY");
+    let flaky = sub_test_key("flaky");
     note_success_differential(&app, std::slice::from_ref(&flaky));
     let mut state = app.state.lock().unwrap();
     assert!(
@@ -271,10 +259,7 @@ fn circuit_breaker_freezes_unfrozen_pool_keys() {
         "ark/breaker",
         "openai/breaker",
         "https://ark.example.com/api/coding/v3",
-        vec![
-            sub_test_key("k1", "BREAKER_K1"),
-            sub_test_key("k2", "BREAKER_K2"),
-        ],
+        vec![sub_test_key("k1"), sub_test_key("k2")],
         None,
     );
     circuit_breaker_on_exhaustion(&app, &alias);
@@ -297,10 +282,7 @@ fn binding_skips_key_already_tried_in_request() {
         "ark/binding-test",
         "openai/binding-test",
         "https://ark.example.com/api/coding/v3",
-        vec![
-            sub_test_key("a", "BINDING_A"),
-            sub_test_key("b", "BINDING_B"),
-        ],
+        vec![sub_test_key("a"), sub_test_key("b")],
         None,
     );
     state
@@ -316,9 +298,8 @@ fn binding_skips_key_already_tried_in_request() {
 
 #[test]
 fn startup_no_longer_touches_vault_or_env() {
-    // 2026-11-04 起 vault↔env 互通已删除：启动时不再把 vault 里 env-var 名的
-    // 条目注入进程环境，也不做播种/清理；vault 是纯被动存储，env 模式 key
-    // 由 agent-env.conf/systemd 直接供给。
+    // 2026-11-04 起 vault↔env 互通已删除：启动时不再把 vault 条目注入进程环境，
+    // 也不做播种/清理；2026-11-05 起环境变量取值整条移除，vault 是唯一来源。
     let dir = tempfile::tempdir().unwrap();
     let store_path = dir.path().join("api-keys.json");
     fs::write(
@@ -360,22 +341,16 @@ fn zero_weight_key_is_not_selected_or_reused_from_binding() {
         vec![
             KeyRef {
                 name: "off".into(),
-                env_var: "OFF".into(),
                 weight: 0,
                 provider: "ark".into(),
                 billing_type: "subscription".into(),
-                persist: true,
-                source: None,
                 daily_token_quota: None,
             },
             KeyRef {
                 name: "on".into(),
-                env_var: "ON".into(),
                 weight: 1,
                 provider: "ark".into(),
                 billing_type: "subscription".into(),
-                persist: true,
-                source: None,
                 daily_token_quota: None,
             },
         ],
@@ -555,36 +530,6 @@ fn order_targets_weighted_session_sticky_and_fallback_sorted() {
     assert_eq!(rest, sorted, "回退应按 weight 降序");
 }
 
-#[test]
-fn reload_env_reads_env_file_and_injects_vars() {
-    let dir = tempfile::tempdir().unwrap();
-    let env_file = dir.path().join("agent-env.conf");
-    fs::write(
-        &env_file,
-        "# comment line\n\nAGENT_TEST_RELOAD_KEY=reload-value\nOTHER_KEY=\n",
-    )
-    .unwrap();
-
-    let settings = Settings {
-        env_file_path: Some(env_file.to_str().unwrap().to_string()),
-        ..test_settings()
-    };
-    let mut state = RouterState::new(settings).unwrap();
-
-    let result = state.reload_env().unwrap();
-    let reloaded = result.get("reloaded").and_then(|v| v.as_u64()).unwrap();
-    // 跳过注释/空行/空值行（OTHER_KEY= 空值仍计入）
-    assert!(
-        reloaded >= 1,
-        "expected at least 1 var imported, got {reloaded}"
-    );
-    assert_eq!(
-        std::env::var("AGENT_TEST_RELOAD_KEY").as_deref().ok(),
-        Some("reload-value")
-    );
-    std::env::remove_var("AGENT_TEST_RELOAD_KEY");
-}
-
 // ---------------------------------------------------------------------------
 // key × 模型“不支持”学习（阶梯退避 + 永久失效 + dashboard 刷新）
 // ---------------------------------------------------------------------------
@@ -599,22 +544,16 @@ fn two_key_alias() -> ModelAlias {
         vec![
             KeyRef {
                 name: "good".into(),
-                env_var: "TWO_KEY_A".into(),
                 weight: 1,
                 provider: "ark".into(),
                 billing_type: "subscription".into(),
-                persist: true,
-                source: None,
                 daily_token_quota: None,
             },
             KeyRef {
                 name: "bad".into(),
-                env_var: "TWO_KEY_B".into(),
                 weight: 1,
                 provider: "ark".into(),
                 billing_type: "subscription".into(),
-                persist: true,
-                source: None,
                 daily_token_quota: None,
             },
         ],
@@ -727,7 +666,7 @@ fn unsupported_all_blocked_still_probes() {
 }
 
 // ---------------------------------------------------------------------------
-// 空 env_var（dashboard 明文直配）key 的 vault-by-name 读写链路
+// 明文 api-keys.json 按 key 名取值的读写链路
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -744,62 +683,36 @@ fn inline_key_value_reads_from_store_by_name() {
         ..test_settings()
     };
     let mut state = RouterState::new(settings).unwrap();
-    // vault-by-name：env_var 为空 → upstream_key_value fallback 到 store 按 key 名读取
+    // key 值只按 key 名从明文 api-keys.json 读取。
     let inline = KeyRef {
         name: "vault-key".into(),
-        env_var: "".into(),
         weight: 1,
         provider: "ark".into(),
         billing_type: "subscription".into(),
-        persist: true,
-        source: None,
         daily_token_quota: None,
     };
     assert_eq!(
         state.upstream_key_value(&inline).unwrap().as_deref(),
         Some("vault-value")
     );
-    // env 优先：env_var 非空且有值时优先取 env
-    env::set_var("INLINE_KEY_ENV_TEST", "env-wins");
-    let with_env = KeyRef {
-        name: "env-key".into(),
-        env_var: "INLINE_KEY_ENV_TEST".into(),
-        weight: 1,
-        provider: "ark".into(),
-        billing_type: "subscription".into(),
-        persist: true,
-        source: None,
-        daily_token_quota: None,
-    };
-    assert_eq!(
-        state.upstream_key_value(&with_env).unwrap().as_deref(),
-        Some("env-wins")
-    );
-    // 两者皆无 → None
+    // 缺失 → None
     let missing = KeyRef {
         name: "no-value-key".into(),
-        env_var: "".into(),
         weight: 1,
         provider: "ark".into(),
         billing_type: "subscription".into(),
-        persist: true,
-        source: None,
         daily_token_quota: None,
     };
     assert_eq!(state.upstream_key_value(&missing).unwrap(), None);
-    env::remove_var("INLINE_KEY_ENV_TEST");
 }
 
 /// —— 负载均衡策略：日配额耗尽与 priority 降级 ——
 fn quota_key(name: &str, weight: i64, quota: Option<u64>) -> KeyRef {
     KeyRef {
         name: name.into(),
-        env_var: format!("{name}-env"),
         weight,
         provider: "ark".into(),
         billing_type: "subscription".into(),
-        persist: true,
-        source: None,
         daily_token_quota: quota,
     }
 }
@@ -870,7 +783,7 @@ fn drop_exhausted_candidates_skips_only_when_alternative_exists() {
 #[test]
 fn note_stream_break_records_usage_ring_buffer_and_journal() {
     let app = AppState::new(test_settings()).unwrap();
-    let key = sub_test_key("break-key", "STREAM_BREAK_TEST_KEY");
+    let key = sub_test_key("break-key");
     let alias = ModelAlias::new(
         "ark/break-model",
         "openai/break-model",
@@ -919,7 +832,7 @@ fn note_stream_break_classifies_timeout_vs_transport() {
     // "error decoding response body"，无法区分超时与真上游断流。
     // note_stream_break 必须按 is_timeout 落分类标签。
     let app = AppState::new(test_settings()).unwrap();
-    let key = sub_test_key("break-key", "STREAM_BREAK_TIMEOUT_TEST_KEY");
+    let key = sub_test_key("break-key");
     let alias = ModelAlias::new(
         "ark/break-model",
         "openai/break-model",
@@ -951,12 +864,9 @@ fn note_stream_break_classifies_timeout_vs_transport() {
 fn connect_test_key() -> KeyRef {
     KeyRef {
         name: "jt".into(),
-        env_var: "ZP_JT".into(),
         weight: 1,
         provider: "zp".into(),
         billing_type: "subscription".into(),
-        persist: true,
-        source: None,
         daily_token_quota: None,
     }
 }
@@ -966,7 +876,6 @@ fn connect_test_alias(key: &KeyRef) -> ModelAlias {
     // （单 key 池冻结无收益，见 handle_connect_failure 的 2026-11-05 豁免）。
     let mut second = key.clone();
     second.name = "jt-backup".into();
-    second.env_var = "ZP_JT_BACKUP".into();
     ModelAlias::new(
         "glm-auto",
         "openai/glm-x",
@@ -1124,131 +1033,66 @@ fn frozen_single_key_candidate_yields_no_available_for_fast_fallback() {
     assert!(err.retry_after > 0);
 }
 
-// —— key 取值来源显式开关（2026-11-04）——
+// —— 嵌入错误形状识别（HTTP 200 + 错误体）——
 
-fn source_test_key(source: Option<&str>, env_var: &str, name: &str) -> KeyRef {
+#[test]
+fn embedded_error_shapes_including_msg_alias() {
+    // 智谱/BigModel：msg 别名 + 数字错误码（2026-11 zp 鉴权失败事故）
+    let zhipu = json!({"code": 1000, "msg": "身份验证失败。", "success": false});
+    assert_eq!(
+        extract_stream_error_event(&zhipu),
+        Some(("1000".to_string(), "身份验证失败。".to_string()))
+    );
+    // OpenAI 系 error 对象 + 字符串码
+    let openai = json!({"error": {"code": "invalid_api_key", "message": "bad key"}});
+    assert_eq!(
+        extract_stream_error_event(&openai),
+        Some(("invalid_api_key".to_string(), "bad key".to_string()))
+    );
+    // Responses 失败事件
+    let failed =
+        json!({"type": "response.failed", "response": {"error": {"code": "x", "message": "boom"}}});
+    assert_eq!(
+        extract_stream_error_event(&failed),
+        Some(("x".to_string(), "boom".to_string()))
+    );
+    // 正常响应不误判
+    assert_eq!(
+        extract_stream_error_event(&json!({"id": "resp_1", "output": []})),
+        None
+    );
+}
+
+// —— key 值只来自明文 api-keys.json（2026-11-05 移除环境变量取值）——
+
+fn source_test_key(name: &str) -> KeyRef {
     KeyRef {
         name: name.into(),
-        env_var: env_var.into(),
         weight: 1,
         provider: "ark".into(),
         billing_type: "subscription".into(),
-        persist: true,
-        source: source.map(str::to_string),
         daily_token_quota: None,
     }
 }
 
 #[test]
-fn source_setting_explicit_switch_and_auto_default() {
-    use crate::config::KeySource;
-    // 显式声明优先。
-    assert_eq!(
-        source_test_key(Some("env"), "", "k").source_setting(),
-        KeySource::Env
-    );
-    assert_eq!(
-        source_test_key(Some("vault"), "X", "k").source_setting(),
-        KeySource::Vault
-    );
-    // 缺省按兼容规则推断：env_var 非空 = env，否则 vault。
-    assert_eq!(
-        source_test_key(None, "X", "k").source_setting(),
-        KeySource::Env
-    );
-    assert_eq!(
-        source_test_key(None, "", "k").source_setting(),
-        KeySource::Vault
-    );
-    // 未知取值按缺省规则处理（宽容解析，不 fail-fast）。
-    assert_eq!(
-        source_test_key(Some("bogus"), "X", "k").source_setting(),
-        KeySource::Env
-    );
-    assert_eq!(
-        source_test_key(Some("bogus"), "", "k").source_setting(),
-        KeySource::Vault
-    );
+fn value_source_hint_points_to_api_keys_json() {
+    let key = source_test_key("hevin");
+    let hint = key.value_source_hint();
+    assert!(hint.contains("\"hevin\""), "提示应带 key 名: {hint}");
+    assert!(hint.contains("api-keys.json"), "提示应指向明文配置: {hint}");
+    assert!(!hint.contains("env"), "不应再提示环境变量: {hint}");
 }
 
 #[test]
-fn upstream_key_value_strict_single_source_when_explicit() {
-    use crate::config::KeySource;
-    let dir = tempfile::tempdir().unwrap();
-    let store_path = dir.path().join("api-keys.json");
-    // vault 里故意放与 env 模式 key 同名的条目：显式声明后互不回落。
-    fs::write(&store_path, json!({ "env-key": "vault-value" }).to_string()).unwrap();
-    env::set_var("STRICT_SOURCE_ENV_TEST", "env-value");
-
-    let settings = Settings {
-        api_keys_path: store_path.to_str().unwrap().to_string(),
-        ..test_settings()
-    };
-    let mut state = RouterState::new(settings).unwrap();
-    let key = |source: Option<&str>| source_test_key(source, "STRICT_SOURCE_ENV_TEST", "env-key");
-
-    // 显式 env：只读环境变量，vault 同名条目不参与。
-    assert_eq!(
-        state
-            .upstream_key_value(&key(Some("env")))
-            .unwrap()
-            .as_deref(),
-        Some("env-value")
-    );
-    // 显式 vault：只读 vault，环境变量不参与。
-    assert_eq!(
-        state
-            .upstream_key_value(&key(Some("vault")))
-            .unwrap()
-            .as_deref(),
-        Some("vault-value")
-    );
-    // 显式 env 但变量缺失 → None（不回落 vault）。
-    env::remove_var("STRICT_SOURCE_ENV_TEST");
-    assert_eq!(state.upstream_key_value(&key(Some("env"))).unwrap(), None);
-    // 缺省（auto）+ env_var 非空 → env，同样不回落 vault。
-    assert_eq!(state.upstream_key_value(&key(None)).unwrap(), None);
-    let _ = KeySource::Env;
-}
-
-#[test]
-fn value_source_hint_names_the_right_place() {
-    let env_key = source_test_key(Some("env"), "MY_ENV_VAR", "k");
-    assert!(env_key.value_source_hint().contains("MY_ENV_VAR"));
-    assert!(env_key.value_source_hint().contains("source=env"));
-
-    let vault_key = source_test_key(Some("vault"), "", "hevin");
-    assert!(vault_key.value_source_hint().contains("\"hevin\""));
-    assert!(vault_key.value_source_hint().contains("api-keys.json"));
-}
-
-#[test]
-fn apply_key_value_write_routes_by_source() {
+fn apply_key_value_write_persists_and_deletes() {
     let mut stored: HashMap<String, String> = HashMap::new();
-
-    // vault 模式：写 stored，不动环境变量，返回 false。
-    let vault_key = source_test_key(Some("vault"), "", "vault-key");
-    assert!(!apply_key_value_write(&vault_key, "v1", &mut stored));
+    let key = source_test_key("vault-key");
+    apply_key_value_write(&key, "v1", &mut stored);
     assert_eq!(stored.get("vault-key").map(String::as_str), Some("v1"));
-    assert!(env::var("APPLYKV_TEST").is_err());
-
-    // env 模式：写运行时环境变量，不动 stored，返回 true（runtime-only）。
-    let env_key = source_test_key(Some("env"), "APPLYKV_TEST", "env-key");
-    assert!(apply_key_value_write(&env_key, "e1", &mut stored));
-    assert_eq!(env::var("APPLYKV_TEST").unwrap(), "e1");
-    assert!(!stored.contains_key("env-key"));
-
     // 空值 = 删除语义。
-    assert!(apply_key_value_write(&env_key, "", &mut stored));
-    assert!(env::var("APPLYKV_TEST").is_err());
-    assert!(!apply_key_value_write(&vault_key, "", &mut stored));
+    apply_key_value_write(&key, "", &mut stored);
     assert!(!stored.contains_key("vault-key"));
-
-    // env 模式但 env_var 为空：防御性 no-op（调用方 set_key_values 已 ensure! 拦截）。
-    let broken = source_test_key(Some("env"), "", "broken");
-    assert!(apply_key_value_write(&broken, "x", &mut stored));
-    assert!(stored.is_empty());
-    env::remove_var("APPLYKV_TEST");
 }
 
 /// 回归（2026-11-05 全池瘫痪事故）：单 key 池的 connect 失败不冻结。

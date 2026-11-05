@@ -17,14 +17,14 @@ const PROVIDERS: &str = r#"{
             "retry_on_status": [401, 402, 429, 500, 502, 503, 504]
           },
           "keys": {
-            "hevin":   { "env_var": "AGENT_AI_ARK_HEVIN_API_KEY",   "weight": 5, "billing_type": "subscription" },
-            "wilford": { "env_var": "AGENT_AI_ARK_WILFORD_API_KEY", "weight": 3, "billing_type": "subscription", "enabled": false }
+            "hevin":   { "weight": 5, "billing_type": "subscription" },
+            "wilford": { "weight": 3, "billing_type": "subscription", "enabled": false }
           }
         },
         "deepseek-official": {
           "base_url": "https://api.deepseek.com",
           "keys": {
-            "deepseek-official": { "env_var": "AGENT_AI_DEEPSEEK_API_KEY", "weight": 1, "billing_type": "payg" }
+            "deepseek-official": { "weight": 1, "billing_type": "payg" }
           }
         }
       }
@@ -124,7 +124,6 @@ fn folds_to_aliases_takes_first_target_and_filters_disabled_keys() {
     // ark 的 wilford 被停用，不应出现在 keys 里
     let key_names: Vec<&str> = flash.keys.iter().map(|k| k.name.as_str()).collect();
     assert_eq!(key_names, vec!["hevin"]);
-    assert_eq!(flash.keys[0].env_var, "AGENT_AI_ARK_HEVIN_API_KEY");
     assert!(flash.retry_policy.is_some(), "ark retry 应被折叠");
 
     let official = aliases.get("deepseek-v4-flash-official").unwrap();
@@ -770,9 +769,10 @@ fn fold_respects_target_keys_allowlist() {
     );
 }
 
-/// 空 env_var（dashboard 明文直配 key）应通过校验：值走 api-keys.json vault。
+/// key 不再需要凭证声明字段（env_var 已移除）：只有 weight/billing_type 也应通过校验，
+/// 值由明文 api-keys.json 按 key 名提供。
 #[test]
-fn validate_accepts_empty_env_var() {
+fn validate_accepts_key_without_credential_fields() {
     let dir = std::env::temp_dir().join(format!("lpr-v2-test-{}-emptyenv", std::process::id()));
     let _ = fs::create_dir_all(&dir);
     let providers = r#"{
@@ -780,7 +780,7 @@ fn validate_accepts_empty_env_var() {
         "ark": {
           "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
           "keys": {
-            "inline-key": { "env_var": "", "weight": 1, "billing_type": "subscription" }
+            "inline-key": { "weight": 1, "billing_type": "subscription" }
           }
         }
       }
@@ -795,7 +795,11 @@ fn validate_accepts_empty_env_var() {
     let m = write_temp(&dir, "models.json", models);
     let l = write_temp(&dir, "logical.json", logical);
     let cfg = load_v2_config_from(&p, &m, &l, "/nonexistent/virtual-models.json");
-    assert!(cfg.is_ok(), "空 env_var 不应再被拒绝: {:?}", cfg.err());
+    assert!(
+        cfg.is_ok(),
+        "只有 weight/billing_type 的 key 应通过校验: {:?}",
+        cfg.err()
+    );
 }
 
 /// keys 白名单反序列化归一回归（serde 文件加载路径，热重载走此处）：
@@ -883,10 +887,14 @@ fn resolve_and_fold_skip_disabled_targets() {
 /// key.daily_token_quota 反序列化：缺省 None（不限），显式数值保留。
 #[test]
 fn key_daily_token_quota_defaults_to_none() {
-    let k: V2Key = serde_json::from_str(r#"{ "env_var": "X" }"#).unwrap();
+    let k: V2Key = serde_json::from_str(r#"{ "weight": 1 }"#).unwrap();
     assert_eq!(k.daily_token_quota, None, "缺省应不限量");
 
-    let k: V2Key =
-        serde_json::from_str(r#"{ "env_var": "X", "daily_token_quota": 5000000 }"#).unwrap();
+    // 兼容：旧配置里的 env_var / source / persist 字段被忽略（不报错、不再生效）。
+    let legacy: V2Key =
+        serde_json::from_str(r#"{ "env_var": "X", "source": "env", "persist": true }"#).unwrap();
+    assert_eq!(legacy.weight, 1, "旧字段应被忽略，其余取默认值");
+
+    let k: V2Key = serde_json::from_str(r#"{ "daily_token_quota": 5000000 }"#).unwrap();
     assert_eq!(k.daily_token_quota, Some(5_000_000));
 }

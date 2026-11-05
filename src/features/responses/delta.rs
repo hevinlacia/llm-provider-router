@@ -687,20 +687,21 @@ mod tests {
             axum::serve(listener, upstream).await.unwrap();
         });
 
-        std::env::set_var("DSH_TEST_DELTA_KEY", "test-key-value");
         let app_state = AppState::new(s).unwrap();
+        app_state
+            .state
+            .lock()
+            .unwrap()
+            .set_test_key_value("test-key", "test-key-value");
         let alias = ModelAlias::new(
             "mock/test-model",
             "openai/mock-test-model",
             &format!("http://{addr}"),
             vec![KeyRef {
                 name: "test-key".into(),
-                env_var: "DSH_TEST_DELTA_KEY".into(),
                 weight: 1,
                 provider: "mock-provider".into(),
                 billing_type: "subscription".into(),
-                persist: true,
-                source: None,
                 daily_token_quota: None,
             }],
             None,

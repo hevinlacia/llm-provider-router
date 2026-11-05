@@ -36,9 +36,11 @@ fn free_port() -> u16 {
 fn write_config_tree(root: &Path) {
     let cfg = root.join("config");
     std::fs::create_dir_all(&cfg).unwrap();
+    // key 值只从明文 api-keys.json 读取（环境变量取值已移除）。
+    std::fs::write(cfg.join("api-keys.json"), r#"{"mock-key":"dummy-key"}"#).unwrap();
     std::fs::write(
         cfg.join("providers-v2.json"),
-        r#"{"providers":{"mock":{"base_url":"","responses_base_url":"http://127.0.0.1:1","keys":{"mock-key":{"env_var":"E2E_HANDOFF_MOCK_KEY","weight":1,"billing_type":"payg","enabled":true,"persist":true}}}}}"#,
+        r#"{"providers":{"mock":{"base_url":"","responses_base_url":"http://127.0.0.1:1","keys":{"mock-key":{"weight":1,"billing_type":"payg","enabled":true}}}}}"#,
     )
     .unwrap();
     std::fs::write(
@@ -95,7 +97,6 @@ fn spawn_backend(name: &str, port: u16, tmp: &Path) -> ChildGuard {
             state_dir.join("state.db"),
         )
         .env("LLM_PROVIDER_ROUTER_READ_TIMEOUT_SECONDS", "30")
-        .env("E2E_HANDOFF_MOCK_KEY", "dummy-key")
         .stdout(Stdio::from(
             std::fs::File::create(tmp.join(format!("{name}-out.log"))).unwrap(),
         ))

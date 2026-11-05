@@ -7,12 +7,9 @@
       "retry": null,
       "keys": {
         "deepseek-official": {
-          "env_var": "AGENT_AI_DEEPSEEK_API_KEY",
           "weight": 1,
           "billing_type": "payg",
-          "enabled": false,
-          "persist": true,
-          "source": "env"
+          "enabled": false
         }
       }
     },
@@ -23,12 +20,9 @@
       "retry": null,
       "keys": {
         "jt": {
-          "env_var": "PROVIDER_ARK_AGENT_JT_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
-          "enabled": true,
-          "persist": true,
-          "source": "env"
+          "enabled": true
         }
       }
     },
@@ -51,12 +45,9 @@
       },
       "keys": {
         "hevin2": {
-          "env_var": "AGENT_AI_ARK_HEVIN2_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
-          "enabled": true,
-          "persist": true,
-          "source": "env"
+          "enabled": true
         }
       }
     },
@@ -77,12 +68,9 @@
       },
       "keys": {
         "oai-hevin": {
-          "env_var": "AGENT_AI_OPENAI_HEVIN_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
-          "enabled": true,
-          "persist": true,
-          "source": "env"
+          "enabled": true
         }
       }
     },
@@ -93,12 +81,9 @@
       "retry": null,
       "keys": {
         "hevin-6544": {
-          "env_var": "PROVIDER_ARK_AGENT_6544_API_KEY",
           "weight": 1,
           "billing_type": "subscription",
-          "enabled": true,
-          "persist": true,
-          "source": "env"
+          "enabled": true
         }
       }
     },
@@ -109,12 +94,9 @@
       "retry": null,
       "keys": {
         "hevin": {
-          "env_var": "",
           "weight": 1,
           "billing_type": "subscription",
-          "enabled": true,
-          "persist": true,
-          "source": "vault"
+          "enabled": true
         }
       }
     }

@@ -80,12 +80,9 @@ pub fn fold_to_aliases(cfg: &V2Config) -> anyhow::Result<HashMap<String, ModelAl
             })
             .map(|(key_name, key)| KeyRef {
                 name: key_name.clone(),
-                env_var: key.env_var.clone(),
                 weight: key.weight,
                 provider: model.provider.clone(),
                 billing_type: key.billing_type.clone(),
-                persist: key.persist,
-                source: key.source.clone(),
                 daily_token_quota: key.daily_token_quota,
             })
             .collect();

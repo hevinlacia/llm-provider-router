@@ -1,12 +1,11 @@
 //! RouterState 配置读写：key 权重、供应商 base_url、token 价格、模型等价组、自定义别名。
 
 use super::RouterState;
-use crate::config::{KeyRef, KeySource};
+use crate::config::KeyRef;
 use crate::features::router::util::sorted_join;
 use crate::json_config::TokenPrice;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::env;
 
 /// 物理模型配置补丁（供应商模型配置面板保存）：None 字段保持原值不变。
 #[derive(Clone, Debug)]
@@ -197,44 +196,23 @@ impl RouterState {
         let stored = self.api_keys_store.load();
         let mut keys = Vec::new();
         for key in refs {
-            // 与 upstream_key_value 同源：按 source_setting 严格单源判定，
-            // 不再跨源探测（env 模式不看 vault，vault 模式不看 env）。
-            let source_setting = match key.source_setting() {
-                KeySource::Env => "env",
-                KeySource::Vault => "vault",
-            };
-            let configured = match key.source_setting() {
-                KeySource::Env => env::var(&key.env_var)
-                    .ok()
-                    .filter(|value| !value.is_empty())
-                    .is_some(),
-                KeySource::Vault => stored
-                    .get(&key.name)
-                    .filter(|value| !value.is_empty())
-                    .is_some(),
-            };
-            let source = if configured {
-                match key.source_setting() {
-                    KeySource::Env => "environment",
-                    KeySource::Vault => "vault",
-                }
-            } else {
-                "missing"
-            };
+            // key 值只有一个来源：明文 api-keys.json（按 key 名条目）。
+            let configured = stored
+                .get(&key.name)
+                .filter(|value| !value.is_empty())
+                .is_some();
+            let source = if configured { "vault" } else { "missing" };
             keys.push(json!({
                 "name": key.name,
                 "provider": key.provider,
                 "billing_type": key.billing_type,
-                "env_var": key.env_var,
                 "configured": configured,
-                "source_setting": source_setting,
                 "source": source,
-                "persist": key.persist,
             }));
         }
         Ok(json!({
             "keys": keys,
-            "note": "key 取值来源由 source 字段决定：env=只读环境变量（持久化走 agent-env.conf + reload-env），vault=只读 api-keys.json 的 key 名条目（每请求现场读盘，即改即生效）；缺省推断规则：env_var 非空 = env；两源互不回落、互不搬运",
+            "note": "key 值只从明文 api-keys.json 读取（按 key 名条目，每请求现场读盘，即改即生效）；已不再支持环境变量取值",
         }))
     }
 
@@ -258,73 +236,41 @@ impl RouterState {
             anyhow::bail!("unknown key name(s): {}", sorted_join(unknown));
         }
         let mut stored = self.api_keys_store.load();
-        // 按 key 的 source 分流写入（2026-11-04 起严格单源，不再互相镜像）：
-        // - env 模式：只改运行时环境变量；持久化需运维更新 agent-env.conf
-        //   （router 不代写系统 env 文件），重启后以 env 文件为准。
-        // - vault 模式：只写 api-keys.json 的 key 名条目（每请求现场读盘，即改即生效）。
-        let mut runtime_only: Vec<String> = Vec::new();
         for (name, value) in &values {
-            let Some(key) = key_by_name.get(name) else {
-                continue;
-            };
-            if key.source_setting() == KeySource::Env {
-                anyhow::ensure!(
-                    !key.env_var.is_empty(),
-                    "key {} source=env 但 env_var 为空，无法写入",
-                    name
-                );
-            }
-            if apply_key_value_write(key, value, &mut stored) {
-                runtime_only.push(name.clone());
+            if let Some(key) = key_by_name.get(name) {
+                apply_key_value_write(key, value, &mut stored);
             }
         }
         for name in &delete_names {
-            let Some(key) = key_by_name.get(name) else {
-                continue;
-            };
-            match key.source_setting() {
-                KeySource::Env => {
-                    if !key.env_var.is_empty() {
-                        env::remove_var(&key.env_var);
-                    }
-                }
-                KeySource::Vault => {
-                    stored.remove(name.as_str());
-                }
-            }
+            stored.remove(name.as_str());
         }
         self.api_keys_store.write(&stored)?;
-        let mut result = self.key_secret_snapshot()?;
-        if !runtime_only.is_empty() {
-            // 提示调用方：env 模式写入仅运行时生效，持久化需同步 agent-env.conf。
-            if let Some(obj) = result.as_object_mut() {
-                obj.insert(
-                    "runtime_only_warning".to_string(),
-                    json!(format!(
-                        "以下 env 模式 key 仅运行时生效（重启后以 agent-env.conf 为准）：{}",
-                        sorted_join(runtime_only)
-                    )),
-                );
-            }
-        }
-        Ok(result)
+        self.key_secret_snapshot()
+    }
+
+    /// 测试辅助：直接写入明文 key 值（`:memory:` 存储时只作用于本进程实例）。
+    #[cfg(test)]
+    pub(crate) fn set_test_key_value(&mut self, name: &str, value: &str) {
+        let mut stored = self.api_keys_store.load();
+        stored.insert(name.to_string(), value.to_string());
+        let _ = self.api_keys_store.write(&stored);
+    }
+
+    /// 按 key 名取明文 key 值（api-keys.json）；供供应商探测等非路由路径使用。
+    pub fn key_value_by_name(&mut self, name: &str) -> Option<String> {
+        self.api_keys_store
+            .load()
+            .remove(name)
+            .filter(|value| !value.is_empty())
     }
 
     pub fn upstream_key_value(&mut self, key: &KeyRef) -> anyhow::Result<Option<String>> {
-        // 严格单源（2026-11-04 起，source 显式开关）：env 只读环境变量，
-        // vault 只读 api-keys.json 的 key 名条目；互不回落（显式声明时）。
-        // 缺省（未配 source）沿用兼容规则：env_var 非空走 env（仍不回落 vault，
-        // 与旧逻辑的差别仅在不再有 vault→env 启动注入兜底）。
-        match key.source_setting() {
-            KeySource::Env => Ok(env::var(&key.env_var)
-                .ok()
-                .filter(|value| !value.is_empty())),
-            KeySource::Vault => Ok(self
-                .api_keys_store
-                .load()
-                .remove(&key.name)
-                .filter(|value| !value.is_empty())),
-        }
+        // key 值只读明文 api-keys.json 的 key 名条目（2026-11-05 起环境变量取值已移除）。
+        Ok(self
+            .api_keys_store
+            .load()
+            .remove(&key.name)
+            .filter(|value| !value.is_empty()))
     }
 }
 
@@ -377,31 +323,16 @@ impl RouterState {
     }
 }
 
-/// 单条 key 值写入分流（纯逻辑，供 [`RouterState::set_key_values`] 与单测复用）。
-/// 返回 true = 写了运行时环境变量（env 模式，重启后丢失，需同步 agent-env.conf）。
+/// 单条 key 值写入（纯逻辑，供 [`RouterState::set_key_values`] 与单测复用）：
+/// 值只写明文 api-keys.json 映射，空值 = 删除。
 pub(crate) fn apply_key_value_write(
     key: &KeyRef,
     value: &str,
     stored: &mut HashMap<String, String>,
-) -> bool {
-    match key.source_setting() {
-        KeySource::Env => {
-            if !key.env_var.is_empty() {
-                if value.is_empty() {
-                    env::remove_var(&key.env_var);
-                } else {
-                    env::set_var(&key.env_var, value);
-                }
-            }
-            true
-        }
-        KeySource::Vault => {
-            if value.is_empty() {
-                stored.remove(&key.name);
-            } else {
-                stored.insert(key.name.clone(), value.to_string());
-            }
-            false
-        }
+) {
+    if value.is_empty() {
+        stored.remove(&key.name);
+    } else {
+        stored.insert(key.name.clone(), value.to_string());
     }
 }

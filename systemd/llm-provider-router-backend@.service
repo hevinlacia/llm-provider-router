@@ -13,8 +13,6 @@ WorkingDirectory=/home/hevin/Developer/tools/llm-provider-router
 # 否则 systemd EnvironmentFile 加载失败会直接拒绝 spawn（2026-10-02 blue 槽事故）。
 EnvironmentFile=/home/hevin/.config/environment.d/agent-env.conf
 Environment=LLM_PROVIDER_ROUTER_HOST=127.0.0.1
-# runtime reload-env: /api/config/reload-env re-reads this file without restart
-Environment=LLM_PROVIDER_ROUTER_ENV_FILE=/home/hevin/.config/environment.d/agent-env.conf
 Environment=SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 Environment=SSL_CERT_DIR=/etc/ssl/certs
 ExecSearchPath=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
