@@ -1,0 +1,37 @@
+src/features/router/failure.rs
+  9aa64e580c48546d 425-428
+src/features/router/state/mod.rs
+  9aa64e580c48546d 30-33,55-69,109-112,181,322-391
+src/routes/mod.rs
+  9aa64e580c48546d 103-106
+frontend/src/features/errors/ErrorsPage.tsx
+  9aa64e580c48546d 3-8,23-30,33-34,41-45,47-48,98-126
+src/features/router/tests.rs
+  9aa64e580c48546d 1329-1342
+frontend/src/api.ts
+  9aa64e580c48546d 1,223-224
+frontend/src/types.ts
+  9aa64e580c48546d 364-390
+src/routes/errors.rs
+  9aa64e580c48546d 16-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "a672a7f26ea9ec830417336e295f19ee778b8a3d",
+  "prompts": {
+    "9aa64e580c48546d": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1a6f6-2af1-733f-a44f-fa95d3a396c5",
+        "model": "medium-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 224,
+      "total_deletions": 22,
+      "accepted_lines": 202,
+      "overriden_lines": 0
+    }
+  }
+}
