@@ -1,0 +1,29 @@
+src/routes/responses.rs
+  9aa64e580c48546d 32,353-354,357,361-362,364-365,534-535,538-542,544-545,547-548
+src/routes/messages.rs
+  9aa64e580c48546d 38,404-405,408,413-414,416-417,650-651,654,659-660,662-663
+src/routes/session_fingerprint.rs
+  9aa64e580c48546d 121-124,193-225,438-506
+src/features/responses/stream/mod.rs
+  9aa64e580c48546d 189-193,197,201-202,204-205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "c17c905340b53e85a74d904c3a6de23c195dd4fd",
+  "prompts": {
+    "9aa64e580c48546d": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1a6f6-2af1-733f-a44f-fa95d3a396c5",
+        "model": "medium-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 382,
+      "total_deletions": 266,
+      "accepted_lines": 310,
+      "overriden_lines": 7
+    }
+  }
+}
