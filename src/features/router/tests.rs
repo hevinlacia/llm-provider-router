@@ -1047,6 +1047,49 @@ fn connect_streak_backoff_caps_at_32x() {
 }
 
 #[test]
+fn clear_frozen_for_provider_only_clears_that_provider() {
+    let mut state = RouterState::new(test_settings()).unwrap();
+    let now = now_seconds();
+    state.freeze("zp/jt", now + 300.0, "connect_error").unwrap();
+    state
+        .freeze("zp/second", now + 600.0, "monthly_quota")
+        .unwrap();
+    state
+        .freeze("ark/main", now + 300.0, "connect_error")
+        .unwrap();
+    state.force_connect_streak("zp/jt", 2, now, 60.0);
+    state.force_connect_streak("ark/main", 3, now, 240.0);
+
+    let cleared = state.clear_frozen_for_provider("zp").unwrap();
+    assert_eq!(cleared, 2, "应清壁 zp 名下两个冻结");
+    assert!(!state.is_frozen("zp/jt").unwrap());
+    assert!(!state.is_frozen("zp/second").unwrap());
+    assert!(state.is_frozen("ark/main").unwrap(), "他供应商冻结不受影响");
+    assert_eq!(state.connect_streak_count("zp/jt"), 0, "zp 连败计数应重置");
+    assert_eq!(
+        state.connect_streak_count("ark/main"),
+        3,
+        "他供应商连败计数不受影响"
+    );
+    // 解冻后 zp 下次失败从 base 重新退避，而不是接着上一轮的指数倍数。
+    assert_eq!(state.note_connect_failure_streak("zp/jt", 30.0), 30.0);
+}
+
+#[test]
+fn clear_frozen_resets_connect_streaks() {
+    let mut state = RouterState::new(test_settings()).unwrap();
+    state.note_connect_failure_streak("zp/jt", 30.0);
+    state.note_connect_failure_streak("zp/jt", 30.0);
+    state.clear_frozen().unwrap();
+    assert_eq!(
+        state.connect_streak_count("zp/jt"),
+        0,
+        "全量清冻结也应重置连败计数"
+    );
+    assert_eq!(state.note_connect_failure_streak("zp/jt", 30.0), 30.0);
+}
+
+#[test]
 fn frozen_single_key_candidate_yields_no_available_for_fast_fallback() {
     let mut state = RouterState::new(test_settings()).unwrap();
     let key = connect_test_key();

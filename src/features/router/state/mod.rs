@@ -322,7 +322,37 @@ impl RouterState {
 
     pub fn clear_frozen(&mut self) -> anyhow::Result<()> {
         self.frozen.clear();
+        // 连败退避计数一并重置：手动解冻后下一次故障从 base 时长重新退避，
+        // 否则清完冻结立刻又被上一轮的指数倍数冻回（冷却“刷新”语义的一部分）。
+        self.connect_streaks.clear();
         self.state_store.clear_frozen()
+    }
+
+    /// 清空指定供应商全部 key 的冻结（含持久层）与连败退避计数。
+    /// dashboard Providers 行「Unfreeze」按钮入口；返回清除的冻结条数。
+    pub fn clear_frozen_for_provider(&mut self, provider: &str) -> anyhow::Result<usize> {
+        // key_state_id 形如 "provider/name"；纯 name（无前缀）形式为历史遗留，一并匹配。
+        let prefix = format!("{provider}/");
+        let names: Vec<String> = self
+            .frozen
+            .keys()
+            .filter(|name| name.starts_with(&prefix) || name.as_str() == provider)
+            .cloned()
+            .collect();
+        self.state_store.delete_frozen(&names)?;
+        for name in &names {
+            self.frozen.remove(name);
+        }
+        let streak_ids: Vec<String> = self
+            .connect_streaks
+            .keys()
+            .filter(|id| id.starts_with(&prefix) || id.as_str() == provider)
+            .cloned()
+            .collect();
+        for id in streak_ids {
+            self.connect_streaks.remove(&id);
+        }
+        Ok(names.len())
     }
 
     /// 连接失败连败计数 + 按次数指数退避的冻结时长：
