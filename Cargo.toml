@@ -17,6 +17,12 @@ libc = "0.2"
 rand = "0.8"
 regex = "1.11"
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "stream"] }
+# 可移植构建：静态链接 OpenSSL（vendored）。
+# 2026-11-12 部署事故：工作站 rolling 升级到 OpenSSL 4 后产出的二进制依赖
+# libssl.so.4，部署机（Ubuntu 26.04 LXC）只有 libssl.so.3 → 槽启动即
+# `error while loading shared libraries`，部署直接失败。vendored 后二进制
+# 不依赖带机 OpenSSL，换机器/换发行版升级都不再受版本摇摆影响。
+openssl = { version = "0.10", features = ["vendored"] }
 scraper = "0.23"
 tokio-tungstenite = "0.26"
 rusqlite = { version = "0.32", features = ["bundled"] }

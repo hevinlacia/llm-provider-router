@@ -1,18 +1,5 @@
 {
   "providers": {
-    "deepseek-official": {
-      "base_url": "",
-      "responses_base_url": "https://api.deepseek.com",
-      "anthropic_base_url": "https://api.deepseek.com/anthropic",
-      "retry": null,
-      "keys": {
-        "deepseek-official": {
-          "weight": 1,
-          "billing_type": "payg",
-          "enabled": false
-        }
-      }
-    },
     "zp": {
       "base_url": "",
       "responses_base_url": "https://open.bigmodel.cn/api/v1",
@@ -22,7 +9,75 @@
         "jt": {
           "weight": 1,
           "billing_type": "subscription",
+          "daily_token_quota": null,
           "enabled": true
+        }
+      }
+    },
+    "opencode-go": {
+      "base_url": "https://opencode.ai/inference/go/openai/v1",
+      "responses_base_url": "https://opencode.ai/inference/go/openai/v1",
+      "anthropic_base_url": null,
+      "retry": null,
+      "freeze_scope": "model",
+      "keys": {
+        "hevin": {
+          "weight": 1,
+          "billing_type": "subscription",
+          "daily_token_quota": null,
+          "enabled": true
+        }
+      }
+    },
+    "deepseek-official": {
+      "base_url": "",
+      "responses_base_url": "https://api.deepseek.com",
+      "anthropic_base_url": "https://api.deepseek.com/anthropic",
+      "retry": null,
+      "keys": {
+        "deepseek-official": {
+          "weight": 1,
+          "billing_type": "payg",
+          "daily_token_quota": null,
+          "enabled": false
+        }
+      }
+    },
+    "aixhan": {
+      "base_url": "https://api.aixhan.com/v1",
+      "responses_base_url": "https://api.aixhan.com/v1",
+      "anthropic_base_url": null,
+      "retry": {
+        "max_retry_seconds": 1800,
+        "retry_delay_seconds": 15.0,
+        "retry_on_status": [
+          429,
+          500,
+          502,
+          503,
+          504
+        ]
+      },
+      "keys": {
+        "oai-hevin": {
+          "weight": 1,
+          "billing_type": "subscription",
+          "daily_token_quota": null,
+          "enabled": true
+        }
+      }
+    },
+    "ark-agent": {
+      "base_url": "",
+      "responses_base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+      "anthropic_base_url": null,
+      "retry": null,
+      "keys": {
+        "hevin-6544": {
+          "weight": 1,
+          "billing_type": "subscription",
+          "daily_token_quota": null,
+          "enabled": false
         }
       }
     },
@@ -47,57 +102,8 @@
         "hevin2": {
           "weight": 1,
           "billing_type": "subscription",
-          "enabled": true
-        }
-      }
-    },
-    "aixhan": {
-      "base_url": "https://api.aixhan.com/v1",
-      "responses_base_url": "https://api.aixhan.com/v1",
-      "anthropic_base_url": null,
-      "retry": {
-        "max_retry_seconds": 1800,
-        "retry_delay_seconds": 15.0,
-        "retry_on_status": [
-          429,
-          500,
-          502,
-          503,
-          504
-        ]
-      },
-      "keys": {
-        "oai-hevin": {
-          "weight": 1,
-          "billing_type": "subscription",
-          "enabled": true
-        }
-      }
-    },
-    "ark-agent": {
-      "base_url": "",
-      "responses_base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
-      "anthropic_base_url": null,
-      "retry": null,
-      "keys": {
-        "hevin-6544": {
-          "weight": 1,
-          "billing_type": "subscription",
-          "enabled": true
-        }
-      }
-    },
-    "opencode-go": {
-      "base_url": "https://opencode.ai/inference/go/openai/v1",
-      "responses_base_url": "https://opencode.ai/inference/go/openai/v1",
-      "anthropic_base_url": null,
-      "retry": null,
-      "freeze_scope": "model",
-      "keys": {
-        "hevin": {
-          "weight": 1,
-          "billing_type": "subscription",
-          "enabled": true
+          "daily_token_quota": null,
+          "enabled": false
         }
       }
     }

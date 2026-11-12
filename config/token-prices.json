@@ -14,17 +14,12 @@
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "aixhan/gpt-6-luna": {
-    "input_uncached_per_million": 0.0,
-    "input_cached_per_million": 0.0,
-    "output_per_million": 0.0
-  },
   "aixhan/grok-4.6": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "ark-agent/glm-5.3-flash": {
+  "ark-agent/deepseek-v4.1-flash": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
@@ -34,7 +29,12 @@
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
   },
-  "ark/glm-5.3-flash": {
+  "opencode-go/beam-free": {
+    "input_uncached_per_million": 0.0,
+    "input_cached_per_million": 0.0,
+    "output_per_million": 0.0
+  },
+  "opencode-go/deepseek-v4.1-flash": {
     "input_uncached_per_million": 0.0,
     "input_cached_per_million": 0.0,
     "output_per_million": 0.0
