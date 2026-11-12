@@ -122,6 +122,11 @@ fn instructions_to_text(v: &Value) -> Result<String, String> {
     }
 }
 
+/// 空工具名的占位：部分客户端在历史重放时会发出 name 为空的 function_call 项
+///（2026-11-12 实测，opencode 原生 /responses 对此直接 400「expected a non-empty
+/// string」，部分 chat 上游对 tool_calls.name 空串同样拒绝）。占位保留调用链上下文。
+pub(crate) const PLACEHOLDER_TOOL_NAME: &str = "(unknown)";
+
 fn translate_input_item(item: &Value, messages: &mut Vec<Value>) -> Result<(), String> {
     let ty = item.get("type").and_then(Value::as_str).unwrap_or("");
     match ty {
@@ -144,7 +149,10 @@ fn translate_input_item(item: &Value, messages: &mut Vec<Value>) -> Result<(), S
                 "tool_calls": [{
                     "id": if call_id.is_empty() { next_id("call") } else { call_id },
                     "type": "function",
-                    "function": { "name": name, "arguments": arguments }
+                    "function": {
+                        "name": if name.trim().is_empty() { PLACEHOLDER_TOOL_NAME } else { name },
+                        "arguments": arguments
+                    }
                 }]
             }));
             Ok(())

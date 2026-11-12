@@ -561,3 +561,44 @@ fn passthrough_keeps_contentful_items_untouched() {
     let out = prepare_passthrough_payload(&payload, &alias, None, false);
     assert_eq!(out["input"], json!("hi"));
 }
+
+/// 空 name 的 function_call 补占位：opencode 原生 /responses 校验
+/// 「expected a non-empty string」直接 400（2026-11-12 deepseek-flash 会话实测），
+/// 翻译路径的 tool_calls.name 空串同样有上游拒绝风险。
+#[test]
+fn empty_function_call_name_gets_placeholder() {
+    let c = chat(&json!({
+        "model": "m",
+        "input": [
+            { "role": "user", "content": "list files" },
+            { "type": "function_call", "call_id": "c1", "name": "", "arguments": "{}" },
+            { "type": "function_call_output", "call_id": "c1", "output": "src/" },
+            { "role": "user", "content": "go" }
+        ]
+    }));
+    let messages = c["messages"].as_array().unwrap();
+    let tool_call = &messages[1]["tool_calls"][0]["function"];
+    assert_eq!(tool_call["name"], "(unknown)", "空 name 补占位而非原样下发");
+    assert_eq!(tool_call["arguments"], "{}");
+    assert_eq!(messages[2]["tool_call_id"], "c1", "调用链保持配对");
+
+    // 透传路径同样补占位
+    let alias = ModelAlias::new(
+        "logical",
+        "openai/real-upstream",
+        "http://x/v1",
+        Vec::new(),
+        None,
+    )
+    .with_responses_base_url(Some("http://x/v1".to_string()));
+    let payload = json!({
+        "model": "logical",
+        "input": [
+            { "type": "function_call", "call_id": "c1", "name": "", "arguments": "{}" },
+            { "type": "function_call_output", "call_id": "c1", "output": "src/" }
+        ]
+    });
+    let out = prepare_passthrough_payload(&payload, &alias, None, false);
+    assert_eq!(out["input"][0]["name"], "(unknown)");
+    assert_eq!(out["input"][1]["output"], "src/", "有内容的输出原样保留");
+}
