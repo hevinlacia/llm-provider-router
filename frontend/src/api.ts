@@ -66,7 +66,14 @@ export const api = {
     return request<{ ok: boolean; usage: UsageSnapshot }>('/api/usage/reset', { method: 'POST' });
   },
   clearFrozen() {
-    return request<StateResponse>('/api/frozen/clear', { method: 'POST' });
+    return request<StateResponse & { cleared?: number }>('/api/frozen/clear', { method: 'POST' });
+  },
+  clearProviderFrozen(provider: string) {
+    return request<StateResponse & { cleared: number }>('/api/frozen/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    });
   },
   async unsupportedKeys() {
     return request<{ unsupported: V2UnsupportedEntry[] }>('/api/config/v2/unsupported-keys');
