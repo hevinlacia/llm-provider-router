@@ -727,14 +727,18 @@ fn model_scoped_freeze_isolates_single_model() {
         .is_err());
 }
 
-/// 缺省作用域 = key：未配置 freeze_scope 的供应商保持历史行为。
+/// 缺省作用域 = key：未配置 freeze_scope 的供应商保持历史行为；
+/// 显式配置（opencode-go = model）按配置生效。
 #[test]
 fn provider_freeze_scope_defaults_to_key() {
     let state = RouterState::new(test_settings()).unwrap();
+    // 仓库 providers-v2.json 里 opencode-go 显式配了 model（按模型做地区限制）
     assert_eq!(
         state.provider_freeze_scope("opencode-go"),
-        V2FreezeScope::Key
+        V2FreezeScope::Model
     );
+    // 未配置 freeze_scope 的供应商 = 历史行为（整把 key）
+    assert_eq!(state.provider_freeze_scope("zp"), V2FreezeScope::Key);
     assert_eq!(
         state.provider_freeze_scope("no-such-provider"),
         V2FreezeScope::Key
