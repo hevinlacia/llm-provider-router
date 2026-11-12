@@ -1,5 +1,45 @@
 {
   "providers": {
+    "ark": {
+      "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+      "responses_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+      "anthropic_base_url": "https://ark.cn-beijing.volces.com/api/coding",
+      "retry": {
+        "max_retry_seconds": 300,
+        "retry_delay_seconds": 5.0,
+        "retry_on_status": [
+          401,
+          402,
+          429,
+          500,
+          502,
+          503,
+          504
+        ]
+      },
+      "keys": {
+        "hevin2": {
+          "weight": 1,
+          "billing_type": "subscription",
+          "daily_token_quota": null,
+          "enabled": false
+        }
+      }
+    },
+    "ark-agent": {
+      "base_url": "",
+      "responses_base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+      "anthropic_base_url": null,
+      "retry": null,
+      "keys": {
+        "hevin-6544": {
+          "weight": 1,
+          "billing_type": "subscription",
+          "daily_token_quota": null,
+          "enabled": false
+        }
+      }
+    },
     "zp": {
       "base_url": "",
       "responses_base_url": "https://open.bigmodel.cn/api/v1",
@@ -7,21 +47,6 @@
       "retry": null,
       "keys": {
         "jt": {
-          "weight": 1,
-          "billing_type": "subscription",
-          "daily_token_quota": null,
-          "enabled": true
-        }
-      }
-    },
-    "opencode-go": {
-      "base_url": "https://opencode.ai/inference/go/openai/v1",
-      "responses_base_url": "https://opencode.ai/inference/go/openai/v1",
-      "anthropic_base_url": null,
-      "retry": null,
-      "freeze_scope": "model",
-      "keys": {
-        "hevin": {
           "weight": 1,
           "billing_type": "subscription",
           "daily_token_quota": null,
@@ -40,6 +65,21 @@
           "billing_type": "payg",
           "daily_token_quota": null,
           "enabled": false
+        }
+      }
+    },
+    "opencode-go": {
+      "base_url": "https://opencode.ai/inference/go/openai/v1",
+      "responses_base_url": null,
+      "anthropic_base_url": null,
+      "retry": null,
+      "freeze_scope": "model",
+      "keys": {
+        "hevin": {
+          "weight": 1,
+          "billing_type": "subscription",
+          "daily_token_quota": null,
+          "enabled": true
         }
       }
     },
@@ -64,46 +104,6 @@
           "billing_type": "subscription",
           "daily_token_quota": null,
           "enabled": true
-        }
-      }
-    },
-    "ark-agent": {
-      "base_url": "",
-      "responses_base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
-      "anthropic_base_url": null,
-      "retry": null,
-      "keys": {
-        "hevin-6544": {
-          "weight": 1,
-          "billing_type": "subscription",
-          "daily_token_quota": null,
-          "enabled": false
-        }
-      }
-    },
-    "ark": {
-      "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
-      "responses_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
-      "anthropic_base_url": "https://ark.cn-beijing.volces.com/api/coding",
-      "retry": {
-        "max_retry_seconds": 300,
-        "retry_delay_seconds": 5.0,
-        "retry_on_status": [
-          401,
-          402,
-          429,
-          500,
-          502,
-          503,
-          504
-        ]
-      },
-      "keys": {
-        "hevin2": {
-          "weight": 1,
-          "billing_type": "subscription",
-          "daily_token_quota": null,
-          "enabled": false
         }
       }
     }
