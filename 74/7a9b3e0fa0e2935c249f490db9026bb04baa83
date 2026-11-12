@@ -1,0 +1,25 @@
+src/features/router/failure.rs
+  408bd74b1b6490ce 607-611,616-617,619
+src/features/responses/translate/mod.rs
+  408bd74b1b6490ce 64,68-71,75,78-119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "747a9b3e0fa0e2935c249f490db9026bb04baa83",
+  "prompts": {
+    "408bd74b1b6490ce": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1ced7-0a5c-7668-b44b-a7aae97a4c98",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 61,
+      "total_deletions": 2,
+      "accepted_lines": 58,
+      "overriden_lines": 4
+    }
+  }
+}
