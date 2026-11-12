@@ -166,6 +166,11 @@ export type V2ProviderStatus = {
   base_url: string;
   /** Responses API 基础地址（可选）：供应商原生支持 OpenAI Responses API 时配置，/v1/responses 透传落点 */
   responses_base_url?: string | null;
+  /**
+   * Responses 透传开关（缺省 true）。false = 保留 responses_base_url（探测可见）
+   * 但 /v1/responses 强制走 Router 翻译链路；上游原生 Responses 实现有缺陷时关闭。
+   */
+  responses_passthrough?: boolean | null;
   /** Anthropic 兼容 API 端点（可选，预留） */
   anthropic_base_url?: string | null;
   /**

@@ -49,14 +49,16 @@ struct ParsedProviderBody {
     name: String,
     base_url: String,
     responses_base_url: Option<String>,
+    /// Responses 透传开关；None = 不修改（缺省 true）。
+    responses_passthrough: Option<bool>,
     anthropic_base_url: Option<String>,
     /// 失败隔离粒度；None = 不修改（沿用现有值，缺省 key）。
     freeze_scope: Option<crate::config_v2::V2FreezeScope>,
     keys: HashMap<String, crate::config_v2::V2Key>,
 }
 
-/// 解析 v2 供应商对象：{ name, base_url, responses_base_url, anthropic_base_url,
-/// freeze_scope, keys }。
+/// 解析 v2 供应商对象：{ name, base_url, responses_base_url, responses_passthrough,
+/// anthropic_base_url, freeze_scope, keys }。
 /// 供新增/编辑供应商 handler 复用，错误返回可直接透传给 bad_request 的文案。
 fn parse_v2_provider_body(
     provider: &serde_json::Map<String, serde_json::Value>,
@@ -80,6 +82,10 @@ fn parse_v2_provider_body(
         .and_then(Value::as_str)
         .map(str::to_string)
         .filter(|s| !s.trim().is_empty());
+    // Responses 透传开关：缺省字段/null = 不修改（沿用现有值，缺省 true）。
+    let responses_passthrough = provider
+        .get("responses_passthrough")
+        .and_then(Value::as_bool);
     // 失败隔离粒度："key"（缺省）/ "model"；null 或字段缺省 = 不修改（沿用现有值）。
     let freeze_scope = match provider.get("freeze_scope") {
         Some(Value::String(raw)) => Some(
@@ -120,6 +126,7 @@ fn parse_v2_provider_body(
         name: new_name.to_string(),
         base_url,
         responses_base_url,
+        responses_passthrough,
         anthropic_base_url,
         freeze_scope,
         keys,
@@ -143,6 +150,7 @@ pub(crate) async fn api_config_v2_providers_create(
                 &body.name,
                 &body.base_url,
                 body.responses_base_url,
+                body.responses_passthrough,
                 body.anthropic_base_url,
                 body.freeze_scope,
                 body.keys,
@@ -176,6 +184,7 @@ pub(crate) async fn api_config_v2_providers_update(
                 &body.name,
                 &body.base_url,
                 body.responses_base_url,
+                body.responses_passthrough,
                 body.anthropic_base_url,
                 body.freeze_scope,
                 body.keys,

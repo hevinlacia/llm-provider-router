@@ -86,6 +86,10 @@ pub struct ModelAlias {
     /// 对 `/v1/responses` 请求透传到 `{responses_base_url}/responses`；
     /// None = 由 Router 翻译成 chat completions 走 `base_url`。
     pub responses_base_url: Option<String>,
+    /// Responses 透传开关（缺省 true）。false = 即使配置了 responses_base_url，
+    /// `/v1/responses` 也强制走 Router 翻译链路（上游原生实现有缺陷时使用，
+    /// 2026-11-12 opencode-go 实测）。
+    pub responses_passthrough: bool,
     /// 供应商配置的 Anthropic 兼容 API 端点（可选）。配置后 = 原生支持 Anthropic 协议，
     /// 对 `/v1/messages` 请求透传到 `{anthropic_base_url}/v1/messages`；
     /// None = 由 Router 翻译成 Responses 请求走现有 /v1/responses 机制。
@@ -115,6 +119,7 @@ impl ModelAlias {
             thinking_level_map: None,
             thinking_format: None,
             responses_base_url: None,
+            responses_passthrough: true,
             anthropic_base_url: None,
             strategy: crate::config_v2::V2Strategy::Weighted,
         }
@@ -158,11 +163,25 @@ impl ModelAlias {
         self
     }
 
-    /// 是否原生支持 Responses API（配置了非空 responses_base_url 即支持，走透传）。
+    /// 标记 Responses 透传开关（false = 强制翻译，即使配置了 responses_base_url）。
+    pub fn with_responses_passthrough(mut self, enabled: bool) -> Self {
+        self.responses_passthrough = enabled;
+        self
+    }
+
+    /// 是否原生支持 Responses API（配置了非空 responses_base_url 即支持）。
+    /// 注意：这只代表“上游有 Responses 端点”（compact 等 passthrough 能力的前提），
+    /// `/v1/responses` 的实际路由决策用 [`Self::passthrough_responses`]。
     pub fn supports_responses(&self) -> bool {
         self.responses_base_url
             .as_deref()
             .is_some_and(|s| !s.trim().is_empty())
+    }
+
+    /// `/v1/responses` 是否对上游透传：配置了端点 且 透传开关未关闭。
+    /// false 时强制走 Router 翻译链路（上游 Responses 实现有缺陷时用）。
+    pub fn passthrough_responses(&self) -> bool {
+        self.supports_responses() && self.responses_passthrough
     }
 
     /// 标记上游原生支持 Anthropic 协议（透传模式）：设置其 Anthropic API 端点。

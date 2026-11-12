@@ -1315,3 +1315,30 @@ fn connect_failure_stats_prunes_entries_older_than_retention() {
     );
     assert_eq!(keys[0]["recent_1h"], 2);
 }
+
+/// Responses 透传开关：alias 层的判定 = 配置了端点 且 开关未关闭。
+/// opencode-go 场景（2026-11-12）：上游原生 /responses 有缺陷，保留 URL 字段
+/// 但强制翻译。
+#[test]
+fn passthrough_responses_flag_gates_dispatch() {
+    let alias = ModelAlias::new(
+        "opencode-go/beam-free",
+        "openai/beam-free",
+        "https://opencode.ai/inference/go/openai/v1",
+        Vec::new(),
+        None,
+    );
+    // 无 responses_base_url：无论开关都是翻译
+    assert!(!alias.supports_responses());
+    assert!(!alias.passthrough_responses());
+
+    let alias =
+        alias.with_responses_base_url(Some("https://opencode.ai/inference/go/openai/v1".into()));
+    assert!(alias.supports_responses());
+    assert!(alias.passthrough_responses(), "缺省开关 = 透传（历史行为）");
+
+    let alias = alias.with_responses_passthrough(false);
+    // URL 保留（探测/展示仍可见），但 /v1/responses 强制翻译
+    assert!(alias.supports_responses());
+    assert!(!alias.passthrough_responses());
+}
