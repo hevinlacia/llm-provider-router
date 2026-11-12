@@ -44,20 +44,23 @@ pub(crate) async fn api_unsupported_keys_refresh(
     }
 }
 
-/// 解析 v2 供应商对象：{ name, base_url, keys } -> (name, base_url, keys)。
+/// v2 供应商对象的解析结果（新增/编辑 handler 共用）。
+struct ParsedProviderBody {
+    name: String,
+    base_url: String,
+    responses_base_url: Option<String>,
+    anthropic_base_url: Option<String>,
+    /// 失败隔离粒度；None = 不修改（沿用现有值，缺省 key）。
+    freeze_scope: Option<crate::config_v2::V2FreezeScope>,
+    keys: HashMap<String, crate::config_v2::V2Key>,
+}
+
+/// 解析 v2 供应商对象：{ name, base_url, responses_base_url, anthropic_base_url,
+/// freeze_scope, keys }。
 /// 供新增/编辑供应商 handler 复用，错误返回可直接透传给 bad_request 的文案。
 fn parse_v2_provider_body(
     provider: &serde_json::Map<String, serde_json::Value>,
-) -> Result<
-    (
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        HashMap<String, crate::config_v2::V2Key>,
-    ),
-    String,
-> {
+) -> Result<ParsedProviderBody, String> {
     let Some(new_name) = provider.get("name").and_then(Value::as_str) else {
         return Err("provider.name (string) is required".to_string());
     };
@@ -77,6 +80,15 @@ fn parse_v2_provider_body(
         .and_then(Value::as_str)
         .map(str::to_string)
         .filter(|s| !s.trim().is_empty());
+    // 失败隔离粒度："key"（缺省）/ "model"；null 或字段缺省 = 不修改（沿用现有值）。
+    let freeze_scope = match provider.get("freeze_scope") {
+        Some(Value::String(raw)) => Some(
+            crate::config_v2::V2FreezeScope::parse(raw)
+                .ok_or_else(|| "freeze_scope must be one of: key, model".to_string())?,
+        ),
+        Some(Value::Null) | None => None,
+        Some(_) => return Err("freeze_scope must be a string (key | model)".to_string()),
+    };
     if base_url.trim().is_empty() && responses_base_url.is_none() && anthropic_base_url.is_none() {
         return Err(
             "at least one of base_url / responses_base_url / anthropic_base_url must be set"
@@ -104,13 +116,14 @@ fn parse_v2_provider_body(
             );
         }
     }
-    Ok((
-        new_name.to_string(),
-        base_url.to_string(),
+    Ok(ParsedProviderBody {
+        name: new_name.to_string(),
+        base_url,
         responses_base_url,
         anthropic_base_url,
+        freeze_scope,
         keys,
-    ))
+    })
 }
 
 pub(crate) async fn api_config_v2_providers_create(
@@ -120,19 +133,19 @@ pub(crate) async fn api_config_v2_providers_create(
     let Some(provider) = payload.get("provider").and_then(Value::as_object) else {
         return bad_request("provider (object) is required");
     };
-    let (name, base_url, responses_base_url, anthropic_base_url, keys) =
-        match parse_v2_provider_body(provider) {
-            Ok(parsed) => parsed,
-            Err(message) => return bad_request(&message),
-        };
+    let body = match parse_v2_provider_body(provider) {
+        Ok(parsed) => parsed,
+        Err(message) => return bad_request(&message),
+    };
     match app.state.lock() {
         Ok(mut state) => {
             match state.create_v2_provider(
-                &name,
-                &base_url,
-                responses_base_url,
-                anthropic_base_url,
-                keys,
+                &body.name,
+                &body.base_url,
+                body.responses_base_url,
+                body.anthropic_base_url,
+                body.freeze_scope,
+                body.keys,
             ) {
                 Ok(value) => json_status(StatusCode::OK, value),
                 Err(err) => bad_request(&err.to_string()),
@@ -152,20 +165,20 @@ pub(crate) async fn api_config_v2_providers_update(
     let Some(provider) = payload.get("provider").and_then(Value::as_object) else {
         return bad_request("provider (object) is required");
     };
-    let (new_name, base_url, responses_base_url, anthropic_base_url, keys) =
-        match parse_v2_provider_body(provider) {
-            Ok(parsed) => parsed,
-            Err(message) => return bad_request(&message),
-        };
+    let body = match parse_v2_provider_body(provider) {
+        Ok(parsed) => parsed,
+        Err(message) => return bad_request(&message),
+    };
     match app.state.lock() {
         Ok(mut state) => {
             match state.update_v2_provider(
                 old_name,
-                &new_name,
-                &base_url,
-                responses_base_url,
-                anthropic_base_url,
-                keys,
+                &body.name,
+                &body.base_url,
+                body.responses_base_url,
+                body.anthropic_base_url,
+                body.freeze_scope,
+                body.keys,
             ) {
                 Ok(value) => json_status(StatusCode::OK, value),
                 Err(err) => bad_request(&err.to_string()),

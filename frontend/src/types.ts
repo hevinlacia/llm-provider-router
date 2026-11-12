@@ -168,6 +168,11 @@ export type V2ProviderStatus = {
   responses_base_url?: string | null;
   /** Anthropic 兼容 API 端点（可选，预留） */
   anthropic_base_url?: string | null;
+  /**
+   * 失败隔离粒度：`key`（缺省，冻结整把 key）/ `model`（只冻结 key × 模型）。
+   * 按模型给地区限制或配额的供应商（如 opencode-go）应设 `model`。
+   */
+  freeze_scope?: 'key' | 'model' | null;
   key_total: number;
   key_enabled: number;
   key_frozen: number;

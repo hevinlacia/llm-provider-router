@@ -54,6 +54,40 @@ pub struct V2Retry {
     pub retry_on_status: Vec<u16>,
 }
 
+/// 失败隔离粒度（供应商级特性，dashboard 可配）。
+///
+/// 背景（2026-11-12）：opencode-go 等供应商按“模型”粒度做地区限制/配额
+/// （同一把 key 下 `beam-free` 在某些出口国家 403、其它模型正常），历史行为
+/// 是 invalid/限流一律冻结整把 key，导致一个模型的问题把整个供应商的其它模型
+/// 一起打死。`model` 粒度把这些失败隔离到「key × 上游模型」。
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum V2FreezeScope {
+    /// 冻结整把 key（历史行为，适合「一把 key 一个账号额度」的供应商）。
+    #[default]
+    Key,
+    /// 只冻结 key × 上游模型，同一 key 的其它模型继续可用。
+    Model,
+}
+
+impl V2FreezeScope {
+    /// 配置字符串 -> 枚举（dashboard/API 入参解析）。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "key" => Some(Self::Key),
+            "model" => Some(Self::Model),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Key => "key",
+            Self::Model => "model",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct V2Provider {
     /// Chat Completions API 基础地址（OpenAI 兼容，Router 内部翻译链路的落点）。
@@ -68,6 +102,9 @@ pub struct V2Provider {
     pub anthropic_base_url: Option<String>,
     #[serde(default)]
     pub retry: Option<V2Retry>,
+    /// 失败隔离粒度（可选，缺省 = key）。invalid / 限流类失败按此粒度冻结。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freeze_scope: Option<V2FreezeScope>,
     pub keys: HashMap<String, V2Key>,
 }
 

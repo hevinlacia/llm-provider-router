@@ -421,3 +421,55 @@ fn extract_input_items_missing_returns_empty() {
     assert!(extract_input_items(&json!({ "model": "m" })).is_empty());
     assert!(extract_input_items(&json!({ "model": "m", "input": "" })).is_empty());
 }
+
+/// 空 content 数组不能下发给上游：opencode-go 的 beam 后端对 `content: []`
+/// 返回 400 invalid_value（2026-11-12 实测，5 轮会话 messages[4].content 被拒）。
+/// assistant 用 null 占位，其它角色整条跳过。
+#[test]
+fn empty_content_array_is_normalized_not_sent() {
+    let c = chat(&json!({
+        "model": "m",
+        "input": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": [] },
+            { "role": "user", "content": [] },
+            { "role": "user", "content": "go" }
+        ]
+    }));
+    let messages = c["messages"].as_array().unwrap();
+    assert_eq!(
+        messages.len(),
+        3,
+        "空 user 消息应被丢弃，assistant 保留占位"
+    );
+    assert_eq!(messages[0]["content"], "hi");
+    assert_eq!(messages[1]["role"], "assistant");
+    assert_eq!(
+        messages[1]["content"],
+        Value::Null,
+        "assistant 空内容用 null"
+    );
+    assert_eq!(messages[2]["content"], "go");
+    for message in messages {
+        assert_ne!(
+            message["content"],
+            json!([]),
+            "任何角色都不得下发空 content 数组"
+        );
+    }
+}
+
+/// 内容数组里全是无法翻译的 part（无 text 字段）时，同样不能产空数组。
+#[test]
+fn parts_translating_to_nothing_do_not_produce_empty_array() {
+    let c = chat(&json!({
+        "model": "m",
+        "input": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": [ { "type": "output_text" } ] }
+        ]
+    }));
+    let messages = c["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[1]["content"], Value::Null);
+}

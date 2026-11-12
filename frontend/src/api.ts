@@ -131,14 +131,14 @@ export const api = {
     const query = refresh ? '?refresh=1' : '';
     return request<ProviderModelsResponse>(`/api/config/v2/providers/${encodeURIComponent(name)}/models${query}`);
   },
-  updateV2Provider(oldName: string, provider: { name: string; base_url: string; responses_base_url?: string | null; anthropic_base_url?: string | null; keys: Record<string, { weight: number; billing_type: string; daily_token_quota?: number | null; enabled: boolean }> }) {
+  updateV2Provider(oldName: string, provider: { name: string; base_url: string; responses_base_url?: string | null; anthropic_base_url?: string | null; freeze_scope?: 'key' | 'model' | null; keys: Record<string, { weight: number; billing_type: string; daily_token_quota?: number | null; enabled: boolean }> }) {
     return request<V2Status>('/api/config/v2/providers', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ old_name: oldName, provider }),
     });
   },
-  createV2Provider(provider: { name: string; base_url: string; responses_base_url?: string | null; anthropic_base_url?: string | null; keys: Record<string, { weight: number; billing_type: string; daily_token_quota?: number | null; enabled: boolean }> }) {
+  createV2Provider(provider: { name: string; base_url: string; responses_base_url?: string | null; anthropic_base_url?: string | null; freeze_scope?: 'key' | 'model' | null; keys: Record<string, { weight: number; billing_type: string; daily_token_quota?: number | null; enabled: boolean }> }) {
     return request<V2Status>('/api/config/v2/providers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

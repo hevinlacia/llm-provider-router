@@ -898,3 +898,45 @@ fn key_daily_token_quota_defaults_to_none() {
     let k: V2Key = serde_json::from_str(r#"{ "daily_token_quota": 5000000 }"#).unwrap();
     assert_eq!(k.daily_token_quota, Some(5_000_000));
 }
+
+/// provider.freeze_scope：缺省（老配置）= key 粒度；"model" 显式配置生效，
+/// 序列化时缺省不落盘（保持既有 providers-v2.json 干净）。
+#[test]
+fn provider_freeze_scope_defaults_to_key_and_parses_model() {
+    let provider: V2Provider = serde_json::from_str(
+        r#"{ "base_url": "https://opencode.ai/inference/go/openai/v1",
+             "keys": { "hevin": { "weight": 1 } } }"#,
+    )
+    .unwrap();
+    assert_eq!(
+        provider.freeze_scope, None,
+        "缺省 = 不落盘，运行时按 key 粒度"
+    );
+    assert_eq!(
+        provider.freeze_scope.unwrap_or_default(),
+        V2FreezeScope::Key,
+        "缺省作用域必须是历史行为（整把 key）"
+    );
+
+    let provider: V2Provider = serde_json::from_str(
+        r#"{ "base_url": "https://opencode.ai/inference/go/openai/v1",
+             "freeze_scope": "model",
+             "keys": { "hevin": { "weight": 1 } } }"#,
+    )
+    .unwrap();
+    assert_eq!(provider.freeze_scope, Some(V2FreezeScope::Model));
+
+    // 缺省值序列化时不写 freeze_scope 字段（老配置形态保持稳定）
+    let out = serde_json::to_string(&provider).unwrap();
+    assert!(out.contains("\"freeze_scope\":\"model\""));
+    let no_scope: V2Provider =
+        serde_json::from_str(r#"{ "base_url": "https://x.example.com", "keys": {} }"#).unwrap();
+    assert!(!serde_json::to_string(&no_scope)
+        .unwrap()
+        .contains("freeze_scope"));
+
+    assert_eq!(V2FreezeScope::parse("model"), Some(V2FreezeScope::Model));
+    assert_eq!(V2FreezeScope::parse(" KEY "), Some(V2FreezeScope::Key));
+    assert_eq!(V2FreezeScope::parse("provider"), None);
+    assert_eq!(V2FreezeScope::Model.as_str(), "model");
+}

@@ -1,7 +1,7 @@
 use crate::app::AppState;
 use crate::config::Settings;
 use crate::config::{KeyRef, ModelAlias};
-use crate::config_v2::{TargetCandidate, V2Strategy};
+use crate::config_v2::{TargetCandidate, V2FreezeScope, V2Strategy};
 use crate::error_rules::{builtin_config, classify, ErrorClass};
 use crate::features::chat::select::clear_unsupported_if_ok;
 use crate::features::router::failure::{
@@ -9,7 +9,7 @@ use crate::features::router::failure::{
     handle_response_failure, note_stream_break, note_success_differential, recent_errors_json,
     FailureAction,
 };
-use crate::features::router::freeze::{key_state_id, parse_quota_reset};
+use crate::features::router::freeze::{key_state_id, model_scoped_state_id, parse_quota_reset};
 use crate::features::router::selection::{
     drop_exhausted_candidates, key_exhausted, order_targets, priority_key_pick, weighted_pick,
 };
@@ -662,6 +662,82 @@ fn unsupported_all_blocked_still_probes() {
     assert!(
         key.name == "good" || key.name == "bad",
         "全阻塞时应放开过滤给出候选"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 失败隔离粒度（provider.freeze_scope：key 级 / key × 模型级）
+// ---------------------------------------------------------------------------
+
+/// freeze_scope=model 的供应商：一个模型被冻结只隔离该模型，
+/// 同一把 key 的其它模型照常可选；key 级冻结仍然全模型生效。
+#[test]
+fn model_scoped_freeze_isolates_single_model() {
+    let mut state = RouterState::new(test_settings()).unwrap();
+    let keys = vec![KeyRef {
+        name: "hevin".into(),
+        weight: 1,
+        provider: "opencode-go".into(),
+        billing_type: "subscription".into(),
+        daily_token_quota: None,
+    }];
+    let beam = ModelAlias::new(
+        "opencode-go/beam-free",
+        "openai/beam-free",
+        "https://opencode.ai/inference/go/openai/v1",
+        keys.clone(),
+        None,
+    );
+    let glm = ModelAlias::new(
+        "opencode-go/glm-5.3",
+        "openai/glm-5.3",
+        "https://opencode.ai/inference/go/openai/v1",
+        keys.clone(),
+        None,
+    );
+    let until = now_seconds() + 3600.0;
+    // 只为 beam-free 冻结（invalid 类，model 粒度）
+    state
+        .freeze(
+            &model_scoped_state_id(&keys[0], "beam-free"),
+            until,
+            "invalid:default/invalid#0",
+        )
+        .unwrap();
+    assert!(
+        state
+            .select_key_excluding(&beam, None, &HashSet::new())
+            .is_err(),
+        "被隔离的模型不应再拿到 key"
+    );
+    assert_eq!(
+        state
+            .select_key_excluding(&glm, None, &HashSet::new())
+            .unwrap()
+            .name,
+        "hevin",
+        "同一 key 的其它模型必须继续可用（这正是 freeze_scope=model 的目的）"
+    );
+    // key 级冻结仍然对全部模型生效
+    state
+        .freeze(&key_state_id(&keys[0]), until, "invalid:default/invalid#0")
+        .unwrap();
+    assert!(state
+        .select_key_excluding(&glm, None, &HashSet::new())
+        .is_err());
+}
+
+/// 缺省作用域 = key：未配置 freeze_scope 的供应商保持历史行为。
+#[test]
+fn provider_freeze_scope_defaults_to_key() {
+    let state = RouterState::new(test_settings()).unwrap();
+    assert_eq!(
+        state.provider_freeze_scope("opencode-go"),
+        V2FreezeScope::Key
+    );
+    assert_eq!(
+        state.provider_freeze_scope("no-such-provider"),
+        V2FreezeScope::Key
     );
 }
 

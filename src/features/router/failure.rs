@@ -20,7 +20,7 @@ use crate::features::chat::select::{is_unsupported_signal, usage_key_name};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 
-use super::freeze::{key_state_id, parse_quota_reset, parse_retry_after};
+use super::freeze::{key_state_id, model_scoped_state_id, parse_quota_reset, parse_retry_after};
 use super::state::RouterState;
 
 /// 最近报错 ring buffer 容量。
@@ -200,18 +200,24 @@ pub(crate) fn apply_embedded_failure(
     match classified.class {
         ErrorClass::Invalid => {
             let until = crate::state_store::now_seconds() + state.tunables().invalid_freeze_seconds;
-            let _ = state.freeze(
-                &key_state_id(key),
-                until,
-                &format!("invalid:{}", classified.rule),
+            let state_id = freeze_state_id(
+                state.provider_freeze_scope(&alias.provider()),
+                key,
+                &alias.upstream_model(),
             );
+            let _ = state.freeze(&state_id, until, &format!("invalid:{}", classified.rule));
         }
         ErrorClass::RateLimited => {
             let (monthly_fallback, five_hour_fallback) = state.quota_fallback_seconds();
+            let state_id = freeze_state_id(
+                state.provider_freeze_scope(&alias.provider()),
+                key,
+                &alias.upstream_model(),
+            );
             if let Some((until, reason)) =
                 parse_quota_reset(message, monthly_fallback, five_hour_fallback)
             {
-                let _ = state.freeze(&key_state_id(key), until, reason);
+                let _ = state.freeze(&state_id, until, reason);
             }
         }
         ErrorClass::ModelUnsupported | ErrorClass::Transient => {}
@@ -371,15 +377,21 @@ pub(crate) fn handle_response_failure(
     match classified.class {
         ErrorClass::Invalid => {
             let until = crate::state_store::now_seconds() + tunables.invalid_freeze_seconds;
-            let _ = state.freeze(
-                &key_state_id(key),
-                until,
-                &format!("invalid:{}", classified.rule),
+            let state_id = freeze_state_id(
+                state.provider_freeze_scope(&provider),
+                key,
+                &alias.upstream_model(),
             );
+            let _ = state.freeze(&state_id, until, &format!("invalid:{}", classified.rule));
             FailureAction::NextKey(format!("upstream {status}: {message}"))
         }
         ErrorClass::RateLimited => {
-            freeze_rate_limited(&mut state, key, headers, body_text);
+            let state_id = freeze_state_id(
+                state.provider_freeze_scope(&provider),
+                key,
+                &alias.upstream_model(),
+            );
+            freeze_rate_limited(&mut state, &state_id, headers, body_text);
             FailureAction::NextKey(format!("upstream {status}: {message}"))
         }
         ErrorClass::ModelUnsupported => {
@@ -472,23 +484,40 @@ pub(crate) fn handle_connect_failure(
     FailureAction::NextKeyTransient(message)
 }
 
+/// 按供应商的 freeze_scope 把“失败隔离”落到正确的粒度上：
+///
+/// - `key`（缺省）：`provider/name`，冻结整把 key（历史行为）；
+/// - `model`：`provider/name#upstream_model`，只隔离这个模型（opencode-go 这类
+///   按模型给地区限制/配额的供应商，一个模型坏了不能连带冻结其它模型）。
+fn freeze_state_id(
+    scope: crate::config_v2::V2FreezeScope,
+    key: &KeyRef,
+    upstream_model: &str,
+) -> String {
+    match scope {
+        crate::config_v2::V2FreezeScope::Key => key_state_id(key),
+        crate::config_v2::V2FreezeScope::Model => model_scoped_state_id(key, upstream_model),
+    }
+}
+
 /// 限流冻结：retry-after 头 > body "reset at" 时间戳 > 不冻结（key 留在池内）。
+/// `state_id` 由调用方按供应商 freeze_scope 算好（key 级或 key × 模型级）。
 fn freeze_rate_limited(
     state: &mut RouterState,
-    key: &KeyRef,
+    state_id: &str,
     headers: &http::HeaderMap,
     body_text: &str,
 ) {
     let (monthly_fallback, five_hour_fallback) = state.quota_fallback_seconds();
     if let Some(until) = parse_retry_after(headers.get("retry-after").and_then(|v| v.to_str().ok()))
     {
-        let _ = state.freeze(&key_state_id(key), until, "retry_after");
+        let _ = state.freeze(state_id, until, "retry_after");
         return;
     }
     if let Some((until, reason)) =
         parse_quota_reset(body_text, monthly_fallback, five_hour_fallback)
     {
-        let _ = state.freeze(&key_state_id(key), until, reason);
+        let _ = state.freeze(state_id, until, reason);
     }
 }
 
