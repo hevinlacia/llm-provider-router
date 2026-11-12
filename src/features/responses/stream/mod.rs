@@ -47,6 +47,52 @@ use std::collections::HashSet;
 mod passthrough;
 use passthrough::{FeedAction, PassthroughGuard};
 
+/// chat SSE 流的跨 chunk 行解析器。
+///
+/// 上游（尤其 Cloudflare 类聚合缓冲网关）会把 SSE 行从 TCP chunk 中间截断；
+/// 按 chunk 直接 `lines()` 分行会把半行 delta 双向丢弃（前半行 JSON 解析失败、
+/// 后半行无 `data:` 前缀），表现为 tool-call arguments 随机缺块
+/// （2026-11-12 deepseek v4.1 flash 故障根因；与透传守卫 PassthroughGuard、
+/// anthropic 翻译 SseTranslator 的 line_buf 同一模式）。
+struct ChatSseLineParser {
+    line_buf: Vec<u8>,
+}
+
+impl ChatSseLineParser {
+    fn new() -> Self {
+        Self { line_buf: Vec::new() }
+    }
+
+    /// 喂入一个上游 chunk，返回其中完整行解析出的 SSE data JSON。
+    /// 尾部不完整行留在缓冲，等下一个 chunk 拼齐。
+    fn feed(&mut self, chunk: &[u8]) -> Vec<Value> {
+        self.line_buf.extend_from_slice(chunk);
+        let mut events = Vec::new();
+        let mut consumed = 0usize;
+        while let Some(rel) = self.line_buf[consumed..].iter().position(|&b| b == b'\n') {
+            let end = consumed + rel;
+            let text = String::from_utf8_lossy(&self.line_buf[consumed..end]).into_owned();
+            consumed = end + 1;
+            if let Some(value) = Self::parse_data_line(&text) {
+                events.push(value);
+            }
+        }
+        self.line_buf.drain(..consumed);
+        events
+    }
+
+    /// 单行 → SSE data JSON；非 data 行 / [DONE] / 无法解析的载荷 → None。
+    fn parse_data_line(line: &str) -> Option<Value> {
+        let trimmed = line.trim();
+        let data = trimmed.strip_prefix("data:")?;
+        let body = data.trim();
+        if body == "[DONE]" {
+            return None;
+        }
+        serde_json::from_str::<Value>(body).ok()
+    }
+}
+
 pub(crate) async fn stream_responses_route(
     app: AppState,
     aliases: Vec<ModelAlias>,
@@ -364,25 +410,16 @@ pub(crate) async fn stream_responses_route(
                     // 翻译：chat SSE -> Responses 事件
                     let echo = translate::response_echo_fields(&original_payload);
                     let mut sse = ResponsesSse::with_echo(&upstream_model, &echo);
+                    let mut line_parser = ChatSseLineParser::new();
                     while let Some(item) = bytes_stream.next().await {
                         match item {
                             Ok(chunk) => {
                                 body_text.extend_from_slice(&chunk);
-                                let text = String::from_utf8_lossy(&chunk);
-                                for line in text.lines() {
-                                    let trimmed = line.trim();
-                                    let Some(data) = trimmed.strip_prefix("data:") else { continue };
-                                    let body = data.trim();
-                                    if body == "[DONE]" {
-                                        continue;
-                                    }
-                                    let parsed = serde_json::from_str::<Value>(body).ok();
+                                for value in line_parser.feed(&chunk) {
                                     // 流内错误事件（chat 错误体如 zp 5 小时限额）：冻结坏 key + 解绑会话，
                                     // 并向客户端下发 Responses 错误事件后终止流；
                                     // 本请求已开始无法换 key，冻结保证下次请求自动故障切换。
-                                    if let Some(found) =
-                                        parsed.as_ref().and_then(extract_stream_error_event)
-                                    {
+                                    if let Some(found) = extract_stream_error_event(&value) {
                                         let (code, message) = found;
                                         apply_embedded_failure(
                                             &app,
@@ -397,11 +434,9 @@ pub(crate) async fn stream_responses_route(
                                         ))));
                                         return;
                                     }
-                                    if let Some(value) = parsed {
-                                        let events = sse.feed(&value);
-                                        if !events.is_empty() {
-                                            yield Ok(Bytes::from(events));
-                                        }
+                                    let events = sse.feed(&value);
+                                    if !events.is_empty() {
+                                        yield Ok(Bytes::from(events));
                                     }
                                 }
                             }
