@@ -160,7 +160,7 @@ async fn responses_inner(
 
     // 翻译模式下才会用到 chat payload；存在任一非透传目标时先翻译（懒计算，避免透传路径无谓翻译）。
     let chat_payload = if stream {
-        if route_aliases.iter().any(|a| !a.supports_responses()) {
+        if route_aliases.iter().any(|a| !a.passthrough_responses()) {
             match translate_request(&payload) {
                 Ok(chat) => Some(chat),
                 Err(message) => {
@@ -226,7 +226,7 @@ pub(crate) async fn responses_alias_dispatch(
     payload: &Value,
     chat_payload: Option<&Value>,
 ) -> Result<Response, CallError> {
-    if alias.supports_responses() {
+    if alias.passthrough_responses() {
         // 透传：只改写 model 名，发到供应商 Responses 端点
         let upstream_payload = translate::prepare_passthrough_payload(
             payload,
@@ -727,10 +727,10 @@ pub(crate) async fn cancel_response(
 
 /// `POST /v1/responses/compact`：上下文压缩。
 ///
-/// Router 自身无压缩能力；透传模式（alias 配置了 `responses_base_url`，原生支持
-/// Responses API）把请求原样转发给上游 `{responses_base_url}/responses/compact`，
+/// Router 自身无压缩能力；透传模式（alias 配置了 `responses_base_url` 且未关闭
+/// responses_passthrough）把请求原样转发给上游 `{responses_base_url}/responses/compact`，
 /// 是否支持由上游决定（上游不实现则原样返回其 404/501 错误）。
-/// 纯翻译模式（仅 chat completions base_url）无压缩能力，返回 501。
+/// 纯翻译模式（仅 chat completions base_url，或透传被关闭）无压缩能力，返回 501。
 pub(crate) async fn compact_response(
     State(app): State<AppState>,
     headers: HeaderMap,
@@ -760,7 +760,7 @@ pub(crate) async fn compact_response(
     }
     let mut last_frozen: Option<NoAvailableKeyError> = None;
     for base_alias in route_aliases {
-        if !base_alias.supports_responses() {
+        if !base_alias.passthrough_responses() {
             continue;
         }
         let alias = base_alias.clone();

@@ -72,7 +72,7 @@ pub(crate) async fn stream_responses_route(
         let mut failed_alias: String = aliases.first().map(|a| a.alias.clone()).unwrap_or_else(|| "router".to_string());
         for base_alias in aliases {
             let alias = base_alias.clone();
-            let is_passthrough = alias.supports_responses();
+            let is_passthrough = alias.passthrough_responses();
             // 空地址防护：所选模式对应的供应商地址未配置时给出明确错误，而不是发向坏 URL
             let endpoint_missing = if is_passthrough {
                 alias

@@ -106,6 +106,7 @@ impl RouterState {
                 json!({
                     "base_url": prov.base_url,
                     "responses_base_url": prov.responses_base_url,
+                    "responses_passthrough": prov.responses_passthrough.unwrap_or(true),
                     "anthropic_base_url": prov.anthropic_base_url,
                     // 失败隔离粒度（缺省 = key，dashboard 可切 model）
                     "freeze_scope": prov.freeze_scope.unwrap_or_default().as_str(),
@@ -387,6 +388,7 @@ impl RouterState {
         new_name: &str,
         base_url: &str,
         responses_base_url: Option<String>,
+        responses_passthrough: Option<bool>,
         anthropic_base_url: Option<String>,
         freeze_scope: Option<config_v2::V2FreezeScope>,
         keys: HashMap<String, config_v2::V2Key>,
@@ -425,6 +427,10 @@ impl RouterState {
         provider.anthropic_base_url = anthropic_base_url
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
+        // responses_passthrough：None = 沿用现有值（缺省 true），Some 才覆写。
+        if let Some(flag) = responses_passthrough {
+            provider.responses_passthrough = Some(flag);
+        }
         // freeze_scope：None = 沿用现有值（key 粒度缺省），Some 才覆写。
         if let Some(scope) = freeze_scope {
             provider.freeze_scope = Some(scope);
@@ -447,11 +453,13 @@ impl RouterState {
 
     /// 新增 v2 供应商：name / base_url / keys（可先不填 key，创建后再通过编辑补 key）。
     /// 新供应商不引用任何物理模型，无需同步 models.json / logical-models.json，写回后热加载。
+    #[allow(clippy::too_many_arguments)]
     pub fn create_v2_provider(
         &mut self,
         name: &str,
         base_url: &str,
         responses_base_url: Option<String>,
+        responses_passthrough: Option<bool>,
         anthropic_base_url: Option<String>,
         freeze_scope: Option<config_v2::V2FreezeScope>,
         keys: HashMap<String, config_v2::V2Key>,
@@ -486,6 +494,7 @@ impl RouterState {
                 responses_base_url: responses_base_url
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty()),
+                responses_passthrough,
                 anthropic_base_url: anthropic_base_url
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty()),

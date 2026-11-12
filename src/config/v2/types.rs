@@ -100,6 +100,14 @@ pub struct V2Provider {
     /// Anthropic 兼容 API 端点（可选）。供应商同时提供 Anthropic 协议时配置（预留）。
     #[serde(default)]
     pub anthropic_base_url: Option<String>,
+    /// Responses 透传开关（可选，缺省 true）。
+    ///
+    /// true：配置了 `responses_base_url` 的供应商对 `/v1/responses` 走透传（历史行为）；
+    /// false：保留 `responses_base_url` 字段（模型名探测/记录仍可用）但 `/v1/responses`
+    /// 强制走 Router 翻译链路。用于上游原生 Responses 实现有缺陷的场景
+    /// （2026-11-12 opencode-go：其内部 responses→chat 转换对含工具调用的会话必然 400）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub responses_passthrough: Option<bool>,
     #[serde(default)]
     pub retry: Option<V2Retry>,
     /// 失败隔离粒度（可选，缺省 = key）。invalid / 限流类失败按此粒度冻结。

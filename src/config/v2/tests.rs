@@ -940,3 +940,30 @@ fn provider_freeze_scope_defaults_to_key_and_parses_model() {
     assert_eq!(V2FreezeScope::parse("provider"), None);
     assert_eq!(V2FreezeScope::Model.as_str(), "model");
 }
+
+/// provider.responses_passthrough：缺省不落盘（= true 历史行为）；false 表示
+/// 配置了 responses_base_url 也不透传（强制 Router 翻译）。
+#[test]
+fn provider_responses_passthrough_defaults_true_and_parses_false() {
+    let provider: V2Provider = serde_json::from_str(
+        r#"{ "base_url": "https://x.example.com",
+             "responses_base_url": "https://x.example.com",
+             "keys": {} }"#,
+    )
+    .unwrap();
+    assert_eq!(provider.responses_passthrough, None);
+    assert!(
+        provider.responses_passthrough.unwrap_or(true),
+        "缺省 = 透传（历史行为）"
+    );
+
+    let provider: V2Provider = serde_json::from_str(
+        r#"{ "base_url": "https://x.example.com",
+             "responses_base_url": "https://x.example.com",
+             "responses_passthrough": false,
+             "keys": {} }"#,
+    )
+    .unwrap();
+    assert_eq!(provider.responses_passthrough, Some(false));
+    assert!(!provider.responses_passthrough.unwrap_or(true));
+}

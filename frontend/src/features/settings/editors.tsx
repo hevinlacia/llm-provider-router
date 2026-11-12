@@ -8,6 +8,7 @@ type ProviderDraft = {
   name: string;
   base_url: string;
   responses_base_url?: string | null;
+  responses_passthrough?: boolean | null;
   anthropic_base_url?: string | null;
   freeze_scope?: 'key' | 'model' | null;
   keys: Record<string, { weight: number; billing_type: string; daily_token_quota?: number | null; enabled: boolean }>;
@@ -24,6 +25,9 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
   const [name, setName] = useState(providerName);
   const [baseUrl, setBaseUrl] = useState(provider.base_url);
   const [responsesBaseUrl, setResponsesBaseUrl] = useState(provider.responses_base_url ?? '');
+  // Responses 透传开关（缺省开）：关 = 保留 responses_base_url 但 /v1/responses 强制翻译
+  // （上游原生 Responses 实现有缺陷时关闭，如 opencode-go 对工具调用会话必 400）。
+  const [responsesPassthrough, setResponsesPassthrough] = useState(provider.responses_passthrough !== false);
   const [anthropicBaseUrl, setAnthropicBaseUrl] = useState(provider.anthropic_base_url ?? '');
   // 失败隔离粒度：key = 冻结整把 key（历史行为）；model = 只冻结 key × 模型
   // （opencode-go 这类按模型给地区限制/配额的供应商必须用 model，否则一个模型
@@ -84,9 +88,9 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
     }
     try {
       if (isNew) {
-        onSaved(await api.createV2Provider({ name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, anthropic_base_url: anthropicBaseUrl.trim() || null, freeze_scope: freezeScope, keys: keyMap }));
+        onSaved(await api.createV2Provider({ name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, responses_passthrough: responsesPassthrough, anthropic_base_url: anthropicBaseUrl.trim() || null, freeze_scope: freezeScope, keys: keyMap }));
       } else {
-        onSaved(await api.updateV2Provider(providerName, { name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, anthropic_base_url: anthropicBaseUrl.trim() || null, freeze_scope: freezeScope, keys: keyMap }));
+        onSaved(await api.updateV2Provider(providerName, { name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, responses_passthrough: responsesPassthrough, anthropic_base_url: anthropicBaseUrl.trim() || null, freeze_scope: freezeScope, keys: keyMap }));
       }
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
@@ -97,6 +101,7 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
     <div className="field"><label>Name</label><input value={name} onChange={(event) => setName(event.target.value)} /></div>
     <div className="field"><label>Chat Completions API</label><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" /></div>
     <div className="field"><label>Responses API</label><input value={responsesBaseUrl} onChange={(event) => setResponsesBaseUrl(event.target.value)} placeholder="https://api.example.com/v1（留空则翻译）" /></div>
+    <div className="field"><label>Responses 透传</label><select value={responsesPassthrough ? 'on' : 'off'} onChange={(event) => setResponsesPassthrough(event.target.value === 'on')}><option value="on">开 — 原生透传（缺省）</option><option value="off">关 — 强制 Router 翻译</option></select><span className="muted small-text">关闭后保留 Responses API 地址（模型探测可见），但 /v1/responses 改走 Router 翻译链路；上游原生 Responses 实现有缺陷时关闭（如 opencode-go 对工具调用会话必 400）</span></div>
     <div className="field"><label>Anthropic API</label><input value={anthropicBaseUrl} onChange={(event) => setAnthropicBaseUrl(event.target.value)} placeholder="https://api.anthropic.com" /></div>
     <div className="field"><label>失败冻结粒度</label><select value={freezeScope} onChange={(event) => setFreezeScope(event.target.value === 'model' ? 'model' : 'key')}><option value="key">key — 冻结整把 key（缺省）</option><option value="model">model — 只冻结 key × 模型</option></select><span className="muted small-text">按模型做地区限制/配额的供应商（如 opencode-go）选 model：某个模型被上游拒绝时，同 key 的其它模型继续可用</span></div>
     <h4>Keys — 明文密钥值存 config/api-keys.json（保存后下一请求即生效；git 副本经 bin/vault.sh 加密）</h4>
