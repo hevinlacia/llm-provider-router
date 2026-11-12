@@ -61,7 +61,62 @@ pub(crate) fn prepare_passthrough_payload(
             next["prompt_cache_key"] = Value::String(value);
         }
     }
+    sanitize_passthrough_input(&mut next);
     next
+}
+
+/// 透传载荷的 input 项归一（上游兼容性，只删/补空内容，不改有内容的部分）。
+///
+/// 2026-11-12 实测（opencode-go 的 `/responses` 内部转 chat 后落到 beam 后端）：
+///
+/// 1. 任意角色的 `content: []` → 400 invalid_value「either a string or a
+///    non-empty array of text parts」；
+/// 2. 非 assistant 消息的 `content: ""`（含纯空白）→ 400「a user message must
+///    contain text other than whitespace」；
+/// 3. `function_call_output` 的 `output` 为空串/空数组/缺失 → 同样 400。
+///
+/// 客户端（pi 等）在 reasoning-only 回合、空工具输出时会产出这些形状；透传模式下
+/// router 不做翻译，但也不能把这种注定 400 的形状原样送到上游（→ 瞬态熔断连锁）。
+/// 处理原则：空内容消息项直接丢弃（语义上空转，不丢信息）；空工具输出补占位文案。
+fn sanitize_passthrough_input(payload: &mut Value) {
+    let Some(items) = payload.get_mut("input").and_then(Value::as_array_mut) else {
+        return;
+    };
+    items.retain(|item| !is_empty_message_item(item));
+    for item in items.iter_mut() {
+        if is_function_call_output(item) && output_is_blank(item) {
+            item["output"] = Value::String("(no output)".to_string());
+        }
+    }
+}
+
+/// 空内容消息项：有 role（message-like）且内容为空（空数组 / 非 assistant 的空字符串）。
+fn is_empty_message_item(item: &Value) -> bool {
+    let Some(obj) = item.as_object() else {
+        return false;
+    };
+    // 只有 message-like 项带 role；function_call / reasoning 等不受此规则影响。
+    let Some(role) = obj.get("role").and_then(Value::as_str) else {
+        return false;
+    };
+    match obj.get("content") {
+        Some(Value::Array(parts)) => parts.is_empty(),
+        Some(Value::String(text)) => role != "assistant" && text.trim().is_empty(),
+        _ => false,
+    }
+}
+
+fn is_function_call_output(item: &Value) -> bool {
+    item.get("type").and_then(Value::as_str) == Some("function_call_output")
+}
+
+fn output_is_blank(item: &Value) -> bool {
+    match item.get("output") {
+        None | Some(Value::Null) => true,
+        Some(Value::String(text)) => text.trim().is_empty(),
+        Some(Value::Array(parts)) => parts.is_empty(),
+        _ => false,
+    }
 }
 
 /// 空 usage（流式/缺省时填充，保证 SDK 总能拿到 usage 字段）。
