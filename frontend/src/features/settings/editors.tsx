@@ -9,6 +9,7 @@ type ProviderDraft = {
   base_url: string;
   responses_base_url?: string | null;
   anthropic_base_url?: string | null;
+  freeze_scope?: 'key' | 'model' | null;
   keys: Record<string, { weight: number; billing_type: string; daily_token_quota?: number | null; enabled: boolean }>;
 };
 
@@ -24,6 +25,10 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
   const [baseUrl, setBaseUrl] = useState(provider.base_url);
   const [responsesBaseUrl, setResponsesBaseUrl] = useState(provider.responses_base_url ?? '');
   const [anthropicBaseUrl, setAnthropicBaseUrl] = useState(provider.anthropic_base_url ?? '');
+  // 失败隔离粒度：key = 冻结整把 key（历史行为）；model = 只冻结 key × 模型
+  // （opencode-go 这类按模型给地区限制/配额的供应商必须用 model，否则一个模型
+  // 被上游拒绝会把同 key 的其它模型一起打死）。
+  const [freezeScope, setFreezeScope] = useState<'key' | 'model'>(provider.freeze_scope === 'model' ? 'model' : 'key');
   const [keys, setKeys] = useState<KeyDraft[]>(() =>
     Object.entries(provider.keys).map(([k, v]) => ({ name: k, weight: v.weight, billing_type: v.billing_type, daily_token_quota: v.daily_token_quota != null ? String(v.daily_token_quota) : '', enabled: v.enabled })),
   );
@@ -79,9 +84,9 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
     }
     try {
       if (isNew) {
-        onSaved(await api.createV2Provider({ name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, anthropic_base_url: anthropicBaseUrl.trim() || null, keys: keyMap }));
+        onSaved(await api.createV2Provider({ name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, anthropic_base_url: anthropicBaseUrl.trim() || null, freeze_scope: freezeScope, keys: keyMap }));
       } else {
-        onSaved(await api.updateV2Provider(providerName, { name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, anthropic_base_url: anthropicBaseUrl.trim() || null, keys: keyMap }));
+        onSaved(await api.updateV2Provider(providerName, { name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, anthropic_base_url: anthropicBaseUrl.trim() || null, freeze_scope: freezeScope, keys: keyMap }));
       }
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
@@ -93,6 +98,7 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
     <div className="field"><label>Chat Completions API</label><input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" /></div>
     <div className="field"><label>Responses API</label><input value={responsesBaseUrl} onChange={(event) => setResponsesBaseUrl(event.target.value)} placeholder="https://api.example.com/v1（留空则翻译）" /></div>
     <div className="field"><label>Anthropic API</label><input value={anthropicBaseUrl} onChange={(event) => setAnthropicBaseUrl(event.target.value)} placeholder="https://api.anthropic.com" /></div>
+    <div className="field"><label>失败冻结粒度</label><select value={freezeScope} onChange={(event) => setFreezeScope(event.target.value === 'model' ? 'model' : 'key')}><option value="key">key — 冻结整把 key（缺省）</option><option value="model">model — 只冻结 key × 模型</option></select><span className="muted small-text">按模型做地区限制/配额的供应商（如 opencode-go）选 model：某个模型被上游拒绝时，同 key 的其它模型继续可用</span></div>
     <h4>Keys — 明文密钥值存 config/api-keys.json（保存后下一请求即生效；git 副本经 bin/vault.sh 加密）</h4>
     <div className="table-wrap"><table><colgroup><col style={{ width: '15%' }} /><col style={{ width: '28%' }} /><col style={{ width: '9%' }} /><col style={{ width: '16%' }} /><col style={{ width: '14%' }} /><col style={{ width: '8%' }} /><col style={{ width: '10%' }} /></colgroup><thead><tr><th>Key</th><th>密钥配置</th><th>Weight</th><th>Billing</th><th title="当日 token 配额；priority 策略下耗尽则降级到下一优先级；留空 = 不限">日配额</th><th>Enabled</th><th></th></tr></thead><tbody>
       {keys.map((k, i) => {

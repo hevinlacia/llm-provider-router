@@ -12,7 +12,7 @@ use crate::config_v2::V2Strategy;
 use crate::error_rules::{self, ErrorRulesConfig, ResolvedTunables};
 use crate::features::router::costing::apply_costs;
 use crate::features::router::failure::{ErrorLogEntry, RecentErrors};
-use crate::features::router::freeze::key_state_id;
+use crate::features::router::freeze::{key_state_id, model_scoped_state_id};
 use crate::features::router::selection::{key_exhausted, priority_key_pick, weighted_pick};
 use crate::features::router::UnsupportedEntry;
 use crate::json_config::{ApiKeysStore, ModelAliasConfig, TokenPriceConfig};
@@ -217,6 +217,27 @@ impl RouterState {
             return Ok(false);
         }
         Ok(true)
+    }
+
+    /// 供应商的失败隔离粒度（dashboard 配置，缺省 = key）。
+    pub fn provider_freeze_scope(&self, provider: &str) -> config_v2::V2FreezeScope {
+        self.v2
+            .providers
+            .get(provider)
+            .and_then(|prov| prov.freeze_scope)
+            .unwrap_or_default()
+    }
+
+    /// 该 key 对指定上游模型是否不可用：key 级冻结（provider/name）或
+    /// key × 模型级冻结（provider/name#model）任一命中即跳过。
+    ///
+    /// 两套 id 共存是设计选择：`freeze_scope=key` 的供应商行为不变，
+    /// `freeze_scope=model` 的供应商只多一个更细粒度的隔离键。
+    fn key_frozen_for_model(&mut self, key: &KeyRef, upstream_model: &str) -> bool {
+        self.is_frozen(&key_state_id(key)).unwrap_or(true)
+            || self
+                .is_frozen(&model_scoped_state_id(key, upstream_model))
+                .unwrap_or(true)
     }
 
     pub fn freeze(&mut self, key_name: &str, until: f64, reason: &str) -> anyhow::Result<()> {
@@ -635,8 +656,20 @@ impl RouterState {
                 .get(&(alias.alias.clone(), session_id.to_string()))
                 .cloned();
             if let Some(binding) = binding {
+                // 粘性绑定的 key 可能只在“当前模型”上被冻结（freeze_scope=model），
+                // 此时不能直接回给这个模型，落到下面正常重选流程。
+                let binding_model_frozen = alias
+                    .keys
+                    .iter()
+                    .find(|key| key_state_id(key) == binding.key_name)
+                    .map(|key| {
+                        self.is_frozen(&model_scoped_state_id(key, &upstream_model))
+                            .unwrap_or(true)
+                    })
+                    .unwrap_or(true);
                 if !excluded.contains(&binding.key_name)
                     && !self.is_frozen(&binding.key_name).unwrap_or(true)
+                    && !binding_model_frozen
                 {
                     if let Some(key) = alias.keys.iter().find(|key| {
                         key_state_id(key) == binding.key_name
@@ -678,7 +711,9 @@ impl RouterState {
                 .filter(|key| {
                     key.weight > 0
                         && !excluded.contains(&key.name)
-                        && !self.is_frozen(&key_state_id(key)).unwrap_or(true)
+                        // key 级 + key × 模型级冻结都在此过滤（freeze_scope=model 时
+                        // 只有命中的那个上游模型被隔离，同一 key 的其它模型照常可用）。
+                        && !self.key_frozen_for_model(key, &upstream_model)
                         && (!respect_unsupported
                             || !self.key_model_blocked(&key.provider, &key.name, &upstream_model))
                 })
@@ -692,10 +727,23 @@ impl RouterState {
             candidates = collect(false);
         }
         if candidates.is_empty() {
+            // 重试提示只看与本请求相关的冻结项：key 级（provider/name）或本模型的
+            // key × 模型级（provider/name#upstream_model），不含其它模型的隔离记录。
+            let relevant: HashSet<String> = alias
+                .keys
+                .iter()
+                .flat_map(|key| {
+                    [
+                        key_state_id(key),
+                        model_scoped_state_id(key, &upstream_model),
+                    ]
+                })
+                .collect();
             let retry_after = self
                 .frozen
-                .values()
-                .map(|item| (item.until - now_seconds()).max(1.0) as u64)
+                .iter()
+                .filter(|(id, _)| relevant.contains(*id))
+                .map(|(_, item)| (item.until - now_seconds()).max(1.0) as u64)
                 .min()
                 .unwrap_or(60);
             return Err(NoAvailableKeyError { retry_after });

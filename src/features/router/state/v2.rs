@@ -107,6 +107,8 @@ impl RouterState {
                     "base_url": prov.base_url,
                     "responses_base_url": prov.responses_base_url,
                     "anthropic_base_url": prov.anthropic_base_url,
+                    // 失败隔离粒度（缺省 = key，dashboard 可切 model）
+                    "freeze_scope": prov.freeze_scope.unwrap_or_default().as_str(),
                     "key_total": prov.keys.len(),
                     "key_enabled": enabled.len(),
                     "key_frozen": frozen_count,
@@ -376,6 +378,9 @@ impl RouterState {
 
     /// 编辑 v2 供应商：改名 / base_url / keys（新增、删除、启用停用）。
     /// 改名时同步 `models.json` 与 `logical-models.json` 的引用，完成后热加载并返回最新视图。
+    // 参数已 8 个（含 &mut self）：拆结构体只会把复杂度搬到调用方，
+    // 这里保留平铺签名 + 显式 allow，改签名时同步两个 handler 即可。
+    #[allow(clippy::too_many_arguments)]
     pub fn update_v2_provider(
         &mut self,
         old_name: &str,
@@ -383,6 +388,7 @@ impl RouterState {
         base_url: &str,
         responses_base_url: Option<String>,
         anthropic_base_url: Option<String>,
+        freeze_scope: Option<config_v2::V2FreezeScope>,
         keys: HashMap<String, config_v2::V2Key>,
     ) -> anyhow::Result<Value> {
         if new_name.trim().is_empty() {
@@ -419,6 +425,10 @@ impl RouterState {
         provider.anthropic_base_url = anthropic_base_url
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
+        // freeze_scope：None = 沿用现有值（key 粒度缺省），Some 才覆写。
+        if let Some(scope) = freeze_scope {
+            provider.freeze_scope = Some(scope);
+        }
         provider.keys = keys;
         providers.providers.insert(new_name.to_string(), provider);
         config_v2::write_providers_file(config_v2::V2_PROVIDERS_PATH, &providers)?;
@@ -443,6 +453,7 @@ impl RouterState {
         base_url: &str,
         responses_base_url: Option<String>,
         anthropic_base_url: Option<String>,
+        freeze_scope: Option<config_v2::V2FreezeScope>,
         keys: HashMap<String, config_v2::V2Key>,
     ) -> anyhow::Result<Value> {
         let name = name.trim();
@@ -479,6 +490,7 @@ impl RouterState {
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty()),
                 retry: None,
+                freeze_scope,
                 keys,
             },
         );

@@ -105,6 +105,15 @@ pub(crate) fn key_state_id(key: &KeyRef) -> String {
     }
 }
 
+/// key × 上游模型 的状态唯一标识（`provider/name#upstream_model`）。
+///
+/// 用于 `freeze_scope = model` 的供应商（2026-11-12 opencode-go）：其地区限制/配额
+/// 按模型生效，一个模型不可用不能连带冻结同一把 key 的其它模型。
+/// 与 key 级 id（`provider/name`）共存：选择时两者都要检查。
+pub(crate) fn model_scoped_state_id(key: &KeyRef, upstream_model: &str) -> String {
+    format!("{}#{}", key_state_id(key), upstream_model)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,5 +200,28 @@ mod tests {
             parse_quota_reset(text, MONTHLY_FALLBACK, FIVE_HOUR_FALLBACK).unwrap();
         assert_eq!(reason, "weekly_quota");
         assert!((until - (before + MONTHLY_FALLBACK)).abs() < 5.0);
+    }
+
+    /// key × 模型隔离键格式：`provider/name#model`，与 key 级 `provider/name` 并存。
+    #[test]
+    fn model_scoped_state_id_appends_model() {
+        let key = KeyRef {
+            name: "hevin".into(),
+            weight: 1,
+            provider: "opencode-go".into(),
+            billing_type: "subscription".into(),
+            daily_token_quota: None,
+        };
+        assert_eq!(key_state_id(&key), "opencode-go/hevin");
+        assert_eq!(
+            model_scoped_state_id(&key, "beam-free"),
+            "opencode-go/hevin#beam-free"
+        );
+        // 无 provider（旧配置形态）：只按 key 名区分
+        let bare = KeyRef {
+            provider: String::new(),
+            ..key.clone()
+        };
+        assert_eq!(model_scoped_state_id(&bare, "beam-free"), "hevin#beam-free");
     }
 }

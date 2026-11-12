@@ -92,6 +92,7 @@
       "responses_base_url": "https://opencode.ai/inference/go/openai/v1",
       "anthropic_base_url": null,
       "retry": null,
+      "freeze_scope": "model",
       "keys": {
         "hevin": {
           "weight": 1,
