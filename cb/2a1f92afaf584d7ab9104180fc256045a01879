@@ -1,0 +1,25 @@
+src/features/responses/translate/request.rs
+  408bd74b1b6490ce 179-184,190-192,195
+src/features/responses/translate/tests.rs
+  408bd74b1b6490ce 448-449,461-477,490
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "cb2a1f92afaf584d7ab9104180fc256045a01879",
+  "prompts": {
+    "408bd74b1b6490ce": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1ced7-0a5c-7668-b44b-a7aae97a4c98",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 30,
+      "total_deletions": 9,
+      "accepted_lines": 30,
+      "overriden_lines": 0
+    }
+  }
+}
