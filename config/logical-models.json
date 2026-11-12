@@ -1,6 +1,6 @@
 {
   "logical_models": {
-    "beam-free-auto": {
+    "gpt-low-latest-auto": {
       "params": {},
       "route": {
         "strategy": "priority",
@@ -13,73 +13,7 @@
           }
         ]
       },
-      "display_name": null
-    },
-    "grok-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "aixhan/grok-4.6",
-            "weight": null,
-            "enabled": true,
-            "keys": null
-          },
-          {
-            "model": "aixhan/gpt-5.5",
-            "weight": null,
-            "enabled": true,
-            "keys": null
-          }
-        ]
-      },
-      "display_name": "Grok Latest Auto"
-    },
-    "gpt-medium-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "aixhan/gpt-5.6-sol",
-            "weight": null,
-            "enabled": true,
-            "keys": null
-          }
-        ]
-      },
-      "display_name": "GPT Medium Latest Auto"
-    },
-    "glm-flash-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "weighted",
-        "targets": [
-          {
-            "model": "zp/glm-5.3-flash",
-            "weight": 1,
-            "enabled": true,
-            "keys": null
-          }
-        ]
-      },
-      "display_name": null
-    },
-    "gpt-high-latest-auto": {
-      "params": {},
-      "route": {
-        "strategy": "priority",
-        "targets": [
-          {
-            "model": "aixhan/gpt-6-astra",
-            "weight": null,
-            "enabled": true,
-            "keys": null
-          }
-        ]
-      },
-      "display_name": "GPT High Latest Auto"
+      "display_name": "GPT Low Latest Auto"
     },
     "high-model-auto": {
       "params": {},
@@ -96,20 +30,20 @@
       },
       "display_name": "High Model Auto"
     },
-    "glm-latest-auto": {
+    "gpt-high-latest-auto": {
       "params": {},
       "route": {
-        "strategy": "weighted",
+        "strategy": "priority",
         "targets": [
           {
-            "model": "zp/glm-5.3",
+            "model": "aixhan/gpt-6-astra",
             "weight": null,
             "enabled": true,
             "keys": null
           }
         ]
       },
-      "display_name": "GLM Latest Auto"
+      "display_name": "GPT High Latest Auto"
     },
     "low-model-auto": {
       "params": {},
@@ -126,7 +60,22 @@
       },
       "display_name": "Low Model Auto"
     },
-    "gpt-low-latest-auto": {
+    "glm-flash-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "weighted",
+        "targets": [
+          {
+            "model": "zp/glm-5.3-flash",
+            "weight": 1,
+            "enabled": true,
+            "keys": null
+          }
+        ]
+      },
+      "display_name": null
+    },
+    "beam-free-auto": {
       "params": {},
       "route": {
         "strategy": "priority",
@@ -139,7 +88,7 @@
           }
         ]
       },
-      "display_name": "GPT Low Latest Auto"
+      "display_name": null
     },
     "deepseek-flash-latest-auto": {
       "params": {},
@@ -168,6 +117,21 @@
       },
       "display_name": "DeepSeek V4 Flash Auto"
     },
+    "gpt-medium-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "aixhan/gpt-5.6-sol",
+            "weight": null,
+            "enabled": true,
+            "keys": null
+          }
+        ]
+      },
+      "display_name": "GPT Medium Latest Auto"
+    },
     "medium-model-auto": {
       "params": {},
       "route": {
@@ -182,6 +146,42 @@
         ]
       },
       "display_name": "Medium Model Auto"
+    },
+    "glm-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "weighted",
+        "targets": [
+          {
+            "model": "zp/glm-5.3",
+            "weight": null,
+            "enabled": true,
+            "keys": null
+          }
+        ]
+      },
+      "display_name": "GLM Latest Auto"
+    },
+    "grok-latest-auto": {
+      "params": {},
+      "route": {
+        "strategy": "priority",
+        "targets": [
+          {
+            "model": "aixhan/grok-4.6",
+            "weight": null,
+            "enabled": true,
+            "keys": null
+          },
+          {
+            "model": "aixhan/gpt-5.5",
+            "weight": null,
+            "enabled": true,
+            "keys": null
+          }
+        ]
+      },
+      "display_name": "Grok Latest Auto"
     }
   }
 }

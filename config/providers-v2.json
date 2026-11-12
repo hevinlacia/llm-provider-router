@@ -1,5 +1,33 @@
 {
   "providers": {
+    "zp": {
+      "base_url": "",
+      "responses_base_url": "https://open.bigmodel.cn/api/v1",
+      "anthropic_base_url": null,
+      "retry": null,
+      "keys": {
+        "jt": {
+          "weight": 1,
+          "billing_type": "subscription",
+          "daily_token_quota": null,
+          "enabled": true
+        }
+      }
+    },
+    "deepseek-official": {
+      "base_url": "",
+      "responses_base_url": "https://api.deepseek.com",
+      "anthropic_base_url": "https://api.deepseek.com/anthropic",
+      "retry": null,
+      "keys": {
+        "deepseek-official": {
+          "weight": 1,
+          "billing_type": "payg",
+          "daily_token_quota": null,
+          "enabled": false
+        }
+      }
+    },
     "ark": {
       "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
       "responses_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
@@ -40,49 +68,6 @@
         }
       }
     },
-    "zp": {
-      "base_url": "",
-      "responses_base_url": "https://open.bigmodel.cn/api/v1",
-      "anthropic_base_url": null,
-      "retry": null,
-      "keys": {
-        "jt": {
-          "weight": 1,
-          "billing_type": "subscription",
-          "daily_token_quota": null,
-          "enabled": true
-        }
-      }
-    },
-    "deepseek-official": {
-      "base_url": "",
-      "responses_base_url": "https://api.deepseek.com",
-      "anthropic_base_url": "https://api.deepseek.com/anthropic",
-      "retry": null,
-      "keys": {
-        "deepseek-official": {
-          "weight": 1,
-          "billing_type": "payg",
-          "daily_token_quota": null,
-          "enabled": false
-        }
-      }
-    },
-    "opencode-go": {
-      "base_url": "https://opencode.ai/inference/go/openai/v1",
-      "responses_base_url": null,
-      "anthropic_base_url": null,
-      "retry": null,
-      "freeze_scope": "model",
-      "keys": {
-        "hevin": {
-          "weight": 1,
-          "billing_type": "subscription",
-          "daily_token_quota": null,
-          "enabled": true
-        }
-      }
-    },
     "aixhan": {
       "base_url": "https://api.aixhan.com/v1",
       "responses_base_url": "https://api.aixhan.com/v1",
@@ -100,6 +85,22 @@
       },
       "keys": {
         "oai-hevin": {
+          "weight": 1,
+          "billing_type": "subscription",
+          "daily_token_quota": null,
+          "enabled": true
+        }
+      }
+    },
+    "opencode-go": {
+      "base_url": "https://opencode.ai/inference/go/openai/v1",
+      "responses_base_url": "https://opencode.ai/inference/go/openai/v1",
+      "anthropic_base_url": null,
+      "responses_passthrough": false,
+      "retry": null,
+      "freeze_scope": "model",
+      "keys": {
+        "hevin": {
           "weight": 1,
           "billing_type": "subscription",
           "daily_token_quota": null,

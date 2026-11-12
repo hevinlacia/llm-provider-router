@@ -967,3 +967,45 @@ fn provider_responses_passthrough_defaults_true_and_parses_false() {
     assert_eq!(provider.responses_passthrough, Some(false));
     assert!(!provider.responses_passthrough.unwrap_or(true));
 }
+
+/// 路由路径（resolve_targets → physical_candidate）必须携带 passthrough 开关：
+/// 2026-11-12 事故——开关只接进了 fold（dashboard 视图），实际路由的 alias 仍是
+/// 缺省 true，导致 responses_passthrough=false 不生效、继续透传坏上游。
+#[test]
+fn resolve_targets_carries_passthrough_flag() {
+    let providers = r#"{
+      "providers": {
+        "oc": {
+          "base_url": "https://x.example.com/v1",
+          "responses_base_url": "https://x.example.com/v1",
+          "responses_passthrough": false,
+          "keys": { "k": { "weight": 1 } }
+        }
+      }
+    }"#;
+    let models = r#"{ "models": { "oc/m": { "provider": "oc", "upstream_model": "m" } } }"#;
+    let logical = r#"{
+      "logical_models": { "pool": { "route": { "strategy": "priority",
+        "targets": [ { "model": "oc/m", "weight": null, "enabled": true, "keys": null } ] } } }
+    }"#;
+    let seq = {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    };
+    let dir = std::env::temp_dir().join(format!("lpr-v2-pt-{}-{seq}", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    let p = write_temp(&dir, "providers.json", providers);
+    let m = write_temp(&dir, "models.json", models);
+    let l = write_temp(&dir, "logical.json", logical);
+    let v = write_temp(&dir, "virtual.json", r#"{"virtual_models":{}}"#);
+    let cfg = load_v2_config_from(&p, &m, &l, &v).unwrap();
+    let cands = resolve_targets(&cfg, "pool").unwrap();
+    assert_eq!(cands.len(), 1);
+    let alias = &cands[0].model;
+    assert!(alias.supports_responses(), "端点已配置");
+    assert!(
+        !alias.passthrough_responses(),
+        "路由 alias 必须携带开关（false=强制翻译）"
+    );
+}
