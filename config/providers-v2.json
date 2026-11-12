@@ -1,12 +1,14 @@
 {
   "providers": {
-    "zp": {
-      "base_url": "",
-      "responses_base_url": "https://open.bigmodel.cn/api/v1",
+    "opencode-go": {
+      "base_url": "https://opencode.ai/inference/go/openai/v1",
+      "responses_base_url": "https://opencode.ai/inference/go/openai/v1",
       "anthropic_base_url": null,
+      "responses_passthrough": false,
       "retry": null,
+      "freeze_scope": "model",
       "keys": {
-        "jt": {
+        "hevin": {
           "weight": 1,
           "billing_type": "subscription",
           "daily_token_quota": null,
@@ -14,15 +16,15 @@
         }
       }
     },
-    "deepseek-official": {
+    "ark-agent": {
       "base_url": "",
-      "responses_base_url": "https://api.deepseek.com",
-      "anthropic_base_url": "https://api.deepseek.com/anthropic",
+      "responses_base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+      "anthropic_base_url": null,
       "retry": null,
       "keys": {
-        "deepseek-official": {
+        "hevin-6544": {
           "weight": 1,
-          "billing_type": "payg",
+          "billing_type": "subscription",
           "daily_token_quota": null,
           "enabled": false
         }
@@ -54,15 +56,15 @@
         }
       }
     },
-    "ark-agent": {
+    "deepseek-official": {
       "base_url": "",
-      "responses_base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
-      "anthropic_base_url": null,
+      "responses_base_url": "https://api.deepseek.com",
+      "anthropic_base_url": "https://api.deepseek.com/anthropic",
       "retry": null,
       "keys": {
-        "hevin-6544": {
+        "deepseek-official": {
           "weight": 1,
-          "billing_type": "subscription",
+          "billing_type": "payg",
           "daily_token_quota": null,
           "enabled": false
         }
@@ -92,15 +94,13 @@
         }
       }
     },
-    "opencode-go": {
-      "base_url": "https://opencode.ai/inference/go/openai/v1",
-      "responses_base_url": "https://opencode.ai/inference/go/openai/v1",
+    "zp": {
+      "base_url": "",
+      "responses_base_url": "https://open.bigmodel.cn/api/v1",
       "anthropic_base_url": null,
-      "responses_passthrough": false,
       "retry": null,
-      "freeze_scope": "model",
       "keys": {
-        "hevin": {
+        "jt": {
           "weight": 1,
           "billing_type": "subscription",
           "daily_token_quota": null,
