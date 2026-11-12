@@ -176,18 +176,23 @@ fn translate_input_item(item: &Value, messages: &mut Vec<Value>) -> Result<(), S
             let content = item.get("content");
             match content {
                 Some(Value::String(s)) => {
+                    // 非 assistant 的空白字符串内容会被部分上游拒（beam 后端：
+                    // "a user message must contain text other than whitespace"），
+                    // 空转消息直接跳过；assistant 空串保留（deepseek 接受）。`
+                    if role != "assistant" && s.trim().is_empty() {
+                        return Ok(());
+                    }
                     messages.push(json!({ "role": role, "content": s }));
                     Ok(())
                 }
                 Some(Value::Array(parts)) => {
                     let translated = translate_content_parts(parts)?;
-                    // 空内容数组：部分上游（opencode-go 的 beam 后端等）明确拒绕
-                    // `content: []`（400 invalid_value）。assistant 回合用 null 占位
-                    // （等同“只有工具调用/推理”，上游接受），其它角色整条跳过
-                    // （空用户/系统消息无信息价值，且空字符串同样被拒）。
+                    // 空内容数组：部分上游明确拒绕 `content: []`（beam：400 invalid_value；
+                    // deepseek：content null 无 tool_calls 也拒 —— 2026-11-12 实测）。
+                    // assistant 回合用空串占位（两平台都接受），其它角色整条跳过。
                     if translated.is_empty() {
                         if role == "assistant" {
-                            messages.push(json!({ "role": role, "content": Value::Null }));
+                            messages.push(json!({ "role": role, "content": String::new() }));
                         }
                         return Ok(());
                     }
