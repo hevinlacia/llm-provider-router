@@ -853,3 +853,29 @@ async fn zp_passthrough_response_failed_event_freezes_key() {
     );
     assert_eq!(hits.load(Ordering::SeqCst), 1);
 }
+
+/// 2026-11-12 deepseek v4.1 flash tool-call arguments 缺块回归：
+/// 上游 chunk 可能把 SSE 行从 JSON 中间截断，翻译路径必须跨 chunk
+/// 缓冲到完整行再解析，不能按 chunk 边界 `lines()` 分行。
+#[test]
+fn chat_sse_line_parser_buffers_lines_split_across_chunks() {
+    let mut p = ChatSseLineParser::new();
+
+    // chunk1: event 行 + data 行的前半（JSON 被撕开）
+    let out = p.feed(b"event: response.output_text.delta\ndata: {\"type\":\"response.output_te");
+    assert!(out.is_empty(), "半行不得产出事件: {out:?}");
+
+    // chunk2: 后半 + 换行 + 下一条完整行
+    let out = p.feed(b"xt.delta\",\"delta\":\"he\"}\n\ndata: {\"type\":\"ping\"}\n\n");
+    assert_eq!(out.len(), 2, "拼齐后应产出两条事件: {out:?}");
+    assert_eq!(out[0]["type"], "response.output_text.delta");
+    assert_eq!(out[0]["delta"], "he");
+    assert_eq!(out[1]["type"], "ping");
+}
+
+#[test]
+fn chat_sse_line_parser_skips_done_and_unparseable() {
+    let mut p = ChatSseLineParser::new();
+    let out = p.feed(b"data: [DONE]\ndata: not-json\n\n");
+    assert!(out.is_empty(), "[DONE] 与不可解析载荷不得产出: {out:?}");
+}
