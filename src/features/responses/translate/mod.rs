@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod request;
 mod response;
 
-pub(crate) use request::responses_to_chat;
+pub(crate) use request::{responses_to_chat, PLACEHOLDER_TOOL_NAME};
 pub(crate) use response::{chat_to_responses, response_echo_fields};
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -84,9 +84,26 @@ fn sanitize_passthrough_input(payload: &mut Value) {
     };
     items.retain(|item| !is_empty_message_item(item));
     for item in items.iter_mut() {
+        // 空工具名：部分客户端历史重放时会发出 name 为空的 function_call，
+        // 上游校验直接 400「expected a non-empty string」→ 补占位保留调用链。
+        if is_function_call(item) && name_is_blank(item) {
+            item["name"] = Value::String(PLACEHOLDER_TOOL_NAME.to_string());
+        }
         if is_function_call_output(item) && output_is_blank(item) {
             item["output"] = Value::String("(no output)".to_string());
         }
+    }
+}
+
+fn is_function_call(item: &Value) -> bool {
+    item.get("type").and_then(Value::as_str) == Some("function_call")
+}
+
+fn name_is_blank(item: &Value) -> bool {
+    match item.get("name") {
+        None | Some(Value::Null) => true,
+        Some(Value::String(name)) => name.trim().is_empty(),
+        _ => true,
     }
 }
 
