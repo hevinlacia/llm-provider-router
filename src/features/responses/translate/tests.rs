@@ -473,3 +473,75 @@ fn parts_translating_to_nothing_do_not_produce_empty_array() {
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[1]["content"], Value::Null);
 }
+
+/// 透传载荷归一：上游（opencode-go /responses → chat）会 400 的空内容形状
+/// 必须在 router 侧清掉，否则透传模式必然连锁失败 + 瞬态熔断。
+#[test]
+fn passthrough_drops_empty_message_items() {
+    let alias = ModelAlias::new(
+        "logical",
+        "openai/real-upstream",
+        "http://x/v1",
+        Vec::new(),
+        None,
+    )
+    .with_responses_base_url(Some("http://x/v1".to_string()));
+    let payload = json!({
+        "model": "logical",
+        "input": [
+            { "role": "user", "content": "hi" },
+            { "type": "message", "role": "assistant", "content": [] },
+            { "role": "user", "content": "   " },
+            { "type": "function_call", "call_id": "c1", "name": "f", "arguments": "{}" },
+            { "type": "function_call_output", "call_id": "c1", "output": "" },
+            { "role": "assistant", "content": "" },
+            { "role": "user", "content": "go" }
+        ]
+    });
+    let out = prepare_passthrough_payload(&payload, &alias, None, false);
+    let items = out["input"].as_array().unwrap();
+    // 保留：user "hi"、function_call、function_call_output、空 assistant（上游接受 ""）、user "go"
+    assert_eq!(items.len(), 5, "空内容项应被丢弃: {items:?}");
+    assert_eq!(items[0]["content"], "hi");
+    assert_eq!(items[1]["type"], "function_call");
+    assert_eq!(items[2]["type"], "function_call_output");
+    assert_eq!(
+        items[2]["output"], "(no output)",
+        "空工具输出补占位，否则 chat content 为空串 400"
+    );
+    assert_eq!(items[3]["content"], "");
+    assert_eq!(items[4]["content"], "go");
+    for item in items {
+        if item.get("role").is_some() {
+            assert_ne!(item["content"], json!([]), "不得下发空 content 数组");
+        }
+    }
+}
+
+/// 有内容的消息项与 input 为字符串的形态必须原样保留（只删空项）。
+#[test]
+fn passthrough_keeps_contentful_items_untouched() {
+    let alias = ModelAlias::new(
+        "logical",
+        "openai/real-upstream",
+        "http://x/v1",
+        Vec::new(),
+        None,
+    )
+    .with_responses_base_url(Some("http://x/v1".to_string()));
+    let payload = json!({
+        "model": "logical",
+        "input": [
+            { "role": "user", "content": [ { "type": "input_text", "text": "a" } ] },
+            { "role": "assistant", "content": [ { "type": "output_text", "text": "b" } ] },
+            { "type": "function_call_output", "call_id": "c1", "output": "line1\nline2" }
+        ]
+    });
+    let out = prepare_passthrough_payload(&payload, &alias, None, false);
+    assert_eq!(out["input"], payload["input"], "有内容的项必须逐字节保留");
+
+    // input 为字符串：不做任何处理
+    let payload = json!({ "model": "logical", "input": "hi" });
+    let out = prepare_passthrough_payload(&payload, &alias, None, false);
+    assert_eq!(out["input"], json!("hi"));
+}

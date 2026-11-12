@@ -604,13 +604,19 @@ pub(crate) fn circuit_breaker_on_exhaustion(app: &AppState, alias: &ModelAlias) 
             return;
         }
         let now = crate::state_store::now_seconds();
+        // 熔断也遵守供应商 freeze_scope：freeze_scope=model 的供应商（opencode-go）
+        // 只因某模型瞬态耗尽就冻结整把 key 会连带打挂同 key 的其它模型
+        // （2026-11-12 实测：beam-free 全池瞬态耗尽 → key 级冻结 300s → deepseek 也 429）。
+        let scope = state.provider_freeze_scope(&alias.provider());
+        let upstream_model = alias.upstream_model();
         for key in &alias.keys {
             if key.weight <= 0 {
                 continue;
             }
-            let frozen = state.is_frozen(&key_state_id(key)).unwrap_or(true);
+            let state_id = freeze_state_id(scope, key, &upstream_model);
+            let frozen = state.is_frozen(&state_id).unwrap_or(true);
             if !frozen {
-                let _ = state.freeze(&key_state_id(key), now + seconds, "transient_exhausted");
+                let _ = state.freeze(&state_id, now + seconds, "transient_exhausted");
             }
         }
     }
