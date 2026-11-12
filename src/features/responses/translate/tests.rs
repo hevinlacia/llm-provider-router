@@ -445,9 +445,8 @@ fn empty_content_array_is_normalized_not_sent() {
     assert_eq!(messages[0]["content"], "hi");
     assert_eq!(messages[1]["role"], "assistant");
     assert_eq!(
-        messages[1]["content"],
-        Value::Null,
-        "assistant 空内容用 null"
+        messages[1]["content"], "",
+        "assistant 空内容用空串（deepseek 拒 null，接受空串）"
     );
     assert_eq!(messages[2]["content"], "go");
     for message in messages {
@@ -457,6 +456,23 @@ fn empty_content_array_is_normalized_not_sent() {
             "任何角色都不得下发空 content 数组"
         );
     }
+}
+
+/// 非 assistant 的空白字符串内容（beam：user 空串 400）整条跳过。
+#[test]
+fn whitespace_user_message_is_dropped() {
+    let c = chat(&json!({
+        "model": "m",
+        "input": [
+            { "role": "user", "content": "hi" },
+            { "role": "user", "content": "   " },
+            { "role": "user", "content": "go" }
+        ]
+    }));
+    let messages = c["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0]["content"], "hi");
+    assert_eq!(messages[1]["content"], "go");
 }
 
 /// 内容数组里全是无法翻译的 part（无 text 字段）时，同样不能产空数组。
@@ -471,7 +487,7 @@ fn parts_translating_to_nothing_do_not_produce_empty_array() {
     }));
     let messages = c["messages"].as_array().unwrap();
     assert_eq!(messages.len(), 2);
-    assert_eq!(messages[1]["content"], Value::Null);
+    assert_eq!(messages[1]["content"], "");
 }
 
 /// 透传载荷归一：上游（opencode-go /responses → chat）会 400 的空内容形状
