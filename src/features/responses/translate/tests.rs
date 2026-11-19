@@ -602,3 +602,148 @@ fn empty_function_call_name_gets_placeholder() {
     assert_eq!(out["input"][0]["name"], "(unknown)");
     assert_eq!(out["input"][1]["output"], "src/", "有内容的输出原样保留");
 }
+
+/// pi 多步会话的真实历史形状：叙述与工具调用分项交错，且并行调用。
+///
+/// Responses input 把同一回合拆成多个项（多个 `message` + 并行 `function_call`），
+/// chat completions 要求 assistant 回合唯一——必须合并成一条：
+/// 文本进 content、全部调用进同一个 tool_calls 数组。
+/// 修复前会产出 `assistant / assistant / assistant / tool` 这类连续同角色序列，
+/// 且并行调用被拆成多条 `content:null` 的非法 assistant 消息。
+#[test]
+fn pi_style_narrative_and_parallel_calls_merge_into_one_assistant_turn() {
+    let c = chat(&json!({
+        "model": "m",
+        "input": [
+            { "role": "user", "content": "干活" },
+            { "type": "message", "role": "assistant",
+              "content": [{ "type": "output_text", "text": "先看代码：" }], "status": "completed", "id": "msg_1" },
+            { "type": "function_call", "call_id": "call_a", "name": "read", "arguments": "{\"path\":\"a\"}", "id": "fc_a" },
+            { "type": "function_call", "call_id": "call_b", "name": "read", "arguments": "{\"path\":\"b\"}", "id": "fc_b" },
+            { "type": "function_call_output", "call_id": "call_a", "output": "A" },
+            { "type": "function_call_output", "call_id": "call_b", "output": "B" },
+            { "type": "message", "role": "assistant",
+              "content": [{ "type": "output_text", "text": "现在改 A1：" }], "status": "completed", "id": "msg_2" },
+            { "type": "function_call", "call_id": "call_c", "name": "bash", "arguments": "{\"command\":\"ls\"}", "id": "fc_c" },
+            { "type": "function_call_output", "call_id": "call_c", "output": "a.txt" },
+            { "role": "user", "content": "继续" }
+        ]
+    }));
+    let messages = c["messages"].as_array().unwrap();
+    let roles: Vec<&str> = messages
+        .iter()
+        .map(|m| m["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        roles,
+        vec![
+            "user",
+            "assistant",
+            "tool",
+            "tool",
+            "assistant",
+            "tool",
+            "user"
+        ],
+        "并行调用必须共享一条 assistant 消息: {messages:#?}"
+    );
+    // 第一回合：文本 + 两个并行调用在同一条消息里
+    assert_eq!(messages[1]["content"], "先看代码：");
+    let calls = messages[1]["tool_calls"].as_array().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0]["id"], "call_a");
+    assert_eq!(calls[1]["id"], "call_b");
+    // 第二回合同理
+    assert_eq!(messages[4]["content"], "现在改 A1：");
+    assert_eq!(messages[4]["tool_calls"].as_array().unwrap().len(), 1);
+    // 任何 assistant 消息都不得 content:null 且只有单个 tool_call 的拆分形状
+    for (idx, m) in messages.iter().enumerate() {
+        if m["role"] != "assistant" {
+            continue;
+        }
+        assert!(
+            !(m["content"].is_null()
+                && m["tool_calls"]
+                    .as_array()
+                    .map(|a| a.len() == 1)
+                    .unwrap_or(false)),
+            "message[{idx}] 仍是拆分形状: {m:#?}"
+        );
+    }
+}
+
+/// 同一回合的多个纯文本 message 项（分帧下发的叙述）应合并，不能变成连续 assistant。
+#[test]
+fn successive_assistant_text_items_merge_into_one_message() {
+    let c = chat(&json!({
+        "model": "m",
+        "input": [
+            { "role": "user", "content": "go" },
+            { "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "第一段" }] },
+            { "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "第二段" }] },
+            { "type": "function_call", "call_id": "c1", "name": "bash", "arguments": "{}" },
+            { "type": "function_call_output", "call_id": "c1", "output": "ok" }
+        ]
+    }));
+    let messages = c["messages"].as_array().unwrap();
+    let roles: Vec<&str> = messages
+        .iter()
+        .map(|m| m["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(roles, vec!["user", "assistant", "tool"], "{messages:#?}");
+    assert_eq!(messages[1]["content"], "第一段\n第二段");
+    assert_eq!(messages[1]["tool_calls"].as_array().unwrap().len(), 1);
+}
+
+/// assistant 叙述在前、工具输出之后新回合叙述：必须切分成两条 assistant（不同回合）。
+#[test]
+fn assistant_turns_separated_by_tool_result_are_not_merged() {
+    let c = chat(&json!({
+        "model": "m",
+        "input": [
+            { "role": "user", "content": "go" },
+            { "type": "function_call", "call_id": "c1", "name": "bash", "arguments": "{}" },
+            { "type": "function_call_output", "call_id": "c1", "output": "ok" },
+            { "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "好的" }] }
+        ]
+    }));
+    let messages = c["messages"].as_array().unwrap();
+    let roles: Vec<&str> = messages
+        .iter()
+        .map(|m| m["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(roles, vec!["user", "assistant", "tool", "assistant"]);
+    assert_eq!(messages[1]["tool_calls"].as_array().unwrap().len(), 1);
+    assert_eq!(messages[3]["content"], "好的");
+    assert!(
+        messages[3].get("tool_calls").is_none(),
+        "新回合不得继承上回合调用"
+    );
+}
+
+/// 空占位不得覆盖已有叙述：assistant 文本后跟空 content 数组项时，原文必须保留。
+#[test]
+fn empty_content_placeholder_does_not_overwrite_existing_text() {
+    let c = chat(&json!({
+        "model": "m",
+        "input": [
+            { "role": "user", "content": "go" },
+            { "type": "message", "role": "assistant",
+              "content": [{ "type": "output_text", "text": "先看目录：" }] },
+            { "type": "message", "role": "assistant", "content": [] },
+            { "type": "function_call", "call_id": "c1", "name": "bash", "arguments": "{}" },
+            { "type": "function_call_output", "call_id": "c1", "output": "ok" }
+        ]
+    }));
+    let messages = c["messages"].as_array().unwrap();
+    let roles: Vec<&str> = messages
+        .iter()
+        .map(|m| m["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(roles, vec!["user", "assistant", "tool"], "{messages:#?}");
+    assert_eq!(
+        messages[1]["content"], "先看目录：",
+        "空占位不得覆盖已有叙述: {messages:#?}"
+    );
+    assert_eq!(messages[1]["tool_calls"].as_array().unwrap().len(), 1);
+}

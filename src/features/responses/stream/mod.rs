@@ -364,11 +364,23 @@ pub(crate) async fn stream_responses_route(
                     // 翻译：chat SSE -> Responses 事件
                     let echo = translate::response_echo_fields(&original_payload);
                     let mut sse = ResponsesSse::with_echo(&upstream_model, &echo);
+                    // 跨 chunk 行重组：上游 SSE 行可能被 TCP 分片切成两半，
+                    // 逐 chunk `lines()` 会把半行当成坏行丢弃（内容/工具调用 delta
+                    // 以及 finish_reason 一起丢，收尾降级 incomplete/interrupted）。
+                    // 这里按字节缓冲到 `\n` 才解析，保证任意分片位置都能正确重组。
+                    let mut line_buf: Vec<u8> = Vec::new();
                     while let Some(item) = bytes_stream.next().await {
                         match item {
                             Ok(chunk) => {
                                 body_text.extend_from_slice(&chunk);
-                                let text = String::from_utf8_lossy(&chunk);
+                                line_buf.extend_from_slice(&chunk);
+                                // 只消费到最后一个换行：其后的半行留到下一个 chunk。
+                                let Some(last_nl) = line_buf.iter().rposition(|&b| b == b'\n')
+                                else {
+                                    continue;
+                                };
+                                let head: Vec<u8> = line_buf.drain(..=last_nl).collect();
+                                let text = String::from_utf8_lossy(&head);
                                 for line in text.lines() {
                                     let trimmed = line.trim();
                                     let Some(data) = trimmed.strip_prefix("data:") else { continue };
@@ -426,6 +438,24 @@ pub(crate) async fn stream_responses_route(
                                     exc.is_timeout(),
                                 )));
                                 return;
+                            }
+                        }
+                    }
+                    // 流尾兜底：上游最后一帧可能没有结尾换行，残留半行仍需解析
+                    //（否则 finish_reason 所在帧会丢，正常结束被误判成 interrupted）。
+                    if !line_buf.is_empty() {
+                        let text = String::from_utf8_lossy(&line_buf).to_string();
+                        line_buf.clear();
+                        let trimmed = text.trim();
+                        if let Some(data) = trimmed.strip_prefix("data:") {
+                            let body = data.trim();
+                            if !body.is_empty() && body != "[DONE]" {
+                                if let Ok(value) = serde_json::from_str::<Value>(body) {
+                                    let events = sse.feed(&value);
+                                    if !events.is_empty() {
+                                        yield Ok(Bytes::from(events));
+                                    }
+                                }
                             }
                         }
                     }

@@ -127,10 +127,70 @@ fn instructions_to_text(v: &Value) -> Result<String, String> {
 /// string」，部分 chat 上游对 tool_calls.name 空串同样拒绝）。占位保留调用链上下文。
 pub(crate) const PLACEHOLDER_TOOL_NAME: &str = "(unknown)";
 
+/// 追加/合并一条 assistant 消息（chat 协议要求 assistant 回合唯一）。
+///
+/// Responses 的 input 把同一回合拆成多个项：若干 `message`（output_text）+
+/// 若干 `function_call`（并行工具调用各一项）。chat completions 里这些必须合成
+/// **一条** assistant 消息（`content` 为文本，`tool_calls` 为全部调用），否则会出现：
+///
+/// - 连续 assistant 消息（部分上游只认回合边界，会把前面的意图裁剪掉）；
+/// - 并行工具调用被拆成多条 `content:null` 的 assistant 消息（非法形状，
+///   deepseek/beam 会 400 或丢掉其中一个调用）。
+///
+/// 2026-11-19 实测：pi 多步会话中 31 条消息同时含叙述与 toolCall，翻译成 chat 后
+/// 变成 `assistant / assistant / assistant / tool` 序列（3 连 assistant）。
+///
+/// `text` 传 `None` 表示本项不带文本（纯工具调用），不改动已有 content。
+fn push_assistant_message(messages: &mut Vec<Value>, text: Option<&str>, tool_call: Option<Value>) {
+    let tail_is_mergable = messages
+        .last()
+        .map(|m| m.get("role").and_then(Value::as_str) == Some("assistant"))
+        .unwrap_or(false);
+    if !tail_is_mergable {
+        if text.is_none() && tool_call.is_none() {
+            return;
+        }
+        messages.push(json!({ "role": "assistant", "content": Value::Null }));
+    }
+    let Some(last) = messages.last_mut() else {
+        return;
+    };
+
+    if let Some(text) = text {
+        if text.is_empty() {
+            // 空文本占位：只给新建消息补 ""（deepseek 拒 null），不覆盖已有内容。
+            if !tail_is_mergable {
+                last["content"] = Value::String(String::new());
+            }
+        } else {
+            match last.get("content") {
+                // 已有文本：用换行拼接，保持先后顺序可读（不丢任何一段叙述）。
+                Some(Value::String(existing)) if !existing.is_empty() => {
+                    let merged = format!("{existing}\n{text}");
+                    last["content"] = Value::String(merged);
+                }
+                // 已有非字符串内容（图片数组等）：保留原结构，把新文本作为额外 text part 追加。
+                Some(Value::Array(parts)) if !parts.is_empty() => {
+                    if let Some(arr) = last.get_mut("content").and_then(Value::as_array_mut) {
+                        arr.push(json!({ "type": "text", "text": text }));
+                    }
+                }
+                _ => last["content"] = Value::String(text.to_string()),
+            }
+        }
+    }
+    if let Some(call) = tool_call {
+        match last.get_mut("tool_calls").and_then(Value::as_array_mut) {
+            Some(calls) => calls.push(call),
+            None => last["tool_calls"] = Value::Array(vec![call]),
+        }
+    }
+}
+
 fn translate_input_item(item: &Value, messages: &mut Vec<Value>) -> Result<(), String> {
     let ty = item.get("type").and_then(Value::as_str).unwrap_or("");
     match ty {
-        // 助手工具调用 -> assistant 消息带 tool_calls
+        // 助手工具调用 -> 并入当前 assistant 消息的 tool_calls（并行调用共享一条消息）
         "function_call" => {
             let call_id = item
                 .get("call_id")
@@ -143,18 +203,18 @@ fn translate_input_item(item: &Value, messages: &mut Vec<Value>) -> Result<(), S
                 .get("arguments")
                 .and_then(Value::as_str)
                 .unwrap_or("{}");
-            messages.push(json!({
-                "role": "assistant",
-                "content": Value::Null,
-                "tool_calls": [{
+            push_assistant_message(
+                messages,
+                None,
+                Some(json!({
                     "id": if call_id.is_empty() { next_id("call") } else { call_id },
                     "type": "function",
                     "function": {
                         "name": if name.trim().is_empty() { PLACEHOLDER_TOOL_NAME } else { name },
                         "arguments": arguments
                     }
-                }]
-            }));
+                })),
+            );
             Ok(())
         }
         // 工具执行结果 -> tool 消息
@@ -190,6 +250,12 @@ fn translate_input_item(item: &Value, messages: &mut Vec<Value>) -> Result<(), S
                     if role != "assistant" && s.trim().is_empty() {
                         return Ok(());
                     }
+                    if role == "assistant" {
+                        // 同一 assistant 回合可能由多个 message 项组成（叙述分帧/
+                        // 文本与工具调用分项），并入上一条而不是新起一条。
+                        push_assistant_message(messages, Some(s), None);
+                        return Ok(());
+                    }
                     messages.push(json!({ "role": role, "content": s }));
                     Ok(())
                 }
@@ -200,7 +266,42 @@ fn translate_input_item(item: &Value, messages: &mut Vec<Value>) -> Result<(), S
                     // assistant 回合用空串占位（两平台都接受），其它角色整条跳过。
                     if translated.is_empty() {
                         if role == "assistant" {
-                            messages.push(json!({ "role": role, "content": String::new() }));
+                            push_assistant_message(messages, Some(""), None);
+                        }
+                        return Ok(());
+                    }
+                    if role == "assistant" {
+                        // 并入当前 assistant 回合（不丢结构）：
+                        // - 纯文本 part → 合并成字符串段落（连续回合可读、体积小）；
+                        // - 含图片等非文本 part → 保留数组，把新 part 追加到已有数组。
+                        let only_text = translated
+                            .iter()
+                            .all(|p| p.get("type").and_then(Value::as_str) == Some("text"));
+                        if only_text {
+                            let joined: String = translated
+                                .iter()
+                                .filter_map(|p| p.get("text").and_then(Value::as_str))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            push_assistant_message(messages, Some(&joined), None);
+                            return Ok(());
+                        }
+                        let tail_is_assistant = messages
+                            .last()
+                            .map(|m| m.get("role").and_then(Value::as_str) == Some("assistant"))
+                            .unwrap_or(false);
+                        let merged_into_array = tail_is_assistant
+                            && messages
+                                .last_mut()
+                                .and_then(|m| m.get_mut("content"))
+                                .and_then(Value::as_array_mut)
+                                .map(|arr| {
+                                    arr.extend(translated.iter().cloned());
+                                })
+                                .is_some();
+                        if !merged_into_array {
+                            messages
+                                .push(json!({ "role": role, "content": Value::Array(translated) }));
                         }
                         return Ok(());
                     }

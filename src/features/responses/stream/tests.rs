@@ -853,3 +853,212 @@ async fn zp_passthrough_response_failed_event_freezes_key() {
     );
     assert_eq!(hits.load(Ordering::SeqCst), 1);
 }
+
+/// SSE 行被 TCP 分片切开（同一 `data:` JSON 落在两个 chunk）时，翻译路径必须
+/// 跨 chunk 拼接后再解析。
+///
+/// 现状（缺陷）：翻译分支对每个 chunk 独立 `text.lines()` 解析，跨 chunk 的半行被
+/// 直接丢弃（解析失败静默跳过），于是该 chunk 的内容/工具调用 delta 全部丢失，
+/// `finish_reason` 若正好落在被切开的 chunk 里也会丢 → 收尾降级为
+/// `response.incomplete(interrupted)`，客户端按"断流"处理。
+/// 这正是「工具调用叙述后异常收尾 / 静默停止」的一种成因。
+#[tokio::test]
+async fn translate_mode_reassembles_sse_lines_split_across_chunks() {
+    use crate::app::AppState;
+    use crate::config::{KeyRef, ModelAlias, Settings};
+    use axum::body::to_bytes;
+    use axum::routing::post;
+    use axum::Router;
+    use futures_util::stream::{self, StreamExt};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_for_server = hits.clone();
+    let app = Router::new().route(
+        "/chat/completions",
+        post(move || {
+            let hits = hits_for_server.clone();
+            async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                // 三条完整 SSE 事件，但按「行中间」切开成 7 个上游 chunk，
+                // 模拟真实 TCP 分片（JSON 的引号/大括号跨 chunk）。
+                let chunks: Vec<&'static str> = vec![
+                    "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n",
+                    "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"现在改 A1：\"},",
+                    "\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"bash\",",
+                    "\"arguments\":\"{\\\"command\\\":\\\"ls\\\"}\"}}]},\"finish_reason\":null}]}\n\n",
+                    "data: {\"choices\":[{\"index\":0,\"delta\":{},",
+                    "\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+                ];
+                let stream = stream::iter(chunks.into_iter().enumerate()).map(|(i, c)| {
+                    let _ = i;
+                    Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(c))
+                });
+                (
+                    axum::http::StatusCode::OK,
+                    [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                    axum::body::Body::from_stream(stream),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let settings: Settings = embedded_error_settings();
+    let app_state = AppState::new(settings).unwrap();
+    {
+        let mut st = app_state.state.lock().unwrap();
+        st.set_test_key_value("jt", "key-value");
+    }
+
+    let alias = ModelAlias::new(
+        "mock/split-test",
+        "openai/split-test",
+        &format!("http://{addr}"),
+        vec![KeyRef {
+            name: "jt".into(),
+            weight: 1,
+            provider: "mock".into(),
+            billing_type: "subscription".into(),
+            daily_token_quota: None,
+        }],
+        None,
+    );
+
+    let response = crate::features::responses::stream::stream_responses_route(
+        app_state.clone(),
+        vec![alias],
+        None,
+        json!({ "model": "mock/split-test", "input": "hi", "stream": true }),
+        Some(json!({
+            "model": "mock/split-test",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": true,
+        })),
+    )
+    .await;
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8_lossy(&body);
+    server.abort();
+
+    assert!(
+        text.contains("现在改 A1"),
+        "跨 chunk 的正文 delta 不能丢: {text}"
+    );
+    assert!(
+        text.contains("\"name\":\"bash\""),
+        "跨 chunk 的 tool_call 不能丢: {text}"
+    );
+    assert!(
+        text.contains("response.completed"),
+        "finish_reason=tool_calls 应正常完成，而不是降级 incomplete: {text}"
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+}
+
+/// 中文多字节字符被 TCP 分片切在中间时，翻译路径不能产生 U+FFFD 乱码。
+///
+/// 现状（缺陷）：每个 chunk 独立 `String::from_utf8_lossy`，半个汉字被替换成
+/// U+FFFD（�），正文/工具参数因此损坏。按字节缓冲到 `\n` 再解码即无此问题
+///（UTF-8 续字节 ≥0x80，不可能与换行 0x0A 混淆，完整行必然是合法边界）。
+#[tokio::test]
+async fn translate_mode_keeps_multibyte_chars_split_across_chunks() {
+    use crate::app::AppState;
+    use crate::config::{KeyRef, ModelAlias, Settings};
+    use axum::body::to_bytes;
+    use axum::routing::post;
+    use axum::Router;
+    use futures_util::stream;
+    use futures_util::StreamExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_for_server = hits.clone();
+    let app = Router::new().route(
+        "/chat/completions",
+        post(move || {
+            let hits = hits_for_server.clone();
+            async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                let mut full = String::from("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"现在改端点：\"},\"finish_reason\":null}]}\n\n");
+                full.push_str("data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n");
+                full.push_str("data: [DONE]\n\n");
+                let bytes = full.into_bytes();
+                // 切在第 2 个汉字的 UTF-8 序列中间（汉字 3 字节）。
+                let cut = {
+                    let needle = "现".as_bytes();
+                    let pos = bytes
+                        .windows(needle.len())
+                        .position(|w| w == needle)
+                        .expect("find 现");
+                    pos + 2
+                };
+                let (a, b) = bytes.split_at(cut);
+                let pieces = vec![a.to_vec(), b.to_vec()];
+                let stream = stream::iter(pieces.into_iter())
+                    .map(|p| Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(p)));
+                (
+                    axum::http::StatusCode::OK,
+                    [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                    axum::body::Body::from_stream(stream),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let settings: Settings = embedded_error_settings();
+    let app_state = AppState::new(settings).unwrap();
+    {
+        let mut st = app_state.state.lock().unwrap();
+        st.set_test_key_value("jt", "key-value");
+    }
+    let alias = ModelAlias::new(
+        "mock/utf8-test",
+        "openai/utf8-test",
+        &format!("http://{addr}"),
+        vec![KeyRef {
+            name: "jt".into(),
+            weight: 1,
+            provider: "mock".into(),
+            billing_type: "subscription".into(),
+            daily_token_quota: None,
+        }],
+        None,
+    );
+
+    let response = crate::features::responses::stream::stream_responses_route(
+        app_state.clone(),
+        vec![alias],
+        None,
+        json!({ "model": "mock/utf8-test", "input": "hi", "stream": true }),
+        Some(json!({
+            "model": "mock/utf8-test",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": true,
+        })),
+    )
+    .await;
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8_lossy(&body);
+    server.abort();
+
+    assert!(
+        text.contains("现在改端点："),
+        "跨 chunk 的汉字不能被替换成 U+FFFD: {text}"
+    );
+    assert!(!text.contains('\u{FFFD}'), "输出不应含 U+FFFD: {text}");
+    assert!(text.contains("response.completed"), "应正常完成: {text}");
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+}
