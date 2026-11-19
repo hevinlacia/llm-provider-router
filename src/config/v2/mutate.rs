@@ -32,6 +32,7 @@ pub fn register_physical_models(
                 supports_image: None,
                 thinking_level_map: None,
                 thinking_format: None,
+                responses_passthrough: None,
             },
         );
         registered.push(id.clone());

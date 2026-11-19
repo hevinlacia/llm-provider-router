@@ -386,7 +386,8 @@
       "max_output_tokens": 131072,
       "supports_image": false,
       "thinking_level_map": null,
-      "thinking_format": "reasoning_effort"
+      "thinking_format": "reasoning_effort",
+      "responses_passthrough": false
     },
     "ark/deepseek-v4-pro": {
       "provider": "ark",

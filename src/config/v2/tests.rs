@@ -1009,3 +1009,55 @@ fn resolve_targets_carries_passthrough_flag() {
         "路由 alias 必须携带开关（false=强制翻译）"
     );
 }
+
+/// 模型级 Responses 协议覆盖必须进入 resolve（实际路由）路径：供应商默认之上，
+/// `models.json` 物理模型 `responses_passthrough` 字段按模型覆盖（REQ-323，
+/// 2026-11-19 opencode-go：beam 必 400 / deepseek-v4.1-flash 原生可用）。
+#[test]
+fn resolve_targets_model_level_passthrough_overrides_provider() {
+    let mk = |model_extra: &str| {
+        let providers = r#"{
+          "providers": {
+            "oc": {
+              "base_url": "https://x.example.com/v1",
+              "responses_base_url": "https://x.example.com/v1",
+              "responses_passthrough": true,
+              "keys": { "k": { "weight": 1 } }
+            }
+          }
+        }"#;
+        let models = format!(
+            r#"{{ "models": {{ "oc/m": {{ "provider": "oc", "upstream_model": "m"{model_extra} }} }} }}"#
+        );
+        let logical = r#"{
+          "logical_models": { "pool": { "route": { "strategy": "priority",
+            "targets": [ { "model": "oc/m", "weight": null, "enabled": true, "keys": null } ] } } }
+        }"#;
+        let seq = {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static SEQ: AtomicU64 = AtomicU64::new(0);
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        };
+        let dir = std::env::temp_dir().join(format!("lpr-v2-mpt-{}-{seq}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let p = write_temp(&dir, "providers.json", providers);
+        let m = write_temp(&dir, "models.json", &models);
+        let l = write_temp(&dir, "logical.json", logical);
+        let v = write_temp(&dir, "virtual.json", r#"{"virtual_models":{}}"#);
+        load_v2_config_from(&p, &m, &l, &v).unwrap()
+    };
+
+    // 模型 false 覆盖供应商 true（beam 场景）→ 路由 alias 强制翻译
+    let cfg = mk(r#", "responses_passthrough": false"#);
+    let alias = &resolve_targets(&cfg, "pool").unwrap()[0].model;
+    assert!(alias.supports_responses());
+    assert!(
+        !alias.passthrough_responses(),
+        "模型级 false 必须覆盖供应商 true（路由路径）"
+    );
+
+    // 未配置 = 继承供应商 true
+    let cfg = mk("");
+    let alias = &resolve_targets(&cfg, "pool").unwrap()[0].model;
+    assert!(alias.passthrough_responses(), "None 继承供应商开关");
+}

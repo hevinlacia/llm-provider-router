@@ -79,6 +79,8 @@ type Draft = {
   input_uncached_per_million?: number | null;
   input_cached_per_million?: number | null;
   output_per_million?: number | null;
+  /** Responses 协议模型级覆盖：null = 继承供应商开关 */
+  responses_passthrough?: boolean | null;
 };
 
 function priceFor(model: string, prices: TokenPrice[] | undefined): TokenPrice | undefined {
@@ -93,6 +95,7 @@ function modelToDraft(model: V2PhysicalModel | undefined, prices: TokenPrice[] |
     supports_image: model?.supports_image ?? null,
     thinking_level_map: (model?.thinking_level_map as Record<string, string | null> | null | undefined) ?? null,
     thinking_format: (model?.thinking_format as string | null | undefined) ?? null,
+    responses_passthrough: model?.responses_passthrough ?? null,
     input_uncached_per_million: price?.input_uncached_per_million ?? null,
     input_cached_per_million: price?.input_cached_per_million ?? null,
     output_per_million: price?.output_per_million ?? null,
@@ -107,6 +110,7 @@ function draftToPatch(model: string, draft: Draft): PhysicalModelPatch {
     supports_image: draft.supports_image ?? null,
     thinking_level_map: draft.thinking_level_map,
     thinking_format: draft.thinking_format,
+    responses_passthrough: draft.responses_passthrough ?? null,
   };
 }
 
@@ -186,7 +190,7 @@ export function SupplierModelConfigPanel({ v2, tokenPrices, onSaved, onError }: 
         </div>
       </div>
       <div className="table-wrap"><table className="settings-table supplier-models-table">
-        <thead><tr><th>Model</th><th>Context</th><th>Output</th><th>Image</th><th>Thinking map</th><th>Token Price</th><th></th></tr></thead>
+        <thead><tr><th>Model</th><th>Context</th><th>Output</th><th>Image</th><th>Responses</th><th>Thinking map</th><th>Token Price</th><th></th></tr></thead>
         <tbody>{rows.map((row) => {
           const m = row.model;
           const map = (m.thinking_level_map as Record<string, string | null> | null | undefined) ?? null;
@@ -196,11 +200,12 @@ export function SupplierModelConfigPanel({ v2, tokenPrices, onSaved, onError }: 
             <td className="muted small-text">{m.context_window ? formatWindow(m.context_window) : '—'}</td>
             <td className="muted small-text">{m.max_output_tokens ? formatWindow(m.max_output_tokens) : '—'}</td>
             <td>{m.supports_image ? <span className="status ok">image</span> : <span className="muted small-text">text</span>}</td>
+            <td className="muted small-text">{m.responses_passthrough == null ? '—' : m.responses_passthrough ? <span className="status ok">原生</span> : <span className="muted small-text">翻译</span>}</td>
             <td className="muted small-text thinking-summary-cell">{thinkingSummary(map)}</td>
             <td className="muted small-text thinking-summary-cell">{priceSummary(price)}</td>
             <td><div className="row-actions"><button className="secondary compact-button" onClick={() => setEditing(m)}>Configure</button></div></td>
           </tr>;
-        })}{!rows.length && <tr><td colSpan={7} className="muted">{selectedProvider === '__all__' ? 'No physical models registered yet. Add a model pool target to register one.' : `No registered models for supplier \`${selectedProvider}\` yet. Add a model pool target to register one.`}</td></tr>}</tbody>
+        })}{!rows.length && <tr><td colSpan={8} className="muted">{selectedProvider === '__all__' ? 'No physical models registered yet. Add a model pool target to register one.' : `No registered models for supplier \`${selectedProvider}\` yet. Add a model pool target to register one.`}</td></tr>}</tbody>
       </table></div>
       <p className="muted small-text thinking-tip">Tip: 上下文/输出在 models.json 上声明后，Context Negotiation 会把逻辑模型（含模型池）的对外能力按「池内最低参数」聚合。图片支持参与输入模态协商。Token 价格随配置弹窗一并保存。</p>
     </section>
@@ -234,6 +239,7 @@ function ModelConfigModal({ model, prices, onCancel, onSaved, onError }: {
 
   function applyPreset(preset: Preset) {
     setDraft({
+      ...draft,
       context_window: preset.context_window ?? null,
       max_output_tokens: preset.max_output_tokens ?? null,
       supports_image: preset.supports_image ?? null,
@@ -289,6 +295,13 @@ function ModelConfigModal({ model, prices, onCancel, onSaved, onError }: {
           <option value="">— (unset)</option>
           <option value="true">yes</option>
           <option value="false">no</option>
+        </select>
+      </div>
+      <div className="field"><label>Responses 协议</label>
+        <select value={draft.responses_passthrough == null ? '' : draft.responses_passthrough ? 'passthrough' : 'translate'} onChange={(e) => setDraft({ ...draft, responses_passthrough: e.target.value === '' ? null : e.target.value === 'passthrough' })}>
+          <option value="">— (继承供应商)</option>
+          <option value="passthrough">原生透传</option>
+          <option value="translate">Router 翻译</option>
         </select>
       </div>
       <div className="field"><label>Thinking Format</label>

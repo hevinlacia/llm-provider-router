@@ -145,6 +145,12 @@ pub struct V2PhysicalModel {
     /// 思考字段协议（reasoning_effort 等），物理粒度覆写。
     #[serde(default)]
     pub thinking_format: Option<String>,
+    /// Responses 协议模型级覆盖（可选）：None = 继承供应商 `responses_passthrough`。
+    /// true = 该模型走上游原生 /responses 透传；false = 强制 Router 翻译链路。
+    /// 同供应商模型协议支持不一时按模型开关（2026-11-19 opencode-go：beam 后端
+    /// /responses 对含工具调用会话必 400，deepseek-v4.1-flash 原生支持）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub responses_passthrough: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

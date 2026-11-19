@@ -587,6 +587,13 @@ pub(crate) async fn api_config_physical_models_update(
             Some(Value::String(s)) => Some(Some(s.clone())),
             _ => None,
         };
+        // 模型级 Responses 协议覆盖：缺省/null 语义不同——缺字段 = 不修改，
+        // 显式 null = 回退继承供应商开关，bool = 覆盖。
+        let responses_passthrough = match item.get("responses_passthrough") {
+            Some(Value::Bool(b)) => Some(Some(*b)),
+            Some(Value::Null) => Some(None),
+            _ => None,
+        };
         parsed.push(crate::features::router::PhysicalModelPatch {
             model: model.to_string(),
             context_window,
@@ -594,6 +601,7 @@ pub(crate) async fn api_config_physical_models_update(
             supports_image,
             thinking_level_map,
             thinking_format,
+            responses_passthrough,
         });
     }
     with_state_json(&app, |state| Ok(state.set_physical_models(parsed)?))

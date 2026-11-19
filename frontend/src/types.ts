@@ -198,6 +198,8 @@ export type V2PhysicalModel = {
   supports_image?: boolean | null;
   thinking_level_map?: Record<string, string | null> | null;
   thinking_format?: string | null;
+  /** Responses 协议模型级覆盖：null = 继承供应商开关 */
+  responses_passthrough?: boolean | null;
 };
 
 /** 物理模型能力参数补丁 */
@@ -208,6 +210,8 @@ export type PhysicalModelPatch = {
   supports_image?: boolean | null;
   thinking_level_map?: Record<string, string | null> | null;
   thinking_format?: string | null;
+  /** null = 回退继承供应商开关；true = 原生透传；false = Router 翻译 */
+  responses_passthrough?: boolean | null;
 };
 
 export type PhysicalModelsConfig = {
