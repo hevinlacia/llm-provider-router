@@ -134,6 +134,7 @@ impl RouterState {
                 "context_window": pm.context_window,
                 "max_output_tokens": pm.max_output_tokens,
                 "supports_image": pm.supports_image,
+                "responses_passthrough": pm.responses_passthrough,
             }));
         }
         models.sort_by(|a, b| {
