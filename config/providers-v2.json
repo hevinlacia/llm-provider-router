@@ -4,7 +4,7 @@
       "base_url": "https://opencode.ai/inference/go/openai/v1",
       "responses_base_url": "https://opencode.ai/inference/go/openai/v1",
       "anthropic_base_url": null,
-      "responses_passthrough": false,
+      "responses_passthrough": true,
       "retry": null,
       "freeze_scope": "model",
       "keys": {
