@@ -180,6 +180,7 @@ fn virtual_candidate(
         .find(|pm| pm.provider == provider_name && pm.upstream_model == upstream_model)
     {
         model = model.with_windows(pm.context_window, pm.max_output_tokens);
+        model = model.with_model_responses_passthrough(pm.responses_passthrough);
     }
 
     Some(TargetCandidate {
@@ -226,6 +227,9 @@ fn physical_candidate(
     .with_windows(pm.context_window, pm.max_output_tokens)
     .with_responses_base_url(prov.responses_base_url.clone())
     .with_responses_passthrough(prov.responses_passthrough.unwrap_or(true))
+    // 模型级协议覆盖（REQ-323）：同供应商模型对原生 /responses 支持不一。
+    // 必须接进 resolve 路径——2026-11-12 事故即开关只进 fold 未进路由。
+    .with_model_responses_passthrough(pm.responses_passthrough)
     .with_anthropic_base_url(prov.anthropic_base_url.clone())
     .with_strategy(strategy.clone());
 

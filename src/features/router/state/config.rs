@@ -16,6 +16,9 @@ pub struct PhysicalModelPatch {
     pub supports_image: Option<bool>,
     pub thinking_level_map: Option<Option<HashMap<String, Option<String>>>>,
     pub thinking_format: Option<Option<String>>,
+    /// Responses 协议模型级覆盖：None = 不修改；Some(None) = 回退继承供应商；
+    /// Some(Some(b)) = 覆盖为 b。
+    pub responses_passthrough: Option<Option<bool>>,
 }
 
 impl RouterState {
@@ -137,6 +140,7 @@ impl RouterState {
                     supports_image: None,
                     thinking_level_map: None,
                     thinking_format: None,
+                    responses_passthrough: None,
                 },
             );
         }
@@ -158,6 +162,10 @@ impl RouterState {
             }
             if patch.thinking_format.is_some() {
                 pm.thinking_format = patch.thinking_format.clone().flatten();
+            }
+            if patch.responses_passthrough.is_some() {
+                // Some(Some(b)) = 覆盖为 b；Some(None) = 回退继承供应商开关。
+                pm.responses_passthrough = patch.responses_passthrough.clone().flatten();
             }
         }
         crate::config_v2::write_models_file(crate::config_v2::V2_MODELS_PATH, &file)?;

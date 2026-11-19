@@ -1342,3 +1342,42 @@ fn passthrough_responses_flag_gates_dispatch() {
     assert!(alias.supports_responses());
     assert!(!alias.passthrough_responses());
 }
+
+/// 模型级 Responses 协议覆盖（REQ-323，2026-11-19）：同供应商模型对原生
+/// /responses 支持不一时按模型开关，None = 继承供应商开关。
+#[test]
+fn model_level_responses_passthrough_overrides_provider_flag() {
+    let base = ModelAlias::new(
+        "opencode-go/test",
+        "openai/test",
+        "https://opencode.go.example/v1",
+        Vec::new(),
+        None,
+    )
+    .with_responses_base_url(Some("https://opencode.go.example/v1".into()));
+
+    // 供应商 true + 模型 false（beam 场景）→ 翻译
+    let alias = base
+        .clone()
+        .with_responses_passthrough(true)
+        .with_model_responses_passthrough(Some(false));
+    assert!(!alias.passthrough_responses(), "模型 false 覆盖供应商 true");
+
+    // 供应商 false + 模型 true（白名单场景）→ 透传
+    let alias = base
+        .clone()
+        .with_responses_passthrough(false)
+        .with_model_responses_passthrough(Some(true));
+    assert!(alias.passthrough_responses(), "模型 true 覆盖供应商 false");
+
+    // 模型 None = 继承供应商
+    let alias = base
+        .clone()
+        .with_responses_passthrough(true)
+        .with_model_responses_passthrough(None);
+    assert!(alias.passthrough_responses());
+    let alias = base
+        .with_responses_passthrough(false)
+        .with_model_responses_passthrough(None);
+    assert!(!alias.passthrough_responses());
+}
