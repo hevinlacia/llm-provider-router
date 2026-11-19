@@ -60,7 +60,9 @@ struct ChatSseLineParser {
 
 impl ChatSseLineParser {
     fn new() -> Self {
-        Self { line_buf: Vec::new() }
+        Self {
+            line_buf: Vec::new(),
+        }
     }
 
     /// 喂入一个上游 chunk，返回其中完整行解析出的 SSE data JSON。
@@ -90,6 +92,18 @@ impl ChatSseLineParser {
             return None;
         }
         serde_json::from_str::<Value>(body).ok()
+    }
+
+    /// 流尾兜底：上游最后一帧可能没有结尾换行，残留半行仍需解析
+    ///（否则 finish_reason 所在帧会丢，正常结束被误判成 interrupted）。
+    ///（REQ-323 2026-11-19 补充；feed 只消费到 `\n`，残尾留在这里收。）
+    fn finish(&mut self) -> Vec<Value> {
+        if self.line_buf.is_empty() {
+            return Vec::new();
+        }
+        let rest = std::mem::take(&mut self.line_buf);
+        let text = String::from_utf8_lossy(&rest).into_owned();
+        Self::parse_data_line(&text).into_iter().collect()
     }
 }
 
@@ -410,6 +424,9 @@ pub(crate) async fn stream_responses_route(
                     // 翻译：chat SSE -> Responses 事件
                     let echo = translate::response_echo_fields(&original_payload);
                     let mut sse = ResponsesSse::with_echo(&upstream_model, &echo);
+                    // 跨 chunk 行重组（ChatSseLineParser）：上游 SSE 行可能被 TCP 分片
+                    // 切成两半，逐 chunk `lines()` 会把半行当成坏行丢弃（内容/工具调用
+                    // delta 以及 finish_reason 一起丢，收尾降级 incomplete/interrupted）。
                     let mut line_parser = ChatSseLineParser::new();
                     while let Some(item) = bytes_stream.next().await {
                         match item {
@@ -462,6 +479,13 @@ pub(crate) async fn stream_responses_route(
                                 )));
                                 return;
                             }
+                        }
+                    }
+                    // 流尾兜底：解析无结尾换行的残留半行（REQ-323 补充）。
+                    for value in line_parser.finish() {
+                        let events = sse.feed(&value);
+                        if !events.is_empty() {
+                            yield Ok(Bytes::from(events));
                         }
                     }
                     let (events, (resp_id, history, response)) = sse.finish();
