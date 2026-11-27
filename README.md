@@ -203,6 +203,7 @@ Provider key 值**只来自明文 `config/api-keys.json`**（key 名 → 值，g
 曾导致「供应商明明配了 key 却一直 401 / 身份验证失败」。
 
 - **Dashboard inline values**（Settings → Providers → Edit → Keys → 明文密钥）：直接粘贴明文值，保存即写入 `config/api-keys.json`，下一个请求生效。UI 只显示 set/missing 状态，不回显明文。
+- **新增 key 时同步配置密钥**：还没保存过的新 key 也能直接点「明文密钥」录入——明文先暂存在编辑弹窗内存（标「待保存」），点主弹窗 Save 时先落 `providers-v2.json` 注册 key 名、再一并写入 `config/api-keys.json`，一次 Save 到位，不需要先存一遍再回头配。
 - **SOPS 加密副本**（`config/api-keys.sops.json`）：明文原件不进 git；加密副本提交，规则在 `config/.sops.yaml`（age）。
 
 ```bash
@@ -211,7 +212,7 @@ bin/vault.sh decrypt   # 新机器恢复：解密回明文（需 ~/.config/sops/
 bin/vault.sh status    # 校验副本存在与可解密（不回显内容）
 ```
 
-新增 key 后：Settings 里保存 provider → Set 值 → `bin/vault.sh encrypt` → commit。
+新增 key 后：Settings 里新增 key 行时直接录入明文（与 provider 一起 Save 写入）→ `bin/vault.sh encrypt` → commit。
 
 ## Search
 

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../api';
 import type { TargetCandidateGroup, V2LogicalModel, V2ProviderStatus, V2Status } from '../../types';
 
-type KeyDraft = { name: string; weight: number; billing_type: string; daily_token_quota: string; enabled: boolean };
+// pendingSecret：新增 key（尚未落盘 providers.json）时暂存的明文密钥值——只存在组件内存，
+// 供应商 Save 成功后再一并写入 config/api-keys.json（后端 set_key_values 只接受已注册 key 名）。
+type KeyDraft = { name: string; weight: number; billing_type: string; daily_token_quota: string; enabled: boolean; pendingSecret?: string };
 
 type ProviderDraft = {
   name: string;
@@ -39,6 +41,8 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
   // —— 密钥状态（/api/config/keys snapshot：vault / missing，不回显明文）——
   const [keySource, setKeySource] = useState<Record<string, string>>({});
   const [keyConfigEditing, setKeyConfigEditing] = useState<{ index: number; name: string } | null>(null);
+  // 已落盘的供应商名：新建成功后置位，后续 Save（含明文写入失败后的重试）走 update，避免重复 create。
+  const [persistedName, setPersistedName] = useState<string | null>(isNew ? null : providerName);
   const loadKeySource = useCallback(async () => {
     try {
       const snap = await api.keys();
@@ -55,6 +59,10 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
     }
+  }
+  // 未落盘 key：明文暂存在行草稿里，等主弹窗 Save 先建供应商再写 api-keys.json。
+  function stageSecret(index: number, value: string) {
+    updateKey(index, { pendingSecret: value.trim() ? value : undefined });
   }
   function sourceOf(keyName: string): string {
     return keySource[keyName] ?? 'missing';
@@ -77,21 +85,37 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
       return;
     }
     const keyMap: ProviderDraft['keys'] = {};
+    const pendingSecrets: Record<string, string> = {};
     for (const k of keys) {
       if (!k.name.trim()) continue;
-      keyMap[k.name.trim()] = {
+      const keyName = k.name.trim();
+      keyMap[keyName] = {
         weight: Math.max(0, Number(k.weight) || 0),
         billing_type: k.billing_type || 'subscription',
         daily_token_quota: k.daily_token_quota.trim() === '' ? null : Math.max(0, Math.floor(Number(k.daily_token_quota) || 0)),
         enabled: k.enabled,
       };
+      if (k.pendingSecret) pendingSecrets[keyName] = k.pendingSecret;
     }
+    const payload = { name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, responses_passthrough: responsesPassthrough, anthropic_base_url: anthropicBaseUrl.trim() || null, freeze_scope: freezeScope, keys: keyMap };
     try {
-      if (isNew) {
-        onSaved(await api.createV2Provider({ name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, responses_passthrough: responsesPassthrough, anthropic_base_url: anthropicBaseUrl.trim() || null, freeze_scope: freezeScope, keys: keyMap }));
-      } else {
-        onSaved(await api.updateV2Provider(providerName, { name: name.trim(), base_url: baseUrl.trim(), responses_base_url: responsesBaseUrl.trim() || null, responses_passthrough: responsesPassthrough, anthropic_base_url: anthropicBaseUrl.trim() || null, freeze_scope: freezeScope, keys: keyMap }));
+      // 顺序是硬约束：先落供应商配置（注册 key 名），再写明文密钥；反过来后端会报 unknown key(s)。
+      const status = persistedName ? await api.updateV2Provider(persistedName, payload) : await api.createV2Provider(payload);
+      // 改名后后续重试走新名；新建成功后走 update，避免重复 create。
+      setPersistedName(name.trim());
+      const stagedNames = Object.keys(pendingSecrets);
+      if (stagedNames.length) {
+        try {
+          await api.saveKeys(pendingSecrets, []);
+        } catch (err) {
+          // 供应商已保存但明文未写入：不关弹窗、不清暂存，用户修正后重试 Save 即可（重试走 update + saveKeys）。
+          onError(`供应商已保存，但明文密钥写入失败：${err instanceof Error ? err.message : String(err)}（暂存值仍在，重试 Save 即可）`);
+          return;
+        }
+        setKeys((prev) => prev.map((k) => (k.pendingSecret && pendingSecrets[k.name.trim()] ? { ...k, pendingSecret: undefined } : k)));
+        await loadKeySource();
       }
+      onSaved(status);
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
     }
@@ -108,42 +132,62 @@ export function ProviderEditor({ providerName, provider, isNew = false, onCancel
     <div className="table-wrap"><table><colgroup><col style={{ width: '15%' }} /><col style={{ width: '28%' }} /><col style={{ width: '9%' }} /><col style={{ width: '16%' }} /><col style={{ width: '14%' }} /><col style={{ width: '8%' }} /><col style={{ width: '10%' }} /></colgroup><thead><tr><th>Key</th><th>密钥配置</th><th>Weight</th><th>Billing</th><th title="当日 token 配额；priority 策略下耗尽则降级到下一优先级；留空 = 不限">日配额</th><th>Enabled</th><th></th></tr></thead><tbody>
       {keys.map((k, i) => {
         const src = sourceOf(k.name);
-        return <tr key={i}><td><input value={k.name} onChange={(event) => updateKey(i, { name: event.target.value })} /></td><td><span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><button type="button" className={`secondary compact-button ${src === 'vault' ? 'key-src-active' : ''}`} title={src === 'vault' ? '已设置明文密钥（立即生效）' : '直接粘贴明文密钥值，存本机 api-keys.json'} onClick={() => setKeyConfigEditing({ index: i, name: k.name })}>明文密钥</button>{src === 'missing' && <span className="muted small-text">未配置</span>}</span></td><td><input className="weight-input" type="number" min="0" step="1" value={k.weight} onChange={(event) => updateKey(i, { weight: Number(event.target.value) || 0 })} /></td><td><select value={k.billing_type} onChange={(event) => updateKey(i, { billing_type: event.target.value })}><option value="subscription">subscription</option><option value="payg">payg</option></select></td><td><input className="weight-input" type="number" min="0" step="1" placeholder="不限" title="日 token 配额（tokens）：priority 策略下当日用量达限则降级到下一优先级；usage-aware 不看配额只平衡消耗" value={k.daily_token_quota} onChange={(event) => updateKey(i, { daily_token_quota: event.target.value })} /></td><td><input type="checkbox" checked={k.enabled} onChange={(event) => updateKey(i, { enabled: event.target.checked })} /></td><td><button className="secondary" onClick={() => removeKey(i)}>Delete</button></td></tr>;
+        const hasPending = Boolean(k.pendingSecret);
+        return <tr key={i}><td><input value={k.name} onChange={(event) => updateKey(i, { name: event.target.value })} /></td><td><span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><button type="button" className={`secondary compact-button ${src === 'vault' ? 'key-src-active' : ''} ${hasPending ? 'key-src-pending' : ''}`} title={src === 'vault' ? '已设置明文密钥（立即生效）' : hasPending ? '已录入明文密钥，保存供应商时一并写入 api-keys.json' : '直接粘贴明文密钥值，存本机 api-keys.json'} onClick={() => setKeyConfigEditing({ index: i, name: k.name })}>明文密钥</button>{hasPending ? <span className="muted small-text">待保存</span> : src === 'missing' && <span className="muted small-text">未配置</span>}</span></td><td><input className="weight-input" type="number" min="0" step="1" value={k.weight} onChange={(event) => updateKey(i, { weight: Number(event.target.value) || 0 })} /></td><td><select value={k.billing_type} onChange={(event) => updateKey(i, { billing_type: event.target.value })}><option value="subscription">subscription</option><option value="payg">payg</option></select></td><td><input className="weight-input" type="number" min="0" step="1" placeholder="不限" title="日 token 配额（tokens）：priority 策略下当日用量达限则降级到下一优先级；usage-aware 不看配额只平衡消耗" value={k.daily_token_quota} onChange={(event) => updateKey(i, { daily_token_quota: event.target.value })} /></td><td><input type="checkbox" checked={k.enabled} onChange={(event) => updateKey(i, { enabled: event.target.checked })} /></td><td><button className="secondary" onClick={() => removeKey(i)}>Delete</button></td></tr>;
       })}
     </tbody></table></div>
     <div className="toolbar" style={{ justifyContent: 'space-between' }}><button className="secondary" onClick={addKey}>Add Key</button><span style={{ display: 'flex', gap: 10 }}><button className="secondary" onClick={onCancel}>Cancel</button><button onClick={() => void save()}>Save</button></span></div>
     {keyConfigEditing && <KeyConfigModal
-      keyName={keyConfigEditing.name}
+      keyName={keys[keyConfigEditing.index]?.name ?? keyConfigEditing.name}
       source={sourceOf(keyConfigEditing.name)}
       known={keySource[keyConfigEditing.name] !== undefined}
+      pendingValue={keys[keyConfigEditing.index]?.pendingSecret ?? ''}
       onClose={() => setKeyConfigEditing(null)}
       onSavePlain={(value) => { void savePlainValue(keyConfigEditing.name, value); }}
+      onStagePlain={(value) => stageSecret(keyConfigEditing.index, value)}
       onClearPlain={() => { void savePlainValue(keyConfigEditing.name, ''); }}
+      onClearPending={() => stageSecret(keyConfigEditing.index, '')}
     />}
   </div></div>;
 }
 
 /// 密钥配置弹窗：只有明文密钥一种方式（保存即写入 config/api-keys.json，下一请求生效）。
-function KeyConfigModal({ keyName, source, known, onClose, onSavePlain, onClearPlain }: {
+/// key 尚未落盘（新增未 Save）时不再禁输：明文先暂存到行草稿，主弹窗 Save 时先建供应商再一并写入。
+function KeyConfigModal({ keyName, source, known, pendingValue, onClose, onSavePlain, onStagePlain, onClearPlain, onClearPending }: {
   keyName: string;
   source: string;
   known: boolean;
+  pendingValue: string;
   onClose: () => void;
   onSavePlain: (value: string) => void;
+  onStagePlain: (value: string) => void;
   onClearPlain: () => void;
+  onClearPending: () => void;
 }) {
-  const [value, setValue] = useState('');
+  // 已知 key 不回显任何已存值（pendingValue 恒为空）；未落盘 key 回显暂存值供修改。
+  const [value, setValue] = useState(pendingValue);
   const [show, setShow] = useState(false);
+  const named = Boolean(keyName.trim());
+  const canSubmit = named && Boolean(value.trim());
+  function submit() {
+    if (!canSubmit) return;
+    if (known) onSavePlain(value); else onStagePlain(value);
+    onClose();
+  }
   return <div className="modal-overlay high" onClick={onClose}><div className="modal modal-sm" onClick={(event) => event.stopPropagation()}>
-    <h3>密钥配置：{keyName}</h3>
-    {source === 'vault' && <p className="muted small-text">当前已设置明文密钥（值不回显）。重新粘贴将覆盖；清除后 key 变为 missing。</p>}
-    {!known && <p className="muted small-text">该 key 尚未保存到供应商配置，请先在主弹窗点击 Save，再回来设置明文值。</p>}
-    <div className="field"><label>明文密钥</label><span style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input style={{ flex: 1 }} type={show ? 'text' : 'password'} value={value} placeholder="paste key value" autoFocus disabled={!known} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && value) { onSavePlain(value); onClose(); } }} /><button type="button" className="secondary" onClick={() => setShow(!show)}>{show ? '隐藏' : '显示'}</button></span></div>
-    <p className="muted small-text">保存后下一请求即生效；明文存本机 config/api-keys.json，git 副本经 bin/vault.sh 加密。不再支持环境变量取值。</p>
+    <h3>密钥配置：{named ? keyName : '（未命名 key）'}</h3>
+    {known && source === 'vault' && <p className="muted small-text">当前已设置明文密钥（值不回显）。重新粘贴将覆盖；清除后 key 变为 missing。</p>}
+    {known && source !== 'vault' && <p className="muted small-text">该 key 已在供应商配置中，但尚无密钥值：粘贴后立即写入 config/api-keys.json。</p>}
+    {!known && <p className="muted small-text">该 key 尚未保存到供应商配置：可直接录入明文，主弹窗 Save 时先落供应商配置，再一并写入 config/api-keys.json。</p>}
+    <div className="field"><label>明文密钥</label><span style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input style={{ flex: 1 }} type={show ? 'text' : 'password'} value={value} placeholder={named ? 'paste key value' : '请先填写 key 名'} autoFocus disabled={!named} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') submit(); }} /><button type="button" className="secondary" onClick={() => setShow(!show)}>{show ? '隐藏' : '显示'}</button></span></div>
+    {!named && <p className="muted small-text">先在主弹窗的 Key 列填上 key 名，再回来录入明文。</p>}
+    {!known && pendingValue && <p className="muted small-text">已暂存明文（仅存于本弹窗内存，未落盘）：保存供应商后写入 api-keys.json 并生效。</p>}
+    <p className="muted small-text">{known ? '保存后下一请求即生效；' : '保存供应商时写入；'}明文存本机 config/api-keys.json，git 副本经 bin/vault.sh 加密。不再支持环境变量取值。</p>
     <div className="toolbar">
-      {source === 'vault' && <button type="button" className="secondary" onClick={() => { onClearPlain(); onClose(); }}>清除明文</button>}
+      {known && source === 'vault' && <button type="button" className="secondary" onClick={() => { onClearPlain(); onClose(); }}>清除明文</button>}
+      {!known && pendingValue && <button type="button" className="secondary" onClick={() => { onClearPending(); onClose(); }}>清除暂存</button>}
       <button type="button" className="secondary" onClick={onClose}>取消</button>
-      <button type="button" disabled={!known || !value} onClick={() => { onSavePlain(value); onClose(); }}>保存明文</button>
+      <button type="button" disabled={!canSubmit} onClick={submit}>{known ? '保存明文' : '暂存明文'}</button>
     </div>
   </div></div>;
 }

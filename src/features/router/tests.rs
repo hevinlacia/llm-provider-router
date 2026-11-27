@@ -1218,6 +1218,56 @@ fn apply_key_value_write_persists_and_deletes() {
     assert!(!stored.contains_key("vault-key"));
 }
 
+/// 回归（REQ-348）：供应商配置里声明、但尚未被模型池/别名引用的 key 也必须能写明文密钥。
+///
+/// 旧口径 `all_key_refs` 只从别名引用推导，新建供应商/key 在接入模型池前既不在密钥快照里、
+/// 写明文也会报 unknown key——dashboard 密钥弹窗因此直接禁输，形成死结。
+#[test]
+fn declared_key_refs_allow_plaintext_for_unreferenced_provider_keys() {
+    let mut state = RouterState::new(test_settings()).unwrap();
+    let provider = "req348-verify";
+    let key_name = "req348-unreferenced";
+    state.add_test_provider_key(provider, key_name);
+
+    // 别名/模型池未引用：旧口径看不到这把 key。
+    assert!(
+        !state.all_key_refs().iter().any(|k| k.name == key_name),
+        "测试前提：该 key 不应被别名引用"
+    );
+    // 新口径：声明即可见，快照里带 missing 状态。
+    let declared = state.declared_key_refs();
+    let found = declared
+        .iter()
+        .find(|k| k.name == key_name)
+        .expect("声明过的 key 应出现在 declared_key_refs");
+    assert_eq!(found.provider, provider);
+    let snapshot = state.key_secret_snapshot().unwrap();
+    assert!(
+        snapshot["keys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|k| k["name"] == key_name && k["source"] == "missing"),
+        "未配置的声明 key 应以 missing 出现在密钥快照：{snapshot}"
+    );
+
+    // 写明文不再报 unknown，写入后快照变 vault。
+    let mut values = HashMap::new();
+    values.insert(key_name.to_string(), "sk-req348-test".to_string());
+    state
+        .set_key_values(values, HashSet::new())
+        .expect("声明过的 key 应可写明文密钥");
+    let after = state.key_secret_snapshot().unwrap();
+    assert!(
+        after["keys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|k| k["name"] == key_name && k["source"] == "vault"),
+        "写入后应显示 vault：{after}"
+    );
+}
+
 /// 回归（2026-11-05 全池瘫痪事故）：单 key 池的 connect 失败不冻结。
 ///
 /// 冻结本意是隔离坏 key + failover 到其他 key；池里只有一个 key 时没有

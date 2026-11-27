@@ -200,7 +200,8 @@ impl RouterState {
     }
 
     pub fn key_secret_snapshot(&mut self) -> anyhow::Result<Value> {
-        let refs = self.all_key_refs();
+        // 用 declared_key_refs：供应商配置里声明的 key 都应有密钥状态（含尚未接进模型池的新 key）。
+        let refs = self.declared_key_refs();
         let stored = self.api_keys_store.load();
         let mut keys = Vec::new();
         for key in refs {
@@ -230,7 +231,7 @@ impl RouterState {
         delete_names: HashSet<String>,
     ) -> anyhow::Result<Value> {
         let key_by_name: HashMap<String, KeyRef> = self
-            .all_key_refs()
+            .declared_key_refs()
             .into_iter()
             .map(|k| (k.name.clone(), k))
             .collect();
@@ -262,6 +263,35 @@ impl RouterState {
         let mut stored = self.api_keys_store.load();
         stored.insert(name.to_string(), value.to_string());
         let _ = self.api_keys_store.write(&stored);
+    }
+
+    /// 测试辅助：向内存中的 v2 供应商配置注入一把 key（不落盘），
+    /// 用于验证「声明但未被模型池/别名引用」的 key 也能配置明文（REQ-348）。
+    #[cfg(test)]
+    pub(crate) fn add_test_provider_key(&mut self, provider: &str, key_name: &str) {
+        use crate::config_v2::{V2Key, V2Provider};
+        let entry = self
+            .v2
+            .providers
+            .entry(provider.to_string())
+            .or_insert_with(|| V2Provider {
+                base_url: "https://example.invalid/v1".to_string(),
+                responses_base_url: None,
+                anthropic_base_url: None,
+                responses_passthrough: None,
+                retry: None,
+                freeze_scope: None,
+                keys: HashMap::new(),
+            });
+        entry.keys.insert(
+            key_name.to_string(),
+            V2Key {
+                weight: 1,
+                billing_type: "subscription".to_string(),
+                daily_token_quota: None,
+                enabled: true,
+            },
+        );
     }
 
     /// 按 key 名取明文 key 值（api-keys.json）；供供应商探测等非路由路径使用。

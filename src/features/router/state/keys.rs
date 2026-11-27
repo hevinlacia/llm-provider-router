@@ -19,6 +19,35 @@ impl RouterState {
         values
     }
 
+    /// 供应商配置（providers-v2.json）里声明的全部 key，不要求当前被模型池/别名引用。
+    ///
+    /// 密钥快照与明文写入校验走这里：新建供应商/key 后就能直接配置密钥，
+    /// 不必先把 key 接进模型池（REQ-348：此前 `all_key_refs` 只看别名引用，
+    /// 新 key 不在快照里，dashboard 密钥弹窗直接禁输，形成“先有鸡还是先有蛋”死结）。
+    pub fn declared_key_refs(&mut self) -> Vec<KeyRef> {
+        let mut refs: HashMap<String, KeyRef> = HashMap::new();
+        for (provider, prov) in &self.v2.providers {
+            for (name, key) in &prov.keys {
+                refs.entry(name.clone()).or_insert_with(|| KeyRef {
+                    name: name.clone(),
+                    weight: key.weight,
+                    provider: provider.clone(),
+                    billing_type: key.billing_type.clone(),
+                    daily_token_quota: key.daily_token_quota,
+                });
+            }
+        }
+        // 兼容：别名里引用、但供应商配置已删除的历史 key 仍保留条目（避免快照丢项导致无法清理）。
+        for alias in self.settings_aliases().values() {
+            for key in &alias.keys {
+                refs.entry(key.name.clone()).or_insert_with(|| key.clone());
+            }
+        }
+        let mut values = refs.into_values().collect::<Vec<_>>();
+        values.sort_by_key(|key| key.name.clone());
+        values
+    }
+
     /// 仅保留模型池实际引用的供应商真实模型（物理模型 id）。
     pub(crate) fn referenced_physical_model_ids(&self) -> HashSet<String> {
         let cfg = &self.v2;
