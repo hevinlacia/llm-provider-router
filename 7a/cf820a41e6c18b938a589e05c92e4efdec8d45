@@ -1,0 +1,33 @@
+frontend/src/features/settings/editors.tsx
+  abe222019298a3c2 5-7,44-45,63-66,88,91-92,98,100,102-116,118,135-136,141,144,147,149,155-156,160,163,165,167-168,170-176,178-185,187-188,190
+frontend/src/styles.css
+  abe222019298a3c2 429-430
+src/features/router/state/keys.rs
+  abe222019298a3c2 22-50
+src/features/router/state/config.rs
+  abe222019298a3c2 203-204,234,268-296
+src/features/router/tests.rs
+  abe222019298a3c2 1221-1270
+README.md
+  abe222019298a3c2 206,215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7acf820a41e6c18b938a589e05c92e4efdec8d45",
+  "prompts": {
+    "abe222019298a3c2": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a21bf8-02d9-7779-b827-2a2d0efdfeba",
+        "model": "medium-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 174,
+      "total_deletions": 21,
+      "accepted_lines": 176,
+      "overriden_lines": 0
+    }
+  }
+}
